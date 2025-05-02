@@ -1,0 +1,15 @@
+"""
+Core processing modules for ddQuint
+"""
+
+from .core.clustering import analyze_droplets
+from .core.copy_number import calculate_copy_numbers, detect_abnormalities
+from .core.file_processor import process_csv_file, process_directory
+
+__all__ = [
+    'analyze_droplets',
+    'calculate_copy_numbers',
+    'detect_abnormalities',
+    'process_csv_file',
+    'process_directory'
+]
