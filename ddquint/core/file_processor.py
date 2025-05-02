@@ -25,16 +25,11 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
     Returns:
         dict: Results dictionary or None if processing failed
     """
-    if verbose:
-        print(f"  Processing file: {os.path.basename(file_path)}")
-    
     basename = os.path.basename(file_path)
     sample_name = os.path.splitext(basename)[0]
     well_coord = extract_well_coordinate(sample_name)
     
     if not well_coord:
-        if verbose:
-            print(f"  Warning: Could not extract well coordinate from {basename}")
         return None
     
     # Try to load the CSV file
@@ -42,8 +37,6 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
         # Find the header row containing Ch1Amplitude
         header_row = find_header_row(file_path)
         if header_row is None:
-            if verbose:
-                print(f"  Error: Could not find header row in {basename}")
             return create_error_result(well_coord, basename, 
                                       "Could not find header row",
                                       graphs_dir)
@@ -54,8 +47,6 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
         # Check for required columns
         required_cols = ['Ch1Amplitude', 'Ch2Amplitude']
         if not all(col in df.columns for col in required_cols):
-            if verbose:
-                print(f"  Error: Required columns not found in {basename}")
             return create_error_result(well_coord, basename, 
                                       "Required columns not found",
                                       graphs_dir)
@@ -65,27 +56,19 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
         
         # Check if we have enough data points
         if len(df_clean) < 10:
-            if verbose:
-                print(f"  Error: Not enough data points in {basename}")
             return create_error_result(well_coord, basename, 
                                       f"Not enough data points: {len(df_clean)}",
                                       graphs_dir)
         
         # Analyze the droplets
-        if verbose:
-            print(f"  Analyzing droplets in {basename}")
-        
         clustering_results = analyze_droplets(df_clean)
         
         # Create plot and save it
         plot_path = os.path.join(graphs_dir, f"{well_coord}.png")
-        if verbose:
-            print(f"  Creating plot for {basename}")
-        
         create_well_plot(df_clean, clustering_results, well_coord, plot_path)
         
         # Return the results
-        result = {
+        return {
             'well': well_coord,
             'filename': basename,
             'has_outlier': clustering_results.get('has_outlier', False),
@@ -93,11 +76,6 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
             'counts': clustering_results.get('counts', {}),
             'graph_path': plot_path
         }
-        
-        if verbose:
-            print(f"  Successfully processed {basename}")
-        
-        return result
         
     except Exception as e:
         if verbose:
@@ -159,36 +137,32 @@ def process_directory(input_dir, output_dir=None, verbose=False):
     if output_dir is None:
         output_dir = input_dir
     
-    print(f"\nStarting batch processing in directory: {input_dir}")
-    
     # Create output directories
     graphs_dir = os.path.join(output_dir, "Graphs")
     raw_data_dir = os.path.join(output_dir, "Raw Data")
     
-    print(f"Creating output directories:")
-    print(f"  - Graphs directory: {graphs_dir}")
     os.makedirs(graphs_dir, exist_ok=True)
-    print(f"  - Raw Data directory: {raw_data_dir}")
     os.makedirs(raw_data_dir, exist_ok=True)
     
     # Find all CSV files in the input directory
-    print("Searching for CSV files...")
     try:
         csv_files = [f for f in os.listdir(input_dir) if f.lower().endswith('.csv')]
     except Exception as e:
-        print(f"Error listing directory contents: {str(e)}")
+        if verbose:
+            print(f"Error listing directory contents: {str(e)}")
         return []
     
     if not csv_files:
         print(f"No CSV files found in {input_dir}")
         return []
     
-    print(f"Found {len(csv_files)} CSV files to process.")
+    print(f"Found {len(csv_files)} CSV files")
     
     # Process each CSV file
     results = []
-    for i, csv_file in enumerate(csv_files, 1):
-        print(f"Processing file {i}/{len(csv_files)}: {csv_file}")
+    processed_count = 0
+    
+    for csv_file in csv_files:
         file_path = os.path.join(input_dir, csv_file)
         
         try:
@@ -196,44 +170,27 @@ def process_directory(input_dir, output_dir=None, verbose=False):
             result = process_csv_file(file_path, graphs_dir, verbose)
             if result:
                 results.append(result)
+                processed_count += 1
             
             # Copy the processed file to Raw Data directory
             try:
                 shutil.copy2(file_path, os.path.join(raw_data_dir, csv_file))
-            except Exception as e:
-                if verbose:
-                    print(f"  Error copying file to Raw Data directory: {str(e)}")
+            except Exception:
+                pass
         except Exception as e:
-            print(f"  Error processing {csv_file}: {str(e)}")
-            
-            # Try to extract well coordinate for error reporting
-            basename = os.path.basename(file_path)
-            sample_name = os.path.splitext(basename)[0]
-            well_coord = extract_well_coordinate(sample_name)
-            
-            # Add error result
-            if well_coord:
-                results.append({
-                    'well': well_coord,
-                    'filename': basename,
-                    'has_outlier': False,
-                    'copy_numbers': {},
-                    'counts': {},
-                    'graph_path': None,
-                    'error': str(e)
-                })
+            if verbose:
+                print(f"  Error processing {csv_file}: {str(e)}")
     
-    print(f"\nFile processing complete. Processed {len(results)} files successfully.")
+    if verbose:
+        print(f"Processed {processed_count} of {len(csv_files)} files successfully")
     
     # Move original files to Raw Data folder
-    print("\nMoving original CSV files to Raw Data folder...")
     for csv_file in csv_files:
         file_path = os.path.join(input_dir, csv_file)
         if os.path.exists(file_path):  # Make sure it still exists
             try:
                 shutil.move(file_path, os.path.join(raw_data_dir, csv_file))
-            except Exception as e:
-                if verbose:
-                    print(f"  Error moving {csv_file}: {str(e)}")
+            except Exception:
+                pass
     
     return results

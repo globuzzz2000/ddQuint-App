@@ -17,8 +17,11 @@ def analyze_droplets(df):
     Returns:
         dict: Clustering results including counts, copy numbers, and outlier status
     """
+    # Make a full copy of input dataframe to avoid warnings
+    df_copy = df.copy()
+    
     # Standardize the data for clustering
-    X = df[['Ch1Amplitude', 'Ch2Amplitude']].values
+    X = df_copy[['Ch1Amplitude', 'Ch2Amplitude']].values
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     
@@ -35,11 +38,10 @@ def analyze_droplets(df):
     clusters = clusterer.fit_predict(X_scaled)
     
     # Add cluster assignments to the dataframe
-    df_with_clusters = df.copy()
-    df_with_clusters['cluster'] = clusters
+    df_copy['cluster'] = clusters
     
     # Filter out noise points (cluster -1)
-    df_filtered = df_with_clusters[df_with_clusters['cluster'] != -1]
+    df_filtered = df_copy[df_copy['cluster'] != -1].copy()  # Create a proper copy here
     
     # If no valid clusters were found, return empty results
     if df_filtered.empty or len(df_filtered['cluster'].unique()) == 0:
@@ -108,8 +110,8 @@ def analyze_droplets(df):
             target_mapping[cl_best] = target
             remaining_cls.remove(cl_best)
     
-    # Add target labels to the dataframe
-    df_filtered['TargetLabel'] = df_filtered['cluster'].map(target_mapping)
+    # Add target labels to the dataframe - FIX: use loc to avoid SettingWithCopyWarning
+    df_filtered.loc[:, 'TargetLabel'] = df_filtered['cluster'].map(target_mapping)
     
     # Count droplets for each target
     ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5', 'Unknown']

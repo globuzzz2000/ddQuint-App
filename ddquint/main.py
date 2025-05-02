@@ -9,6 +9,13 @@ import os
 import sys
 import datetime
 import traceback
+import warnings
+
+# Filter warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*force_all_finite.*")
+warnings.filterwarnings("ignore", message=".*SettingWithCopyWarning.*")
 
 from ddquint.utils.gui import select_directory
 from ddquint.core.file_processor import process_directory
@@ -38,10 +45,7 @@ def parse_arguments():
 
 def main():
     """Main function to run the application."""
-    print("=" * 50)
     print("ddQuint: Digital Droplet PCR Multiplex Analysis")
-    print("=" * 50)
-    print(f"Started at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     try:
         # Parse command line arguments
@@ -59,7 +63,7 @@ def main():
         output_dir = args.output if args.output else input_dir
         
         # Process the directory
-        print(f"\nProcessing directory: {input_dir}")
+        print(f"Processing files in: {os.path.basename(input_dir)}")
         results = process_directory(input_dir, output_dir, verbose=args.verbose)
         
         # Create output files if we have results
@@ -73,22 +77,21 @@ def main():
             excel_path = os.path.join(output_dir, "Plate_Results.xlsx")
             create_excel_report(results, excel_path)
             
-            print("\nProcessing complete!")
-            print(f"- Individual graphs: {graphs_dir}")
-            print(f"- Composite image: {composite_path}")
-            print(f"- Excel report: {excel_path}")
+            # Count abnormal samples
+            abnormal_count = sum(1 for r in results if r.get('has_outlier', False))
+            
+            print("\nAnalysis complete:")
+            print(f"- Processed {len(results)} files ({abnormal_count} marked for review)")
+            print(f"- Results saved to: {os.path.basename(output_dir)}")
         else:
             print("No valid results were generated.")
         
     except KeyboardInterrupt:
         print("\nProcess interrupted by user.")
     except Exception as e:
-        print(f"\nCritical error: {str(e)}")
-        traceback.print_exc()
-    finally:
-        print("\n" + "=" * 50)
-        print(f"Finished at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 50)
+        print(f"\nError: {str(e)}")
+        if args and args.verbose:
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main()

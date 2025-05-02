@@ -2,15 +2,15 @@
 Utility modules for ddQuint
 """
 
-from .utils.file_io import (
+from .file_io import (
     ensure_directory, 
     list_csv_files, 
     move_files, 
     copy_files, 
     read_csv_with_header_detection
 )
-from .utils.gui import select_directory, select_file, find_default_directory
-from .utils.well_utils import (
+from .gui import select_directory, select_file, find_default_directory
+from .well_utils import (
     extract_well_coordinate, 
     is_valid_well, 
     format_well_id, 
