@@ -49,11 +49,11 @@ def analyze_droplets(df):
     # Enhanced HDBSCAN clustering with improved parameters
     clusterer = HDBSCAN(
         min_cluster_size=min_cluster_size,
-        min_samples=3,  # Reduced to create more clusters
-        cluster_selection_method='leaf',
-        cluster_selection_epsilon=0.01,
+        min_samples=max(5, min_cluster_size // 2),
+        cluster_selection_method='eom',
+        cluster_selection_epsilon=0.03,
         metric='euclidean',
-        core_dist_n_jobs=-1  # Use all available cores
+        core_dist_n_jobs=1  # Use all available cores
     )
     
     clusters = clusterer.fit_predict(X_scaled)
@@ -64,17 +64,31 @@ def analyze_droplets(df):
     # Filter out noise points (cluster -1)
     df_filtered = df_copy[df_copy['cluster'] != -1].copy()
     
+    # If no valid clusters were found or too few clusters, try with different parameters
+    if df_filtered.empty or len(df_filtered['cluster'].unique()) < 3:
+        # Second attempt with more aggressive parameters
+        clusterer = HDBSCAN(
+            min_cluster_size=max(5, min_cluster_size // 2),
+            min_samples=3,
+            cluster_selection_method='leaf',  # Try leaf method instead
+            alpha=0.8,  # Less conservative cluster selection
+            metric='euclidean',
+            core_dist_n_jobs=-1
+        )
+        
+        clusters = clusterer.fit_predict(X_scaled)
+        df_copy['cluster'] = clusters
+        df_filtered = df_copy[df_copy['cluster'] != -1].copy()
+    
     # Define expected centroids for targets
     # These are in [FAM, HEX] order (Ch1Amplitude, Ch2Amplitude)
     expected_centroids = {
         "Negative": np.array([800, 700]),
         "Chrom1":   np.array([800, 2300]),
         "Chrom2":   np.array([1700, 2100]),
-        "Chrom3":   np.array([2700, 1900]),
+        "Chrom3":   np.array([2700, 1700]),
         "Chrom4":   np.array([3300, 1250]),
-        "Chrom5":   np.array([3700, 700]),
-        "Chr4Chr2": np.array([3300, 2250]),
-        "Chr5Chr1": np.array([3600, 2500])
+        "Chrom5":   np.array([3700, 700])
     }
     
     # Define tolerance for each target (with adaptive scaling)
@@ -87,11 +101,9 @@ def analyze_droplets(df):
         "Negative": 350 * scale_factor,
         "Chrom1":   350 * scale_factor,
         "Chrom2":   350 * scale_factor,
-        "Chrom3":   500 * scale_factor,
-        "Chrom4":   400 * scale_factor,
-        "Chrom5":   350 * scale_factor,
-        "Chr4Chr2": 350 * scale_factor,
-        "Chr5Chr1": 350 * scale_factor
+        "Chrom3":   350 * scale_factor,
+        "Chrom4":   350 * scale_factor,
+        "Chrom5":   350 * scale_factor
     }
     
     # Calculate centroids for each cluster
@@ -146,26 +158,14 @@ def analyze_droplets(df):
             target_mapping[cl_best] = target
             remaining_cls.remove(cl_best)
     
-    # ENFORCE ASSIGNMENT: For any remaining clusters, assign to the closest target
-    # even if it's outside the tolerance
-    for cl in remaining_cls:
-        centroid = cluster_centroids[cl]
-        dists = {target: np.linalg.norm(centroid - ref) 
-                for target, ref in expected_centroids.items()}
-        closest_target = min(dists.items(), key=lambda x: x[1])[0]
-        
-        # If cluster is in a "reasonable" position, assign it
-        if dists[closest_target] < 1500:  # Generous distance tolerance
-            target_mapping[cl] = closest_target
-    
     # Add target labels to the dataframe
     df_filtered.loc[:, 'TargetLabel'] = df_filtered['cluster'].map(target_mapping)
     
     # Count droplets for each target
-    ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5', 'Chr4Chr2', 'Chr5Chr1', 'Unknown']
+    ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5', 'Unknown']
     label_counts = {label: len(df_filtered[df_filtered['TargetLabel'] == label]) 
-                for label in ordered_labels}
-    
+                   for label in ordered_labels}
+
     # Calculate relative copy numbers
     copy_numbers = calculate_copy_numbers(label_counts)
     

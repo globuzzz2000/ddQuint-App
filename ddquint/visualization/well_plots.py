@@ -31,8 +31,6 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         "Chrom3":   "#17becf",   # cyan
         "Chrom4":   "#d62728",   # red
         "Chrom5":   "#9467bd",   # purple
-        "Chr4Chr2":   "#000000",   # purple
-        "Chr5Chr1":   "#000000",   # purple
         "Unknown":  "#c7c7c7"    # light gray
     }
 
@@ -62,8 +60,8 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
             ax.set_title(f"Well {well_id}")
         
         # Set fixed axis limits
-        ax.set_xlim(0, 5000)
-        ax.set_ylim(0, 8000)
+        ax.set_xlim(0, 3000)
+        ax.set_ylim(0, 5000)
         
         # Add grid with standard spacing
         ax.grid(True)
@@ -162,8 +160,8 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         ax.set_title(f"Well {well_id}")
     
     # Set fixed axis limits - ensure X and Y scales are visually proportional
-    ax.set_xlim(0, 5000)
-    ax.set_ylim(0, 8000)
+    ax.set_xlim(0, 3000)
+    ax.set_ylim(0, 5000)
     
     # Add grid with standard spacing
     ax.grid(True, alpha=0.4, linewidth=0.8)

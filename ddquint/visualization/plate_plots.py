@@ -26,14 +26,15 @@ def create_composite_image(results, output_path):
     Returns:
         str: Path to the saved composite image
     """
-    print(f"Creating composite plate image...")
+    # Import tqdm for progress bar
+    from tqdm import tqdm
     
     # Keep track of all temporary files we create
     temp_files = []
     
     try:
-        # Generate optimized images for each well
-        for result in results:
+        # Generate optimized images for each well - with progress bar
+        for result in tqdm(results, desc="Creating Plate image", unit="well"):
             if not result.get('well'):
                 continue
                 
@@ -219,12 +220,10 @@ def create_composite_image(results, output_path):
         plt.close(fig)
         
         # Now explicitly delete each temporary file
-        print(f"Cleaning up {len(temp_files)} temporary files...")
         for temp_file in temp_files:
             try:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
-                    print(f"Deleted temporary file: {temp_file}")
             except Exception as e:
                 print(f"Error deleting temporary file {temp_file}: {e}")
         
@@ -243,115 +242,5 @@ def create_composite_image(results, output_path):
                     os.remove(temp_file)
             except:
                 pass  # Ignore errors during cleanup
-    
-    return output_path
-
-def create_summary_plot(results, output_path):
-    """
-    Create a summary plot showing copy number distribution across all samples.
-    
-    Args:
-        results (list): List of result dictionaries for each well
-        output_path (str): Path to save the summary plot
-        
-    Returns:
-        str: Path to the saved summary plot
-    """
-    print(f"Creating copy number summary plot...")
-    
-    # Extract copy numbers from results
-    all_copy_numbers = {}
-    for chrom in ['Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']:
-        all_copy_numbers[chrom] = []
-    
-    sample_names = []
-    abnormal_indices = []
-    
-    for i, result in enumerate(results):
-        if 'copy_numbers' in result and result['copy_numbers']:
-            # Extract sample name from filename or well ID
-            name = os.path.splitext(result.get('filename', ''))[0]
-            if not name:
-                name = result.get('well', f'Sample_{i+1}')
-            
-            sample_names.append(name)
-            
-            # Check if this sample is abnormal
-            if result.get('has_outlier', False):
-                abnormal_indices.append(i)
-            
-            # Add copy numbers for each chromosome
-            for chrom in all_copy_numbers:
-                if chrom in result['copy_numbers']:
-                    all_copy_numbers[chrom].append(result['copy_numbers'][chrom])
-                else:
-                    all_copy_numbers[chrom].append(np.nan)
-    
-    # Create the plot
-    if not sample_names:
-        print("No copy number data available for summary plot")
-        return None
-    
-    # Create figure
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    # Set up colors for chromosomes
-    colors = ['#ff7f0e', '#2ca02c', '#17becf', '#d62728', '#9467bd']  # Same as in well plots
-    
-    # Plot reference line for normal copy number (1.0)
-    ax.axhline(y=1.0, color='black', linestyle='-', alpha=0.3, linewidth=1)
-    
-    # Add shaded region for normal range (0.85-1.15)
-    ax.axhspan(0.85, 1.15, color='gray', alpha=0.1)
-    
-    # Position on x-axis
-    x = np.arange(len(sample_names))
-    width = 0.15  # Width of bars
-    
-    # Plot bars for each chromosome
-    bars = []
-    for i, (chrom, values) in enumerate(all_copy_numbers.items()):
-        pos = x + (i - 2) * width  # Center the bars
-        bar = ax.bar(pos, values, width, color=colors[i], alpha=0.7, label=chrom)
-        bars.append(bar)
-    
-    # Highlight abnormal samples
-    for idx in abnormal_indices:
-        ax.axvspan(idx - 0.4, idx + 0.4, color='#E6B8E6', alpha=0.3)
-    
-    # Add labels and title
-    ax.set_xlabel('Sample')
-    ax.set_ylabel('Copy Number')
-    ax.set_title('Copy Number Summary Across All Samples')
-    
-    # Adjust x-axis labels
-    if len(sample_names) > 20:
-        # For many samples, show indices instead of names
-        ax.set_xticks(x)
-        ax.set_xticklabels(range(1, len(sample_names) + 1), rotation=90, fontsize=8)
-    else:
-        # For fewer samples, show actual names
-        ax.set_xticks(x)
-        ax.set_xticklabels(sample_names, rotation=90, fontsize=8)
-    
-    # Add legend
-    ax.legend()
-    
-    # Set y-axis limits to focus on relevant range
-    valid_values = [v for vals in all_copy_numbers.values() for v in vals if not np.isnan(v)]
-    if valid_values:
-        y_min = max(0, min(valid_values) - 0.5)
-        y_max = min(3, max(valid_values) + 0.5)
-        ax.set_ylim(y_min, y_max)
-    
-    # Add grid
-    ax.grid(True, axis='y', linestyle='--', alpha=0.3)
-    
-    # Adjust layout
-    plt.tight_layout()
-    
-    # Save the plot with higher resolution
-    plt.savefig(output_path, dpi=200, bbox_inches='tight')
-    plt.close(fig)
     
     return output_path

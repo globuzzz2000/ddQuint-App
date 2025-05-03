@@ -44,7 +44,7 @@ else:
 
 from ddquint.utils.gui import select_directory
 from ddquint.core.file_processor import process_directory
-from ddquint.visualization.plate_plots import create_composite_image, create_summary_plot
+from ddquint.visualization.plate_plots import create_composite_image
 from ddquint.reporting.excel_report import create_excel_report
 
 def parse_arguments():
@@ -69,11 +69,6 @@ def parse_arguments():
         "--parallel",
         action="store_true",
         help="Enable parallel processing of files"
-    )
-    parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="Generate additional summary plots"
     )
     
     return parser.parse_args()
@@ -112,13 +107,8 @@ def main():
             os.makedirs(graphs_dir, exist_ok=True)
             
             # Create composite image
-            composite_path = os.path.join(output_dir, "All_Samples_Composite.png")
+            composite_path = os.path.join(output_dir, "Graph_Overview.png")
             create_composite_image(results, composite_path)
-            
-            # Create summary plot if requested
-            if args.summary:
-                summary_path = os.path.join(output_dir, "Copy_Number_Summary.png")
-                create_summary_plot(results, summary_path)
             
             # Create Excel report
             excel_path = os.path.join(output_dir, "Plate_Results.xlsx")
@@ -127,16 +117,11 @@ def main():
             # Count abnormal samples
             abnormal_count = sum(1 for r in results if r.get('has_outlier', False))
             
-            print("\n=== Analysis complete ===")
-            print(f"Processed {len(results)} files ({abnormal_count} potential aneuploidies)")
+
+            print(f"\nProcessed {len(results)} files ({abnormal_count} potential aneuploidies)")
             print(f"Results saved to: {os.path.abspath(output_dir)}")
+            print("=== Analysis complete ===")
             
-            # List output files
-            print("\nOutput files:")
-            print(f"  - Excel report: {os.path.basename(excel_path)}")
-            print(f"  - Composite image: {os.path.basename(composite_path)}")
-            if args.summary:
-                print(f"  - Summary plot: {os.path.basename(summary_path)}")
         else:
             print("No valid results were generated.")
         

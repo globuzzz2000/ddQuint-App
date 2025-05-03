@@ -63,15 +63,12 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
         # Analyze the droplets
         clustering_results = analyze_droplets(df_clean)
         
-        # Create two versions of the plot
+        # Create the plot
         standard_plot_path = os.path.join(graphs_dir, f"{well_coord}.png")
-        composite_plot_path = os.path.join(graphs_dir, f"{well_coord}_composite.png")
         
         # Create standard plot for individual viewing
         create_well_plot(df_clean, clustering_results, well_coord, standard_plot_path, for_composite=False)
-        
-        # Create optimized plot for composite image (no legend, maximized space)
-        create_well_plot(df_clean, clustering_results, well_coord, composite_plot_path, for_composite=True)
+
         
         # Return the results
         return {
@@ -80,8 +77,7 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
             'has_outlier': clustering_results.get('has_outlier', False),
             'copy_numbers': clustering_results.get('copy_numbers', {}),
             'counts': clustering_results.get('counts', {}),
-            'graph_path': standard_plot_path,
-            'composite_graph_path': composite_plot_path
+            'graph_path': standard_plot_path
         }
         
     except Exception as e:
@@ -112,7 +108,6 @@ def create_error_result(well_coord, filename, error_message, graphs_dir):
     # Save the plot
     if well_coord:
         save_path = os.path.join(graphs_dir, f"{well_coord}.png")
-        composite_save_path = os.path.join(graphs_dir, f"{well_coord}_composite.png")
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
         fig.savefig(composite_save_path, dpi=150, bbox_inches='tight')
     else:
@@ -146,6 +141,8 @@ def process_directory(input_dir, output_dir=None, verbose=False):
     Returns:
         list: List of result dictionaries
     """
+    from tqdm import tqdm  # Import tqdm for progress bar
+    
     if output_dir is None:
         output_dir = input_dir
     
@@ -168,13 +165,12 @@ def process_directory(input_dir, output_dir=None, verbose=False):
         print(f"No CSV files found in {input_dir}")
         return []
     
-    print(f"Processing {len(csv_files)} CSV files...")
-    
-    # Process each CSV file
+    # Process each CSV file with progress bar
     results = []
     processed_count = 0
     
-    for csv_file in csv_files:
+    # Use tqdm to create a progress bar
+    for csv_file in tqdm(csv_files, desc="Processing files", unit="file"):
         file_path = os.path.join(input_dir, csv_file)
         
         try:
