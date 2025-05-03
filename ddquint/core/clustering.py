@@ -50,8 +50,8 @@ def analyze_droplets(df):
     clusterer = HDBSCAN(
         min_cluster_size=min_cluster_size,
         min_samples=3,  # Reduced to create more clusters
-        cluster_selection_method='leaf',  # Changed to leaf for more granular clusters
-        cluster_selection_epsilon=0.02,  # Slightly reduced from 0.03
+        cluster_selection_method='leaf',
+        cluster_selection_epsilon=0.01,
         metric='euclidean',
         core_dist_n_jobs=-1  # Use all available cores
     )
@@ -63,22 +63,6 @@ def analyze_droplets(df):
     
     # Filter out noise points (cluster -1)
     df_filtered = df_copy[df_copy['cluster'] != -1].copy()
-    
-    # If no valid clusters were found or too few clusters, try with different parameters
-    if df_filtered.empty or len(df_filtered['cluster'].unique()) < 3:
-        # Second attempt with more aggressive parameters
-        clusterer = HDBSCAN(
-            min_cluster_size=max(5, min_cluster_size // 2),
-            min_samples=2,  # Even more aggressive
-            cluster_selection_method='leaf', 
-            alpha=0.8,  # Less conservative cluster selection
-            metric='euclidean',
-            core_dist_n_jobs=-1
-        )
-        
-        clusters = clusterer.fit_predict(X_scaled)
-        df_copy['cluster'] = clusters
-        df_filtered = df_copy[df_copy['cluster'] != -1].copy()
     
     # Define expected centroids for targets
     # These are in [FAM, HEX] order (Ch1Amplitude, Ch2Amplitude)
@@ -103,7 +87,7 @@ def analyze_droplets(df):
         "Negative": 350 * scale_factor,
         "Chrom1":   350 * scale_factor,
         "Chrom2":   350 * scale_factor,
-        "Chrom3":   500 * scale_factor,  # Increased tolerance for Chrom3
+        "Chrom3":   500 * scale_factor,
         "Chrom4":   400 * scale_factor,
         "Chrom5":   350 * scale_factor,
         "Chr4Chr2": 350 * scale_factor,
@@ -186,7 +170,7 @@ def analyze_droplets(df):
     copy_numbers = calculate_copy_numbers(label_counts)
     
     # Check for outliers in copy numbers
-    has_outlier = detect_abnormalities(copy_numbers)
+    has_outlier, abnormal_chroms = detect_abnormalities(copy_numbers)
     
     return {
         'clusters': clusters,
@@ -194,5 +178,6 @@ def analyze_droplets(df):
         'counts': label_counts,
         'copy_numbers': copy_numbers,
         'has_outlier': has_outlier,
+        'abnormal_chromosomes': abnormal_chroms,
         'target_mapping': target_mapping
     }
