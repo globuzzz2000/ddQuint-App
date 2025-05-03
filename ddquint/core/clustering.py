@@ -1,15 +1,19 @@
 """
-Clustering module for ddQuint
-Handles density-based clustering of droplet data and target assignment
+Enhanced clustering module for ddQuint
+Improved density-based clustering of droplet data and target assignment
 """
 
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from hdbscan import HDBSCAN
+import warnings
+
+# Import functions from their proper modules - fixed function name
+from ddquint.core.copy_number import calculate_copy_numbers, detect_abnormalities
 
 def analyze_droplets(df):
     """
-    Analyze droplet data using density-based clustering.
+    Analyze droplet data using enhanced density-based clustering.
     
     Args:
         df (pandas.DataFrame): DataFrame containing Ch1Amplitude and Ch2Amplitude columns
@@ -17,22 +21,39 @@ def analyze_droplets(df):
     Returns:
         dict: Clustering results including counts, copy numbers, and outlier status
     """
+    # Suppress specific sklearn warnings that don't affect results
+    warnings.filterwarnings("ignore", category=UserWarning, message=".*force_all_finite.*")
+    warnings.filterwarnings("ignore", category=FutureWarning)
+    
     # Make a full copy of input dataframe to avoid warnings
     df_copy = df.copy()
+    
+    # Check if we have enough data points for clustering
+    if len(df_copy) < 50:
+        return {
+            'clusters': np.array([-1] * len(df_copy)),
+            'counts': {},
+            'copy_numbers': {},
+            'has_outlier': False,
+            'target_mapping': {}
+        }
     
     # Standardize the data for clustering
     X = df_copy[['Ch1Amplitude', 'Ch2Amplitude']].values
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     
-    # Apply HDBSCAN clustering
+    # Apply adaptive min_cluster_size based on dataset size
+    min_cluster_size = max(8, int(len(df_copy) * 0.01))  # At least 1% of total points
+    
+    # Enhanced HDBSCAN clustering with improved parameters
     clusterer = HDBSCAN(
-        min_cluster_size=8,
-        min_samples=5,
-        cluster_selection_method='eom',
-        cluster_selection_epsilon=0.03,
+        min_cluster_size=min_cluster_size,
+        min_samples=3,  # Reduced to create more clusters
+        cluster_selection_method='leaf',  # Changed to leaf for more granular clusters
+        cluster_selection_epsilon=0.02,  # Slightly reduced from 0.03
         metric='euclidean',
-        core_dist_n_jobs=1
+        core_dist_n_jobs=-1  # Use all available cores
     )
     
     clusters = clusterer.fit_predict(X_scaled)
@@ -41,17 +62,23 @@ def analyze_droplets(df):
     df_copy['cluster'] = clusters
     
     # Filter out noise points (cluster -1)
-    df_filtered = df_copy[df_copy['cluster'] != -1].copy()  # Create a proper copy here
+    df_filtered = df_copy[df_copy['cluster'] != -1].copy()
     
-    # If no valid clusters were found, return empty results
-    if df_filtered.empty or len(df_filtered['cluster'].unique()) == 0:
-        return {
-            'clusters': clusters,
-            'counts': {},
-            'copy_numbers': {},
-            'has_outlier': False,
-            'target_mapping': {}
-        }
+    # If no valid clusters were found or too few clusters, try with different parameters
+    if df_filtered.empty or len(df_filtered['cluster'].unique()) < 3:
+        # Second attempt with more aggressive parameters
+        clusterer = HDBSCAN(
+            min_cluster_size=max(5, min_cluster_size // 2),
+            min_samples=2,  # Even more aggressive
+            cluster_selection_method='leaf', 
+            alpha=0.8,  # Less conservative cluster selection
+            metric='euclidean',
+            core_dist_n_jobs=-1
+        )
+        
+        clusters = clusterer.fit_predict(X_scaled)
+        df_copy['cluster'] = clusters
+        df_filtered = df_copy[df_copy['cluster'] != -1].copy()
     
     # Define expected centroids for targets
     # These are in [FAM, HEX] order (Ch1Amplitude, Ch2Amplitude)
@@ -59,19 +86,28 @@ def analyze_droplets(df):
         "Negative": np.array([800, 700]),
         "Chrom1":   np.array([800, 2300]),
         "Chrom2":   np.array([1700, 2100]),
-        "Chrom3":   np.array([3050, 1850]),
+        "Chrom3":   np.array([2700, 1900]),
         "Chrom4":   np.array([3300, 1250]),
-        "Chrom5":   np.array([3900, 700])
+        "Chrom5":   np.array([3700, 700]),
+        "Chr4Chr2": np.array([3300, 2250]),
+        "Chr5Chr1": np.array([3600, 2500])
     }
     
-    # Define tolerance for each target
+    # Define tolerance for each target (with adaptive scaling)
+    # Calculate overall scale factor based on data range
+    x_range = np.ptp(df_copy['Ch2Amplitude'])
+    y_range = np.ptp(df_copy['Ch1Amplitude'])
+    scale_factor = min(1.0, max(0.5, np.sqrt((x_range * y_range) / 2000000)))
+    
     target_tol = {
-        "Negative": 350,
-        "Chrom1":   350,
-        "Chrom2":   350,
-        "Chrom3":   400,
-        "Chrom4":   350,
-        "Chrom5":   350
+        "Negative": 350 * scale_factor,
+        "Chrom1":   350 * scale_factor,
+        "Chrom2":   350 * scale_factor,
+        "Chrom3":   500 * scale_factor,  # Increased tolerance for Chrom3
+        "Chrom4":   400 * scale_factor,
+        "Chrom5":   350 * scale_factor,
+        "Chr4Chr2": 350 * scale_factor,
+        "Chr5Chr1": 350 * scale_factor
     }
     
     # Calculate centroids for each cluster
@@ -88,9 +124,25 @@ def analyze_droplets(df):
     target_mapping = {cl: "Unknown" for cl in df_filtered['cluster'].unique()}
     remaining_cls = set(cluster_centroids.keys())
     
+    # First try assigning "Negative" since it's usually well defined
+    if "Negative" in expected_centroids:
+        neg_ref = expected_centroids["Negative"]
+        neg_dists = {
+            cl: np.linalg.norm(centroid - neg_ref)
+            for cl, centroid in cluster_centroids.items()
+            if cl in remaining_cls
+        }
+        
+        if neg_dists:
+            cl_best, d_best = min(neg_dists.items(), key=lambda t: t[1])
+            if d_best < target_tol["Negative"]:
+                target_mapping[cl_best] = "Negative"
+                remaining_cls.remove(cl_best)
+    
+    # Assign the rest of the targets
     for target, ref in expected_centroids.items():
-        if not remaining_cls:
-            break
+        if target == "Negative" or not remaining_cls:
+            continue
         
         # Calculate distances from each remaining cluster to this target
         dists = {
@@ -100,7 +152,7 @@ def analyze_droplets(df):
         }
         
         if not dists:
-            break
+            continue
         
         # Find the closest cluster
         cl_best, d_best = min(dists.items(), key=lambda t: t[1])
@@ -110,19 +162,31 @@ def analyze_droplets(df):
             target_mapping[cl_best] = target
             remaining_cls.remove(cl_best)
     
-    # Add target labels to the dataframe - FIX: use loc to avoid SettingWithCopyWarning
+    # ENFORCE ASSIGNMENT: For any remaining clusters, assign to the closest target
+    # even if it's outside the tolerance
+    for cl in remaining_cls:
+        centroid = cluster_centroids[cl]
+        dists = {target: np.linalg.norm(centroid - ref) 
+                for target, ref in expected_centroids.items()}
+        closest_target = min(dists.items(), key=lambda x: x[1])[0]
+        
+        # If cluster is in a "reasonable" position, assign it
+        if dists[closest_target] < 1500:  # Generous distance tolerance
+            target_mapping[cl] = closest_target
+    
+    # Add target labels to the dataframe
     df_filtered.loc[:, 'TargetLabel'] = df_filtered['cluster'].map(target_mapping)
     
     # Count droplets for each target
-    ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5', 'Unknown']
+    ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5', 'Chr4Chr2', 'Chr5Chr1', 'Unknown']
     label_counts = {label: len(df_filtered[df_filtered['TargetLabel'] == label]) 
-                   for label in ordered_labels}
+                for label in ordered_labels}
     
     # Calculate relative copy numbers
     copy_numbers = calculate_copy_numbers(label_counts)
     
     # Check for outliers in copy numbers
-    has_outlier = check_for_outliers(copy_numbers)
+    has_outlier = detect_abnormalities(copy_numbers)
     
     return {
         'clusters': clusters,
@@ -132,76 +196,3 @@ def analyze_droplets(df):
         'has_outlier': has_outlier,
         'target_mapping': target_mapping
     }
-
-def calculate_copy_numbers(label_counts):
-    """
-    Calculate relative copy numbers based on droplet counts.
-    
-    Args:
-        label_counts (dict): Counts for each target
-        
-    Returns:
-        dict: Relative copy numbers
-    """
-    # Extract raw counts for chromosomes
-    raw_vals = np.array([
-        label_counts.get('Chrom1', 0),
-        label_counts.get('Chrom2', 0),
-        label_counts.get('Chrom3', 0),
-        label_counts.get('Chrom4', 0),
-        label_counts.get('Chrom5', 0)
-    ])
-    
-    # Handle case with no droplets
-    if np.all(raw_vals == 0) or np.median(raw_vals) == 0:
-        return {}
-    
-    # Calculate median of non-zero values
-    median_val = np.median(raw_vals[raw_vals > 0]) if np.any(raw_vals > 0) else 1
-    
-    # Calculate deviations from median
-    with np.errstate(divide='ignore', invalid='ignore'):
-        dev = np.abs(raw_vals - median_val) / median_val
-        dev = np.nan_to_num(dev, nan=float('inf'))
-    
-    # Identify values close to the median (within 15%)
-    mask_good = dev < 0.15
-    
-    # Calculate baseline for normalization
-    if mask_good.sum() >= 3:
-        baseline = np.mean(raw_vals[mask_good])
-    else:
-        baseline = median_val
-    
-    # Calculate relative copy numbers
-    rel_vals = np.zeros_like(raw_vals, dtype=float)
-    for i in range(len(raw_vals)):
-        if baseline != 0 and raw_vals[i] != 0:
-            rel_vals[i] = raw_vals[i] / baseline
-        else:
-            rel_vals[i] = np.nan
-    
-    # Create dictionary of copy numbers
-    copy_numbers = {}
-    for i, chrom in enumerate(['Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']):
-        if not np.isnan(rel_vals[i]):
-            copy_numbers[chrom] = rel_vals[i]
-    
-    return copy_numbers
-
-def check_for_outliers(copy_numbers):
-    """
-    Check for outliers in copy numbers.
-    
-    Args:
-        copy_numbers (dict): Copy numbers for each chromosome
-        
-    Returns:
-        bool: True if outliers are detected, False otherwise
-    """
-    # Check if any chromosome has a copy number more than 15% different from 1.0
-    for val in copy_numbers.values():
-        if abs(val - 1.0) > 0.15:
-            return True
-    
-    return False

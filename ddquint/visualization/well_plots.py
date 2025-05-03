@@ -1,19 +1,24 @@
 """
-Well plot visualization module for ddQuint
+Fixed well plot visualization module for ddQuint
+Creates square plots with fixed and equal axes
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MultipleLocator
+import matplotlib as mpl
 
-def create_well_plot(df, clustering_results, well_id, save_path):
+def create_well_plot(df, clustering_results, well_id, save_path, for_composite=False, add_copy_numbers=False):
     """
-    Create a visualization plot for a single well.
+    Create an enhanced visualization plot for a single well with square aspect ratio.
     
     Args:
         df (pandas.DataFrame): DataFrame with droplet data
         clustering_results (dict): Results from clustering analysis
         well_id (str): Well identifier (e.g., 'A01')
         save_path (str): Path to save the plot
+        for_composite (bool): If True, creates a version optimized for the composite image
+        add_copy_numbers (bool): If True, adds copy number annotations to clusters
         
     Returns:
         str: Path to the saved plot
@@ -26,25 +31,49 @@ def create_well_plot(df, clustering_results, well_id, save_path):
         "Chrom3":   "#17becf",   # cyan
         "Chrom4":   "#d62728",   # red
         "Chrom5":   "#9467bd",   # purple
+        "Chr4Chr2":   "#000000",   # purple
+        "Chr5Chr1":   "#000000",   # purple
         "Unknown":  "#c7c7c7"    # light gray
     }
+
+    # And when building the legend, keep only the original targets
+    ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
+    
+    # Create figure with square proportions
+    # Adjust figure size based on whether it's for the composite image or standalone
+    if for_composite:
+        fig = plt.figure(figsize=(5, 5))  # Larger square figure for composite
+    else:
+        fig = plt.figure(figsize=(6, 5))  # Slightly wider for legend space
+    
+    # Get axes with absolute positioning (left, bottom, width, height)
+    if for_composite:
+        ax = fig.add_axes([0.1, 0.1, 0.85, 0.85])  # Ensure margins for axes
+    else:
+        ax = fig.add_axes([0.1, 0.1, 0.7, 0.8])  # Space for legend
     
     # Check if clustering was successful
     if 'df_filtered' not in clustering_results or clustering_results['df_filtered'].empty:
         # Create a basic plot with raw data
-        fig = plt.figure(figsize=(6, 5))
-        plt.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'], c='gray', s=4, alpha=0.5)
-        plt.xlabel("HEX Amplitude")
-        plt.ylabel("FAM Amplitude")
-        plt.title(f"Well {well_id} - No Valid Clusters Found")
-        plt.grid(True)
-        plt.tight_layout()
+        ax.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'], c='gray', s=4, alpha=0.5)
+        ax.set_xlabel("HEX Amplitude")
+        ax.set_ylabel("FAM Amplitude")
+        if not for_composite:
+            ax.set_title(f"Well {well_id}")
+        
+        # Set fixed axis limits
+        ax.set_xlim(0, 5000)
+        ax.set_ylim(0, 8000)
+        
+        # Add grid with standard spacing
+        ax.grid(True)
+        ax.xaxis.set_major_locator(MultipleLocator(500))
+        ax.yaxis.set_major_locator(MultipleLocator(1000))
+        
+        # Save figure with tight layout
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
         return save_path
-    
-    # Create figure for the well
-    fig = plt.figure(figsize=(6, 5))
     
     # Get filtered data with clusters
     df_filtered = clustering_results['df_filtered']
@@ -55,22 +84,44 @@ def create_well_plot(df, clustering_results, well_id, save_path):
     # Assign colors based on target labels
     df_filtered['color'] = df_filtered['TargetLabel'].map(label_color_map)
     
-    # If there are identified clusters, focus on them for the plot
-    single_pos = df_filtered[df_filtered['TargetLabel'] != "Unknown"]
+    # Plot all droplets, colored by target
+    ax.scatter(df_filtered['Ch2Amplitude'], df_filtered['Ch1Amplitude'],
+              c=df_filtered['color'], s=5 if for_composite else 4, alpha=0.6)
     
-    if not single_pos.empty:
-        # Calculate plot limits with padding
-        xmin, xmax = single_pos['Ch2Amplitude'].min(), single_pos['Ch2Amplitude'].max()
-        ymin, ymax = single_pos['Ch1Amplitude'].min(), single_pos['Ch1Amplitude'].max()
-        pad_x = (xmax - xmin) * 0.1
-        pad_y = (ymax - ymin) * 0.1
-        
-        # Plot all droplets, colored by target
-        plt.scatter(df_filtered['Ch2Amplitude'], df_filtered['Ch1Amplitude'],
-                    c=df_filtered['color'], s=4, alpha=0.5)
-        
+    # Add copy number annotations directly on the plot for composite images
+    if for_composite and add_copy_numbers and 'copy_numbers' in clustering_results:
+        copy_numbers = clustering_results['copy_numbers']
+        # For each target, calculate the centroid and add a label
+        for target, color in label_color_map.items():
+            if target not in ['Negative', 'Unknown'] and target in copy_numbers:
+                # Get all points for this target
+                target_points = df_filtered[df_filtered['TargetLabel'] == target]
+                if not target_points.empty:
+                    # Calculate centroid
+                    cx = target_points['Ch2Amplitude'].mean()
+                    cy = target_points['Ch1Amplitude'].mean()
+                    # Add copy number label
+                    cn_value = copy_numbers[target]
+                    # Format copy number - bold and a different color if it's an outlier
+                    # Use the has_outlier flag to determine if this is an outlier chromosome
+                    is_outlier = clustering_results.get('has_outlier', False) and abs(cn_value - 1.0) > 0.15
+                    cn_text = f"{cn_value:.2f}"
+                    ax.text(cx, cy, cn_text, 
+                            color='black' if not is_outlier else 'darkred',
+                            fontsize=7, fontweight='bold' if is_outlier else 'normal',
+                            ha='center', va='center',
+                            bbox=dict(facecolor='white', alpha=0.7, pad=1, edgecolor='none'))
+    
+    # Add noise points (cluster -1) with lower opacity
+    noise_points = df[~df.index.isin(df_filtered.index)]
+    if not noise_points.empty:
+        ax.scatter(noise_points['Ch2Amplitude'], noise_points['Ch1Amplitude'],
+                  c='lightgray', s=3, alpha=0.3)
+    
+    # Add legend only for standalone plots (not for composite)
+    if not for_composite:
         # Build legend
-        ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5', 'Unknown']
+        ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
         legend_handles = []
         
         for tgt in ordered_labels:
@@ -83,45 +134,57 @@ def create_well_plot(df, clustering_results, well_id, save_path):
             
             # Create label text
             if tgt == 'Negative':
-                label_text = f"{tgt} ({counts[tgt]})"
+                label_text = f"{tgt}"  # No count for negative droplets
             elif tgt in copy_numbers:
                 label_text = f"{tgt} ({copy_numbers[tgt]:.2f})"
             else:
                 label_text = f"{tgt} (N/A)"
                 
             # Create legend handle
-            handle = plt.Line2D([], [], marker='o', linestyle='', markersize=6,
-                              markerfacecolor=color, markeredgecolor='none', label=label_text)
+            handle = mpl.lines.Line2D([], [], marker='o', linestyle='', markersize=6,
+                                   markerfacecolor=color, markeredgecolor='none', label=label_text)
             legend_handles.append(handle)
         
-        # Add legend
-        plt.legend(handles=legend_handles, title="Target (copy number)",
-                   bbox_to_anchor=(1.05, 1), loc='upper left')
-        
-        # Set plot labels and title
-        plt.xlabel("HEX Amplitude")
-        plt.ylabel("FAM Amplitude")
-        plt.title(f"Well {well_id} - HEX vs FAM")
-        
-        # Set plot limits with padding
-        plt.xlim(max(0, xmin - pad_x), xmax + pad_x)
-        plt.ylim(max(0, ymin - pad_y), ymax + pad_y)
-        
-        # Add grid and adjust layout
-        plt.grid(True)
-        plt.tight_layout()
-        
-    else:
-        # If no clusters were found, create a basic plot
-        plt.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'], c='gray', s=3, alpha=0.4)
-        plt.xlabel("HEX Amplitude")
-        plt.ylabel("FAM Amplitude")
-        plt.title(f"Well {well_id} - HEX vs FAM")
-        plt.grid(True)
-        plt.tight_layout()
+        # Add legend to right side of plot, exclude "Unknown"
+        ax.legend(handles=legend_handles, title="Target (copy number)",
+                 bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
     
-    # Save the figure
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    # Set plot labels and title
+    if for_composite:
+        # Keep axis labels with normal size (same as non-composite plots)
+        ax.set_xlabel("HEX Amplitude", fontsize=10)
+        ax.set_ylabel("FAM Amplitude", fontsize=10)
+        ax.tick_params(axis='both', which='both', labelsize=8)
+        # Don't add the well number in the corner for composite plots
+    else:
+        ax.set_xlabel("HEX Amplitude")
+        ax.set_ylabel("FAM Amplitude")
+        ax.set_title(f"Well {well_id}")
+    
+    # Set fixed axis limits - ensure X and Y scales are visually proportional
+    ax.set_xlim(0, 5000)
+    ax.set_ylim(0, 8000)
+    
+    # Add grid with standard spacing
+    ax.grid(True, alpha=0.4, linewidth=0.8)
+    ax.xaxis.set_major_locator(MultipleLocator(500))
+    ax.yaxis.set_major_locator(MultipleLocator(1000))
+    
+    # Set equal aspect with set limits to ensure proper scaling
+    # This will stretch the plot to fill the axis area
+    ax.set_aspect('auto')
+    
+    # Make sure spines are visible and prominent
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(1.0)
+        spine.set_color('#000000')  # Black borders
+    
+    # Save the figure with appropriate resolution
+    dpi = 200 if for_composite else 150
+    
+    # Save with proper padding to ensure axes are visible
+    plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
     plt.close(fig)
     
     return save_path
