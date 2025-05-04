@@ -70,7 +70,7 @@ def create_composite_image(results, output_path):
                     'target_mapping': result.get('target_mapping'),  # Already computed
                     'counts': result.get('counts', {}),
                     'copy_numbers': result.get('copy_numbers', {}),
-                    'has_outlier': result.get('has_outlier', False),
+                    'has_aneuploidy': result.get('has_aneuploidy', False),
                     'chrom3_reclustered': result.get('chrom3_reclustered', False)
                 }
                 
@@ -134,12 +134,20 @@ def create_composite_image(results, output_path):
                             img = plt.imread(graph_path)
                             ax.imshow(img)
                             
-                            # Remove title
-                            ax.set_title("")
+                            # Add title
+                            if well in well_results and well_results[well].get('sample_name'):
+                                # Add sample name title for data wells
+                                ax.set_title(well_results[well]['sample_name'], fontsize=6, pad=2)
+                            elif well in well_results:
+                                # Add well ID title for data wells without sample names
+                                ax.set_title(well, fontsize=6, pad=2)
+                            else:
+                                # Add well ID for empty wells
+                                ax.set_title(well, fontsize=6, pad=2, color='gray')
                             
-                            # Add purple border for wells with outliers - ensure this is applied
-                            # Simply rely on the has_outlier flag that was set by the analysis modules
-                            if result.get('has_outlier', False):
+                            # Add purple border for wells with aneuploidies - ensure this is applied
+                            # Simply rely on the has_aneuploidy flag that was set by the analysis modules
+                            if result.get('has_aneuploidy', False):
                                 # Force purple border with increased visibility
                                 for spine in ax.spines.values():
                                     spine.set_edgecolor('#E6B8E6')  # Alternative way to set color 
@@ -189,9 +197,9 @@ def create_composite_image(results, output_path):
                     ax.spines[spine_name].set_linewidth(1)
                     ax.spines[spine_name].set_color('black')
                     
-                # Check again for outliers to ensure purple border is applied
-                # Simply use the has_outlier flag as determined by the analysis modules
-                if well in well_results and well_results[well].get('has_outlier', False):
+                # Check again for aneuploidies to ensure purple border is applied
+                # Simply use the has_aneuploidy flag as determined by the analysis modules
+                if well in well_results and well_results[well].get('has_aneuploidy', False):
                     for spine in ax.spines.values():
                         spine.set_color('#E6B8E6')
                         spine.set_linewidth(2)

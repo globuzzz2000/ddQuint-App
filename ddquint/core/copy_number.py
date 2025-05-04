@@ -60,9 +60,9 @@ def calculate_copy_numbers(target_counts):
     
     return copy_numbers
 
-def detect_abnormalities(copy_numbers, threshold=0.15):
+def detect_aneuploidies(copy_numbers, threshold=0.15):
     """
-    Detect chromosomal abnormalities based on copy numbers.
+    Detect aneuploidies based on copy numbers.
     
     Args:
         copy_numbers (dict): Copy numbers for each chromosome
@@ -111,7 +111,7 @@ def calculate_statistics(results):
     total_samples = len(results)
     
     for result in results:
-        if result.get('has_outlier', False):
+        if result.get('has_aneuploidy', False):
             abnormal_count += 1
             
         copy_numbers = result.get('copy_numbers', {})

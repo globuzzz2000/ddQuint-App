@@ -16,6 +16,12 @@ from .well_utils import (
     format_well_id, 
     get_all_wells
 )
+from .template_parser import (
+    find_template_file,
+    excel_coords_to_well_id,
+    parse_template_file,
+    get_sample_names
+)
 
 __all__ = [
     # File I/O utilities
@@ -34,5 +40,11 @@ __all__ = [
     'extract_well_coordinate',
     'is_valid_well',
     'format_well_id',
-    'get_all_wells'
+    'get_all_wells',
+
+    # Template utilities
+    'find_template_file',
+    'excel_coords_to_well_id',
+    'parse_template_file',
+    'get_sample_names'
 ]

@@ -97,30 +97,41 @@ def main():
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         
-        # Process the directory
-        results = process_directory(input_dir, output_dir, verbose=args.verbose)
+        # Get sample names from template file
+        from ddquint.utils.template_parser import get_sample_names
+        sample_names = get_sample_names(input_dir)
+        
+        # Process the directory with sample names
+        results = process_directory(input_dir, output_dir, sample_names, verbose=args.verbose)
         
         # Create output files if we have results
         if results:
+            # Add sample names to results
+            for result in results:
+                well_id = result.get('well')
+                if well_id and well_id in sample_names:
+                    result['sample_name'] = sample_names[well_id]
+            
             # Create output subdirectories
             graphs_dir = os.path.join(output_dir, "Graphs")
             os.makedirs(graphs_dir, exist_ok=True)
             
-            # Create composite image
+            # Create composite image with sample names
             composite_path = os.path.join(output_dir, "Graph_Overview.png")
             create_composite_image(results, composite_path)
             
-            # Create Excel report
+            # Create Excel report with sample names
             excel_path = os.path.join(output_dir, "Plate_Results.xlsx")
             create_excel_report(results, excel_path)
             
-            # Count abnormal samples
-            abnormal_count = sum(1 for r in results if r.get('has_outlier', False))
+            # Count aneuploid samples
+            aneuploid_count = sum(1 for r in results if r.get('has_aneuploidy', False))
             
 
-            print(f"\nProcessed {len(results)} files ({abnormal_count} potential aneuploidies)")
+            print(f"\nProcessed {len(results)} files ({aneuploid_count} potential aneuploidies)")
             print(f"Results saved to: {os.path.abspath(output_dir)}")
             print("=== Analysis complete ===")
+            print("")
             
         else:
             print("No valid results were generated.")

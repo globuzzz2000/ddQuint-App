@@ -13,13 +13,14 @@ from ..utils.well_utils import extract_well_coordinate
 from ..core.clustering import analyze_droplets
 from ..visualization.well_plots import create_well_plot
 
-def process_csv_file(file_path, graphs_dir, verbose=False):
+def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
     """
     Process a single CSV file and return the results.
     
     Args:
         file_path (str): Path to the CSV file
         graphs_dir (str): Directory to save graphs
+        sample_names (dict): Optional mapping of well IDs to sample names
         verbose (bool): Enable verbose output
         
     Returns:
@@ -66,15 +67,20 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
         # Create the plot
         standard_plot_path = os.path.join(graphs_dir, f"{well_coord}.png")
         
-        # Create standard plot for individual viewing
-        create_well_plot(df_clean, clustering_results, well_coord, standard_plot_path, for_composite=False)
+        # Get the sample name from the template if available
+        template_name = sample_names.get(well_coord) if sample_names else None
+        
+        # Create standard plot for individual viewing with sample name
+        create_well_plot(df_clean, clustering_results, well_coord, 
+                        standard_plot_path, for_composite=False, 
+                        sample_name=template_name)
 
         
         # Return the results
-        return {
+        result = {
             'well': well_coord,
             'filename': basename,
-            'has_outlier': clustering_results.get('has_outlier', False),
+            'has_aneuploidy': clustering_results.get('has_aneuploidy', False),
             'copy_numbers': clustering_results.get('copy_numbers', {}),
             'counts': clustering_results.get('counts', {}),
             'graph_path': standard_plot_path,
@@ -82,6 +88,12 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
             'target_mapping': clustering_results.get('target_mapping'), 
             'chrom3_reclustered': clustering_results.get('chrom3_reclustered', False)
         }
+        
+        # Add sample name if available
+        if template_name:
+            result['sample_name'] = template_name
+            
+        return result
         
     except Exception as e:
         if verbose:
@@ -112,10 +124,8 @@ def create_error_result(well_coord, filename, error_message, graphs_dir):
     if well_coord:
         save_path = os.path.join(graphs_dir, f"{well_coord}.png")
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
-        fig.savefig(composite_save_path, dpi=150, bbox_inches='tight')
     else:
         save_path = os.path.join(graphs_dir, f"{os.path.splitext(filename)[0]}_error.png")
-        composite_save_path = save_path
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
     
     plt.close(fig)
@@ -124,21 +134,21 @@ def create_error_result(well_coord, filename, error_message, graphs_dir):
     return {
         'well': well_coord,
         'filename': filename,
-        'has_outlier': False,
+        'has_aneuploidy': False,
         'copy_numbers': {},
         'counts': {},
         'graph_path': save_path,
-        'composite_graph_path': composite_save_path,
         'error': error_message
     }
 
-def process_directory(input_dir, output_dir=None, verbose=False):
+def process_directory(input_dir, output_dir=None, sample_names=None, verbose=False):
     """
     Process all CSV files in the input directory.
     
     Args:
         input_dir (str): Directory containing CSV files
         output_dir (str): Directory to save output files (defaults to input_dir)
+        sample_names (dict): Optional mapping of well IDs to sample names
         verbose (bool): Enable verbose output
         
     Returns:
@@ -177,8 +187,8 @@ def process_directory(input_dir, output_dir=None, verbose=False):
         file_path = os.path.join(input_dir, csv_file)
         
         try:
-            # Process the file
-            result = process_csv_file(file_path, graphs_dir, verbose)
+            # Process the file with sample names
+            result = process_csv_file(file_path, graphs_dir, sample_names, verbose)
             if result:
                 results.append(result)
                 processed_count += 1

@@ -17,8 +17,8 @@ COL_LABELS = [str(i) for i in range(1, 13)]  # 1-12
 
 # Define cell colors
 NORMAL_FILL = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-OUTLIER_FILL = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")  # Light purple
-OUTLIER_VALUE_FILL = PatternFill(start_color="D070D0", end_color="D070D0", fill_type="solid")  # Darker purple
+ANEUPLOIDY_FILL = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")  # Light purple
+ANEUPLOIDY_VALUE_FILL = PatternFill(start_color="D070D0", end_color="D070D0", fill_type="solid")  # Darker purple
 
 # Define border styles - revised for better clarity
 thin = Side(style='thin')
@@ -185,33 +185,35 @@ def add_well_data(ws, start_row, start_col, well_id, result):
         well_id: Well identifier (e.g., 'A1')
         result: Result dictionary for this well, or None if no data
     """
-    # Add "name" header for the well (will be merged later)
+    # Add the sample name to the first row (which will be merged later)
     name_cell = ws.cell(row=start_row, column=start_col)
-    name_cell.value = "name"
-    name_cell.alignment = Alignment(horizontal='center')
     
-    # Will set blank values to cells that will be merged
+    if result:
+        # Get the sample name from the result or fallback to filename or well_id
+        sample_name = result.get('sample_name')
+        if not sample_name:
+            filename = result.get('filename', '')
+            sample_name = os.path.splitext(filename)[0] if filename else well_id
+            
+        name_cell.value = sample_name
+        name_cell.alignment = Alignment(horizontal='center', wrap_text=True)
+        name_cell.font = Font(size=9)
+    else:
+        # For empty wells, show the well ID
+        name_cell.value = well_id
+        name_cell.alignment = Alignment(horizontal='center')
+        name_cell.font = Font(size=9, color='C0C0C0')  # Light gray for empty wells
+    
+    # Will set blank values to cells that will be merged with the name cell
     ws.cell(row=start_row, column=start_col+1).value = ""
     ws.cell(row=start_row, column=start_col+2).value = ""
     
-    # If we have a result for this well, fill in the data
+    # If we have a result for this well, fill in the chromosome data
     if result:
-        # Get the sample name from the filename
-        filename = result.get('filename', '')
-        sample_name = os.path.splitext(filename)[0] if filename else well_id
-        
-        # Add sample name to the "name" row (will be merged later)
-        sample_cell = ws.cell(row=start_row+1, column=start_col)
-        sample_cell.value = sample_name
-        
-        # These will be merged later but set to empty now
-        ws.cell(row=start_row+1, column=start_col+1).value = ""
-        ws.cell(row=start_row+1, column=start_col+2).value = ""
-        
         # Get count data and copy numbers
         counts = result.get('counts', {})
         copy_numbers = result.get('copy_numbers', {})
-        has_outlier = result.get('has_outlier', False)
+        has_aneuploidy = result.get('has_aneuploidy', False)
         
         # Create cells for each chromosome
         for chrom_idx, chrom_suffix in enumerate(range(1, 6)):
@@ -224,11 +226,14 @@ def add_well_data(ws, start_row, start_col, well_id, result):
             # Chromosome name cell
             chrom_cell = ws.cell(row=chrom_row, column=start_col)
             chrom_cell.value = chrom
+            chrom_cell.font = Font(size=9)
             
             # Absolute count cell
             abs_cell = ws.cell(row=chrom_row, column=start_col+1)
             abs_count = counts.get(chrom_key, 0)
             abs_cell.value = abs_count if abs_count > 0 else None
+            abs_cell.font = Font(size=9)
+            abs_cell.alignment = Alignment(horizontal='center')
             
             # Relative count cell
             rel_cell = ws.cell(row=chrom_row, column=start_col+2)
@@ -236,17 +241,19 @@ def add_well_data(ws, start_row, start_col, well_id, result):
             if rel_count is not None:
                 rel_cell.value = round(rel_count, 2)
                 rel_cell.number_format = '0.00'
+                rel_cell.font = Font(size=9)
+                rel_cell.alignment = Alignment(horizontal='center')
             
-            # Apply highlighting for outliers
-            if has_outlier:
-                # Base coloring for all cells in outlier wells
-                chrom_cell.fill = OUTLIER_FILL
-                abs_cell.fill = OUTLIER_FILL
-                rel_cell.fill = OUTLIER_FILL
+            # Apply highlighting for aneuploidies
+            if has_aneuploidy:
+                # Base coloring for all cells in aneuploidy wells
+                chrom_cell.fill = ANEUPLOIDY_FILL
+                abs_cell.fill = ANEUPLOIDY_FILL
+                rel_cell.fill = ANEUPLOIDY_FILL
                 
-                # Darker coloring for the specific outlier value
+                # Darker coloring for the specific aneuploidy value
                 if rel_count is not None and abs(rel_count - 1.0) > 0.15:
-                    rel_cell.fill = OUTLIER_VALUE_FILL
+                    rel_cell.fill = ANEUPLOIDY_VALUE_FILL
     else:
         # If no data for this well, just add the chromosome labels
         for chrom_idx, chrom_suffix in enumerate(range(1, 6)):
@@ -254,6 +261,7 @@ def add_well_data(ws, start_row, start_col, well_id, result):
             chrom_row = start_row + 1 + chrom_idx
             chrom_cell = ws.cell(row=chrom_row, column=start_col)
             chrom_cell.value = chrom
+            chrom_cell.font = Font(size=9, color='C0C0C0')  # Light gray for empty wells
 
 def apply_cell_merges(ws):
     """
@@ -269,13 +277,13 @@ def apply_cell_merges(ws):
         start_row = row_idx * 6 + 3
         ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row+5, end_column=1)
     
-    # Merge well name headers and sample names
+    # Merge well name cells
     for row_idx in range(len(ROW_LABELS)):
         for col_idx in range(len(COL_LABELS)):
             start_row = row_idx * 6 + 3
             start_col = col_idx * 3 + 2
             
-            # Merge the name header
+            # Merge the name cell (first row of well)
             ws.merge_cells(start_row=start_row, start_column=start_col, end_row=start_row, end_column=start_col+2)
 
 

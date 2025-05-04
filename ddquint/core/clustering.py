@@ -9,7 +9,7 @@ from hdbscan import HDBSCAN
 import warnings
 
 # Import functions from their proper modules - fixed function name
-from ..core.copy_number import calculate_copy_numbers, detect_abnormalities
+from ..core.copy_number import calculate_copy_numbers, detect_aneuploidies
 
 def analyze_droplets(df):
     """
@@ -19,7 +19,7 @@ def analyze_droplets(df):
         df (pandas.DataFrame): DataFrame containing Ch1Amplitude and Ch2Amplitude columns
         
     Returns:
-        dict: Clustering results including counts, copy numbers, and outlier status
+        dict: Clustering results including counts, copy numbers, and aneuploidy status
     """
     # Suppress specific sklearn warnings that don't affect results
     warnings.filterwarnings("ignore", category=UserWarning, message=".*force_all_finite.*")
@@ -34,7 +34,7 @@ def analyze_droplets(df):
             'clusters': np.array([-1] * len(df_copy)),
             'counts': {},
             'copy_numbers': {},
-            'has_outlier': False,
+            'has_aneuploidy': False,
             'target_mapping': {}
         }
     
@@ -151,15 +151,15 @@ def analyze_droplets(df):
     # Calculate relative copy numbers
     copy_numbers = calculate_copy_numbers(label_counts)
     
-    # Check for outliers in copy numbers
-    has_outlier, abnormal_chroms = detect_abnormalities(copy_numbers)
+    # Check for aneuploidies in copy numbers
+    has_aneuploidy, abnormal_chroms = detect_aneuploidies(copy_numbers)
     
     return {
         'clusters': df_copy['cluster'].values,
         'df_filtered': df_filtered, 
         'counts': label_counts,
         'copy_numbers': copy_numbers,
-        'has_outlier': has_outlier,
+        'has_aneuploidy': has_aneuploidy,
         'abnormal_chromosomes': abnormal_chroms,
         'target_mapping': target_mapping
     }

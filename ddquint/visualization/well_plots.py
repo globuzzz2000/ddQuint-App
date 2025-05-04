@@ -8,7 +8,8 @@ import numpy as np
 from matplotlib.ticker import MultipleLocator
 import matplotlib as mpl
 
-def create_well_plot(df, clustering_results, well_id, save_path, for_composite=False, add_copy_numbers=False):
+
+def create_well_plot(df, clustering_results, well_id, save_path, for_composite=False, add_copy_numbers=False, sample_name=None):
     """
     Create an enhanced visualization plot for a single well with square aspect ratio.
     
@@ -19,10 +20,12 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         save_path (str): Path to save the plot
         for_composite (bool): If True, creates a version optimized for the composite image
         add_copy_numbers (bool): If True, adds copy number annotations to clusters
+        sample_name (str): Optional sample name to include in title
         
     Returns:
         str: Path to the saved plot
     """
+
     # Define color map for targets
     label_color_map = {
         "Negative": "#1f77b4",   # blue
@@ -100,13 +103,13 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
                     cy = target_points['Ch1Amplitude'].mean()
                     # Add copy number label
                     cn_value = copy_numbers[target]
-                    # Format copy number - bold and a different color if it's an outlier
-                    # Use the has_outlier flag to determine if this is an outlier chromosome
-                    is_outlier = clustering_results.get('has_outlier', False) and abs(cn_value - 1.0) > 0.15
+                    # Format copy number - bold and a different color if it's an aneuploidy
+                    # Use the has_aneuploidy flag to determine if this is an aneuploidy chromosome
+                    is_aneuploidy = clustering_results.get('has_aneuploidy', False) and abs(cn_value - 1.0) > 0.15
                     cn_text = f"{cn_value:.2f}"
                     ax.text(cx, cy, cn_text, 
-                            color='black' if not is_outlier else 'darkred',
-                            fontsize=7, fontweight='bold' if is_outlier else 'normal',
+                            color='black' if not is_aneuploidy else 'darkred',
+                            fontsize=7, fontweight='bold' if is_aneuploidy else 'normal',
                             ha='center', va='center',
                             bbox=dict(facecolor='white', alpha=0.7, pad=1, edgecolor='none'))
     
@@ -157,7 +160,12 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
     else:
         ax.set_xlabel("HEX Amplitude")
         ax.set_ylabel("FAM Amplitude")
-        ax.set_title(f"Well {well_id}")
+        
+        # Set title with sample name if available
+        if sample_name:
+            ax.set_title(f"Well {well_id} - {sample_name}")
+        else:
+            ax.set_title(f"Well {well_id}")
     
     # Set fixed axis limits - ensure X and Y scales are visually proportional
     ax.set_xlim(0, 3000)
