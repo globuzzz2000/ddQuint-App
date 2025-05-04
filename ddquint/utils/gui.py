@@ -1,6 +1,5 @@
 """
-Final fixed GUI utilities for ddQuint
-Provides dialog functions with persistent memory and proper cleanup
+GUI utilities for ddQuint with debug logging
 """
 
 import os
@@ -9,6 +8,7 @@ import json
 import platform
 import contextlib
 import time
+import logging
 
 # Path to store configuration - ensure lowercase for consistency
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".ddquint")
@@ -17,7 +17,10 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 @contextlib.contextmanager
 def _silence_stderr():
     """Temporarily redirect stderr to /dev/null to suppress wxPython warnings."""
+    logger = logging.getLogger("ddQuint")
+    
     if platform.system() == "Darwin":
+        logger.debug("Silencing stderr for macOS wxPython warnings")
         import os
         old_fd = os.dup(2)
         try:
@@ -28,7 +31,9 @@ def _silence_stderr():
         finally:
             os.dup2(old_fd, 2)
             os.close(old_fd)
+            logger.debug("Restored stderr")
     else:
+        logger.debug("Non-macOS platform, no stderr silencing needed")
         yield
 
 def get_config():
@@ -38,14 +43,21 @@ def get_config():
     Returns:
         dict: Configuration dictionary
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug(f"Loading config from {CONFIG_FILE}")
+    
     config = {}
     
     try:
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
+            logger.debug(f"Loaded config: {config}")
+        else:
+            logger.debug(f"Config file does not exist: {CONFIG_FILE}")
     except Exception as e:
-        print(f"Warning: Could not load config: {str(e)}")
+        logger.error(f"Error loading config: {str(e)}")
+        logger.debug("Error details:", exc_info=True)
     
     return config
 
@@ -56,9 +68,14 @@ def save_config(config):
     Args:
         config (dict): Configuration dictionary
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug(f"Saving config to {CONFIG_FILE}")
+    logger.debug(f"Config to save: {config}")
+    
     try:
         # Create directory with explicit permissions
         if not os.path.exists(CONFIG_DIR):
+            logger.debug(f"Creating config directory: {CONFIG_DIR}")
             os.makedirs(CONFIG_DIR, mode=0o755, exist_ok=True)
         
         # Write config with explicit sync to ensure disk writing
@@ -69,9 +86,12 @@ def save_config(config):
         
         # Verify the file was written
         if not os.path.exists(CONFIG_FILE):
-            print(f"Warning: Config file not created after save attempt")
+            logger.error(f"Config file not created after save attempt")
+        else:
+            logger.debug(f"Config file successfully saved to {CONFIG_FILE}")
     except Exception as e:
-        print(f"Warning: Could not save config: {str(e)}")
+        logger.error(f"Error saving config: {str(e)}")
+        logger.debug("Error details:", exc_info=True)
 
 def select_directory():
     """
@@ -80,9 +100,13 @@ def select_directory():
     Returns:
         str: Selected directory path, or None if cancelled
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug("Starting directory selection")
+    
     # Load saved configuration
     config = get_config()
     last_dir = config.get('last_directory')
+    logger.debug(f"Last used directory: {last_dir}")
     
     # Get parent directory of last directory if it exists
     # Otherwise use a sensible default
@@ -92,21 +116,25 @@ def select_directory():
         # Check if parent directory exists and is accessible
         if parent_dir and os.path.isdir(parent_dir):
             default_path = parent_dir
+            logger.debug(f"Using parent directory: {default_path}")
         else:
             default_path = last_dir
-            print(f"Parent directory not valid, using last directory: {default_path}")
+            logger.debug(f"Parent directory not valid, using last directory: {default_path}")
     else:
         default_path = find_default_directory()
+        logger.debug(f"Found default directory: {default_path}")
     
     # Create a global app instance to prevent early cleanup
     global _wx_app, _keep_alive
     
     # Try using wxPython dialog
     try:
+        logger.debug("Importing wxPython")
         import wx
         
         # Create a persistent application instance and store globally
         _wx_app = wx.App(False)
+        logger.debug("Created wxPython app instance")
         
         # Suppress stderr output to avoid NSOpenPanel warning on macOS
         with _silence_stderr():
@@ -122,9 +150,13 @@ def select_directory():
                 style=style
             )
             
+            logger.debug("Showing directory dialog")
             directory = None
             if dlg.ShowModal() == wx.ID_OK:
                 directory = dlg.GetPath()
+                logger.debug(f"Selected directory: {directory}")
+            else:
+                logger.debug("Dialog cancelled")
             
             dlg.Destroy()
             
@@ -135,8 +167,9 @@ def select_directory():
                     NSApplication = AppKit.NSApplication.sharedApplication()
                     # Hide the application after selection is complete
                     NSApplication.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
+                    logger.debug("Set macOS application policy to accessory")
                 except:
-                    pass
+                    logger.debug("Could not set macOS application policy")
         
         # Make sure wx.App is properly cleaned up
         _wx_app = None
@@ -150,15 +183,16 @@ def select_directory():
             # Double-check that the config was saved for debugging
             verify_config = get_config()
             if verify_config.get('last_directory') != directory:
-                print(f"Warning: Config verification failed. Expected: {directory}, Got: {verify_config.get('last_directory')}")
+                logger.error(f"Config verification failed. Expected: {directory}, Got: {verify_config.get('last_directory')}")
             
             return directory
             
     except ImportError:
-        print("wxPython not available, falling back to console input.")
+        logger.info("wxPython not available, falling back to console input")
     except Exception as e:
-        print(f"Error in GUI dialog: {str(e)}")
-        print("Falling back to console input.")
+        logger.error(f"Error in GUI dialog: {str(e)}")
+        logger.debug("Error details:", exc_info=True)
+        logger.info("Falling back to console input")
     
     # Fall back to CLI mode if GUI failed
     print("\nEnter full path to directory containing CSV files:")
@@ -167,9 +201,11 @@ def select_directory():
     # If the user just pressed Enter, use the default path
     if not directory and default_path:
         directory = default_path
+        print(f"Using default path: {directory}")
     
     # Validate the input directory
     if not os.path.isdir(directory):
+        logger.error(f"Invalid directory: {directory}")
         print(f"Error: '{directory}' is not a valid directory.")
         return None
     
@@ -191,6 +227,9 @@ def select_file(default_path=None, title="Select file", wildcard="CSV files (*.c
     Returns:
         str: Selected file path or None if canceled
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug(f"Starting file selection. Title: {title}, Wildcard: {wildcard}")
+    
     # Load saved configuration
     config = get_config()
     last_dir = config.get('last_directory')
@@ -203,16 +242,20 @@ def select_file(default_path=None, title="Select file", wildcard="CSV files (*.c
             # Check if parent directory exists and is accessible
             if parent_dir and os.path.isdir(parent_dir):
                 default_path = parent_dir
+                logger.debug(f"Using parent directory: {default_path}")
             else:
                 default_path = last_dir
+                logger.debug(f"Using last directory: {default_path}")
         else:
             default_path = find_default_directory()
+            logger.debug(f"Found default directory: {default_path}")
     
     # Create a global app instance to prevent early cleanup
     global _wx_app, _keep_alive
     
     # Try using wxPython dialog
     try:
+        logger.debug("Importing wxPython for file dialog")
         import wx
         
         # Create a persistent application instance and store globally
@@ -233,13 +276,17 @@ def select_file(default_path=None, title="Select file", wildcard="CSV files (*.c
                 style=style
             )
             
+            logger.debug("Showing file dialog")
             file_path = None
             if dlg.ShowModal() == wx.ID_OK:
                 file_path = dlg.GetPath()
+                logger.debug(f"Selected file: {file_path}")
                 
                 # Save the selected directory for next time
                 config['last_directory'] = os.path.dirname(file_path)
                 save_config(config)
+            else:
+                logger.debug("File dialog cancelled")
             
             dlg.Destroy()
             
@@ -261,10 +308,11 @@ def select_file(default_path=None, title="Select file", wildcard="CSV files (*.c
             return file_path
             
     except ImportError:
-        print("wxPython not available, falling back to console input.")
+        logger.info("wxPython not available, falling back to console input")
     except Exception as e:
-        print(f"Error in GUI dialog: {str(e)}")
-        print("Falling back to console input.")
+        logger.error(f"Error in GUI dialog: {str(e)}")
+        logger.debug("Error details:", exc_info=True)
+        logger.info("Falling back to console input")
     
     # Fallback to manual input
     print(f"\nEnter full path to file ({wildcard.split('|')[0]}):")
@@ -273,6 +321,7 @@ def select_file(default_path=None, title="Select file", wildcard="CSV files (*.c
     
     # Validate the input file
     if not os.path.isfile(file_path):
+        logger.error(f"Invalid file: {file_path}")
         print(f"Error: '{file_path}' is not a valid file.")
         return None
     
@@ -289,10 +338,14 @@ def find_default_directory():
     Returns:
         str: Default directory path or None if not found
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug("Finding default directory")
+    
     # Check common locations
     potential_paths = []
     
     home_dir = os.path.expanduser("~")
+    logger.debug(f"Home directory: {home_dir}")
     
     # Add OS-specific common locations
     if sys.platform == 'win32':  # Windows
@@ -302,6 +355,7 @@ def find_default_directory():
             os.path.join(home_dir, "Desktop"),
             "C:\\Data"
         ])
+        logger.debug("Added Windows-specific paths")
     elif sys.platform == 'darwin':  # macOS
         potential_paths.extend([
             os.path.join(home_dir, "Downloads"),
@@ -310,6 +364,7 @@ def find_default_directory():
             os.path.join(home_dir, "Library", "Mobile Documents"),
             "/Volumes"
         ])
+        logger.debug("Added macOS-specific paths")
     else:  # Linux/Unix
         potential_paths.extend([
             os.path.join(home_dir, "Downloads"),
@@ -318,17 +373,23 @@ def find_default_directory():
             "/mnt",
             "/media"
         ])
+        logger.debug("Added Linux-specific paths")
     
     # Check if script is running from a valid directory
     current_dir = os.getcwd()
     potential_paths.insert(0, current_dir)
+    logger.debug(f"Added current directory: {current_dir}")
     
     # Return the first valid directory
     for path in potential_paths:
         if os.path.exists(path) and os.path.isdir(path):
+            logger.debug(f"Found valid directory: {path}")
             return path
+        else:
+            logger.debug(f"Path not valid: {path}")
     
     # If no valid directories found, return home directory
+    logger.debug(f"Using home directory as fallback: {home_dir}")
     return home_dir
 
 # Initialize global variables for wxPython instance management

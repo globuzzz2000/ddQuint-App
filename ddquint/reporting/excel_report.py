@@ -1,15 +1,16 @@
 """
-Robust Excel report generation module for ddQuint
-Creates a detailed Excel report with copy number results in a specific grid layout
-with proper borders and merged headers
+Excel report generation module for ddQuint with dynamic chromosome support
 """
 
 import os
 import numpy as np
 import traceback
+import logging
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
 from openpyxl.utils import get_column_letter
+
+from ..config.config import Config
 
 # Define plate layout constants
 ROW_LABELS = list('ABCDEFGH')
@@ -17,39 +18,16 @@ COL_LABELS = [str(i) for i in range(1, 13)]  # 1-12
 
 # Define cell colors
 NORMAL_FILL = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-ANEUPLOIDY_FILL = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")  # Light purple
-ANEUPLOIDY_VALUE_FILL = PatternFill(start_color="D070D0", end_color="D070D0", fill_type="solid")  # Darker purple
+ANEUPLOIDY_FILL = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")
+ANEUPLOIDY_VALUE_FILL = PatternFill(start_color="D070D0", end_color="D070D0", fill_type="solid")
 
-# Define border styles - revised for better clarity
+# Define border styles
 thin = Side(style='thin')
 thick = Side(style='thick')
 
 # Standard borders
 thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
 thick_border = Border(left=thick, right=thick, top=thick, bottom=thick)
-
-# Specialized borders for well boundaries
-# For top borders
-top_thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
-top_thick_border = Border(left=thin, right=thin, top=thick, bottom=thin)
-top_thick_left_border = Border(left=thick, right=thin, top=thick, bottom=thin)
-top_thick_right_border = Border(left=thin, right=thick, top=thick, bottom=thin)
-
-# For bottom borders
-bottom_thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
-bottom_thick_border = Border(left=thin, right=thin, top=thin, bottom=thick)
-bottom_thick_left_border = Border(left=thick, right=thin, top=thin, bottom=thick)
-bottom_thick_right_border = Border(left=thin, right=thick, top=thin, bottom=thick)
-
-# For left/right borders
-left_thick_border = Border(left=thick, right=thin, top=thin, bottom=thin)
-right_thick_border = Border(left=thin, right=thick, top=thin, bottom=thin)
-
-# Corner borders - completely redefined for clarity
-top_left_corner = Border(left=thick, right=thin, top=thick, bottom=thin)
-top_right_corner = Border(left=thin, right=thick, top=thick, bottom=thin)
-bottom_left_corner = Border(left=thick, right=thin, top=thin, bottom=thick)
-bottom_right_corner = Border(left=thin, right=thick, top=thin, bottom=thick)
 
 def create_excel_report(results, output_path, template_path=None):
     """
@@ -63,63 +41,81 @@ def create_excel_report(results, output_path, template_path=None):
     Returns:
         str: Path to the saved Excel report
     """
-    print(f"Creating Excel report...")
+    logger = logging.getLogger("ddQuint")
+    config = Config.get_instance()
+    
+    # Get the number of chromosomes from config
+    chromosome_keys = config.get_chromosome_keys()
+    num_chromosomes = len(chromosome_keys)
+    
+    logger.debug(f"Creating Excel report for {len(results)} results with {num_chromosomes} chromosomes")
+    logger.debug(f"Output path: {output_path}")
     
     try:
         # Create a new workbook
         wb = Workbook()
         ws = wb.active
         ws.title = "Plate Results"
+        logger.debug("Created new workbook")
 
         # Create the full grid layout without any merging first
-        create_grid_layout_without_merging(ws, results)
+        create_grid_layout_without_merging(ws, results, num_chromosomes)
         
         # Apply all cell merges AFTER setting values
-        apply_cell_merges(ws)
+        apply_cell_merges(ws, num_chromosomes)
         
         # Apply formatting and borders
-        apply_formatting(ws)
+        apply_formatting(ws, num_chromosomes)
         
         # Save the workbook
         try:
             wb.save(output_path)
+            logger.info(f"Excel report saved successfully to {output_path}")
             return output_path
         except Exception as e:
-            print(f"Error saving Excel report: {str(e)}")
-            traceback.print_exc()
+            logger.error(f"Error saving Excel report: {str(e)}")
+            logger.debug("Error details:", exc_info=True)
             # Try to save with a different name if there was an error
             try:
                 alt_path = os.path.join(os.path.dirname(output_path), "Plate_Results_alt.xlsx")
                 wb.save(alt_path)
-                print(f"Saved alternative report to: {alt_path}")
+                logger.info(f"Saved alternative report to: {alt_path}")
                 return alt_path
             except Exception as e2:
-                print(f"Error saving alternative report: {str(e2)}")
-                traceback.print_exc()
+                logger.error(f"Error saving alternative report: {str(e2)}")
+                logger.debug("Error details:", exc_info=True)
                 return None
     except Exception as e:
-        print(f"Error creating Excel report: {str(e)}")
-        traceback.print_exc()
+        logger.error(f"Error creating Excel report: {str(e)}")
+        logger.debug("Error details:", exc_info=True)
         return None
 
-def create_grid_layout_without_merging(ws, results):
+def create_grid_layout_without_merging(ws, results, num_chromosomes):
     """
-    Create the 12x8 grid layout for the 96-well plate without any cell merging.
+    Create the grid layout for the 96-well plate without any cell merging.
     
     Args:
         ws: Worksheet to modify
         results: List of result dictionaries
+        num_chromosomes: Number of chromosomes to display
     """
+    logger = logging.getLogger("ddQuint")
+    config = Config.get_instance()
+    
+    logger.debug(f"Creating grid layout for {len(results)} results with {num_chromosomes} chromosomes")
+    
     # Set header row values
     setup_header_values(ws)
     
     # Convert results list to a dictionary keyed by well ID for easy lookup
     result_dict = {r.get('well', ''): r for r in results if r.get('well') is not None}
+    logger.debug(f"Created result dictionary with {len(result_dict)} valid wells")
     
     # Process each row (A-H)
     for row_idx, row_label in enumerate(ROW_LABELS):
-        # Starting row for this plate row (each well takes 6 rows)
-        start_row = row_idx * 6 + 3  # Start from row 3 (after headers)
+        logger.debug(f"Processing row {row_label}")
+        # Starting row for this plate row (each well takes num_chromosomes+1 rows)
+        start_row = row_idx * (num_chromosomes + 1) + 3  # Start from row 3 (after headers)
         
         # Add row label in column A
         row_label_cell = ws.cell(row=start_row, column=1)
@@ -130,17 +126,21 @@ def create_grid_layout_without_merging(ws, results):
         # Process each column (1-12)
         for col_idx, col_label in enumerate(COL_LABELS):
             well_id = f"{row_label}{col_label.zfill(2)}"
+            logger.debug(f"Processing well {well_id}")
             
             # Starting column for this well (each well takes 3 columns)
             start_col = col_idx * 3 + 2  # Start from column B (column 2)
             
             # Fill in data for this well without merging
-            add_well_data(ws, start_row, start_col, well_id, result_dict.get(well_id))
+            add_well_data(ws, start_row, start_col, well_id, result_dict.get(well_id), num_chromosomes)
 
 def setup_header_values(ws):
     """
     Set up the header row values without merging.
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug("Setting up header values")
+    
     # Row 1: Column numbers (1-12)
     for col_idx in range(1, 13):
         # Each well takes 3 columns
@@ -151,8 +151,7 @@ def setup_header_values(ws):
         cell.value = col_idx
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal='center')
-        
-        # The rest of the columns in this merged range will be merged later
+        logger.debug(f"Set column header {col_idx} at column {cell_col}")
     
     # Row 2: "abs." and "rel." labels
     for col_idx in range(1, 13):
@@ -173,8 +172,10 @@ def setup_header_values(ws):
         rel_cell.value = "rel."
         rel_cell.font = Font(size=9)
         rel_cell.alignment = Alignment(horizontal='center')
+        
+        logger.debug(f"Set subheaders for column {col_idx}")
 
-def add_well_data(ws, start_row, start_col, well_id, result):
+def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
     """
     Add data for a single well without merging.
     
@@ -184,7 +185,13 @@ def add_well_data(ws, start_row, start_col, well_id, result):
         start_col: Starting column for this well
         well_id: Well identifier (e.g., 'A1')
         result: Result dictionary for this well, or None if no data
+        num_chromosomes: Number of chromosomes to display
     """
+    logger = logging.getLogger("ddQuint")
+    config = Config.get_instance()
+    
+    logger.debug(f"Adding data for well {well_id} at position ({start_row}, {start_col})")
+    
     # Add the sample name to the first row (which will be merged later)
     name_cell = ws.cell(row=start_row, column=start_col)
     
@@ -198,11 +205,13 @@ def add_well_data(ws, start_row, start_col, well_id, result):
         name_cell.value = sample_name
         name_cell.alignment = Alignment(horizontal='center', wrap_text=True)
         name_cell.font = Font(size=9)
+        logger.debug(f"Added sample name: {sample_name}")
     else:
         # For empty wells, show the well ID
         name_cell.value = well_id
         name_cell.alignment = Alignment(horizontal='center')
         name_cell.font = Font(size=9, color='C0C0C0')  # Light gray for empty wells
+        logger.debug(f"No data for well, using well ID as placeholder")
     
     # Will set blank values to cells that will be merged with the name cell
     ws.cell(row=start_row, column=start_col+1).value = ""
@@ -215,17 +224,22 @@ def add_well_data(ws, start_row, start_col, well_id, result):
         copy_numbers = result.get('copy_numbers', {})
         has_aneuploidy = result.get('has_aneuploidy', False)
         
+        logger.debug(f"Well has aneuploidy: {has_aneuploidy}")
+        logger.debug(f"Counts: {counts}")
+        logger.debug(f"Copy numbers: {copy_numbers}")
+        
+        # Get chromosome keys dynamically
+        chromosome_keys = config.get_chromosome_keys()
+        
         # Create cells for each chromosome
-        for chrom_idx, chrom_suffix in enumerate(range(1, 6)):
-            chrom = f"Chr{chrom_suffix}"
-            chrom_key = f"Chrom{chrom_suffix}"  # Map to keys in the result data
-            
+        for chrom_idx, chrom_key in enumerate(chromosome_keys):
             # Row for this chromosome
             chrom_row = start_row + 1 + chrom_idx
+            chrom_label = f"Chr{chrom_key.replace('Chrom', '')}"
             
             # Chromosome name cell
             chrom_cell = ws.cell(row=chrom_row, column=start_col)
-            chrom_cell.value = chrom
+            chrom_cell.value = chrom_label
             chrom_cell.font = Font(size=9)
             
             # Absolute count cell
@@ -252,51 +266,76 @@ def add_well_data(ws, start_row, start_col, well_id, result):
                 rel_cell.fill = ANEUPLOIDY_FILL
                 
                 # Darker coloring for the specific aneuploidy value
-                if rel_count is not None and abs(rel_count - 1.0) > 0.15:
-                    rel_cell.fill = ANEUPLOIDY_VALUE_FILL
+                if rel_count is not None:
+                    if abs(rel_count - 1.0) > config.ANEUPLOIDY_DEVIATION_THRESHOLD:
+                        rel_cell.fill = ANEUPLOIDY_VALUE_FILL
+                        logger.debug(f"{chrom_label} has aneuploidy value: {rel_count:.2f}")
+            
+            logger.debug(f"Added {chrom_label} data: abs={abs_count}, rel={rel_count}")
     else:
         # If no data for this well, just add the chromosome labels
-        for chrom_idx, chrom_suffix in enumerate(range(1, 6)):
-            chrom = f"Chr{chrom_suffix}"
+        chromosome_keys = config.get_chromosome_keys()
+        for chrom_idx, chrom_key in enumerate(chromosome_keys):
+            chrom_label = f"Chr{chrom_key.replace('Chrom', '')}"
             chrom_row = start_row + 1 + chrom_idx
             chrom_cell = ws.cell(row=chrom_row, column=start_col)
-            chrom_cell.value = chrom
+            chrom_cell.value = chrom_label
             chrom_cell.font = Font(size=9, color='C0C0C0')  # Light gray for empty wells
+        logger.debug("Added empty chromosome labels")
 
-def apply_cell_merges(ws):
+def apply_cell_merges(ws, num_chromosomes):
     """
     Apply all cell merges after setting all cell values.
+    
+    Args:
+        ws: Worksheet to modify
+        num_chromosomes: Number of chromosomes per well
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug("Applying cell merges")
+    
     # Merge cells in header row
     for col_idx in range(1, 13):
         cell_col = (col_idx - 1) * 3 + 2
         ws.merge_cells(start_row=1, start_column=cell_col, end_row=1, end_column=cell_col + 2)
+        logger.debug(f"Merged header for column {col_idx}")
+    
+    # Each well takes num_chromosomes+1 rows now
+    well_height = num_chromosomes + 1
     
     # Merge row labels
     for row_idx in range(len(ROW_LABELS)):
-        start_row = row_idx * 6 + 3
-        ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row+5, end_column=1)
+        start_row = row_idx * well_height + 3
+        ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row+well_height-1, end_column=1)
+        logger.debug(f"Merged row label for row {ROW_LABELS[row_idx]}")
     
     # Merge well name cells
     for row_idx in range(len(ROW_LABELS)):
         for col_idx in range(len(COL_LABELS)):
-            start_row = row_idx * 6 + 3
+            start_row = row_idx * well_height + 3
             start_col = col_idx * 3 + 2
             
             # Merge the name cell (first row of well)
             ws.merge_cells(start_row=start_row, start_column=start_col, end_row=start_row, end_column=start_col+2)
+            logger.debug(f"Merged name cell for well {ROW_LABELS[row_idx]}{COL_LABELS[col_idx]}")
 
-
-def apply_formatting(ws):
+def apply_formatting(ws, num_chromosomes):
     """
     Apply formatting to the entire worksheet with proper borders.
     
     Args:
-        ws: Worksheet to format
+        ws: Worksheet to modify
+        num_chromosomes: Number of chromosomes per well
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug("Applying formatting")
+    
     # Get maximum row and column in use
-    max_row = ws.max_row
+    well_height = num_chromosomes + 1
+    max_row = 8 * well_height + 2  # 8 rows of wells, each with well_height rows
     max_col = 37  # 12 wells × 3 columns each + 1 for row labels
+    
+    logger.debug(f"Worksheet dimensions: {max_row}x{max_col}")
     
     # First pass: apply thin borders to all cells
     for row in range(1, max_row + 1):
@@ -305,10 +344,11 @@ def apply_formatting(ws):
             cell.border = thin_border
     
     # Second pass: apply thick borders for plate boundaries
-    apply_plate_boundaries(ws)
+    apply_plate_boundaries(ws, num_chromosomes)
     
     # Set column widths
     ws.column_dimensions['A'].width = 3  # Row labels
+    logger.debug("Set column A width to 3")
     
     # Each well takes 3 columns
     for i in range(1, 37):  # 12 wells × 3 columns each = 36 columns
@@ -317,20 +357,30 @@ def apply_formatting(ws):
             ws.column_dimensions[col_letter].width = 5
         else:  # Data columns
             ws.column_dimensions[col_letter].width = 6
+        logger.debug(f"Set column {col_letter} width to {5 if i % 3 == 1 else 6}")
     
     # Freeze the header rows and first column
     ws.freeze_panes = ws.cell(row=3, column=2)
+    logger.debug("Set freeze panes at row 3, column 2")
 
-def apply_plate_boundaries(ws):
+def apply_plate_boundaries(ws, num_chromosomes):
     """
     Apply thick borders around each well and at the plate boundaries.
-    This function applies consistent thick borders throughout the plate.
+    
+    Args:
+        ws: Worksheet to modify
+        num_chromosomes: Number of chromosomes per well
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug("Applying plate boundaries")
+    
+    well_height = num_chromosomes + 1
+    
     # For each row of wells (A-H)
     for row_idx, row_label in enumerate(ROW_LABELS):
-        # Start row for this plate row (each well takes 6 rows)
-        start_row = row_idx * 6 + 3
-        end_row = start_row + 5  # End row for this plate row
+        # Start row for this plate row (each well takes well_height rows)
+        start_row = row_idx * well_height + 3
+        end_row = start_row + well_height - 1  # End row for this plate row
         
         # For each column of wells (1-12)
         for col_idx, col_label in enumerate(COL_LABELS):
@@ -357,3 +407,5 @@ def apply_plate_boundaries(ws):
                         top=top_side,
                         bottom=bottom_side
                     )
+    
+    logger.debug("Finished applying plate boundaries")

@@ -1,11 +1,11 @@
 """
-Template Excel parser module for ddQuint
-Finds and parses Excel template files to extract sample names for wells
+Template Excel parser module for ddQuint with debug logging
 """
 
 import os
 import re
 import openpyxl
+import logging
 from pathlib import Path
 
 def find_template_file(input_dir):
@@ -19,19 +19,30 @@ def find_template_file(input_dir):
     Returns:
         str: Path to the template file or None if not found
     """
+    logger = logging.getLogger("ddQuint")
+    
     # Get the base name of the input directory (without path)
     dir_name = os.path.basename(input_dir)
     template_name = f"{dir_name}.xlsx"
     
+    logger.debug(f"Looking for template file: {template_name}")
+    logger.debug(f"Input directory: {input_dir}")
+    
     # Go up 2 parent directories
     parent_dir = os.path.dirname(os.path.dirname(input_dir))
+    logger.debug(f"Searching in parent directory: {parent_dir}")
     
     # Search in all subdirectories
     for root, dirs, files in os.walk(parent_dir):
+        logger.debug(f"Searching in: {root}")
         for file in files:
+            logger.debug(f"Found file: {file}")
             if file == template_name:
-                return os.path.join(root, file)
+                template_path = os.path.join(root, file)
+                logger.debug(f"Template file found: {template_path}")
+                return template_path
     
+    logger.debug(f"Template file {template_name} not found")
     return None
 
 def excel_coords_to_well_id(row, col):
@@ -53,7 +64,12 @@ def excel_coords_to_well_id(row, col):
     Returns:
         str: Well ID like 'A01'
     """
+    logger = logging.getLogger("ddQuint")
+    
+    logger.debug(f"Converting Excel coordinates (row={row}, col={col}) to well ID")
+    
     if row < 1 or row > 8 or col < 1 or col > 12:
+        logger.debug(f"Invalid Excel coordinates: row={row}, col={col}")
         return None
     
     # Convert Excel column to well row (A-L)
@@ -62,7 +78,10 @@ def excel_coords_to_well_id(row, col):
     # Convert Excel row to well column (01-08)
     well_col_number = f"{row:02d}"
     
-    return f"{well_row_letter}{well_col_number}"
+    well_id = f"{well_row_letter}{well_col_number}"
+    logger.debug(f"Converted to well ID: {well_id}")
+    
+    return well_id
 
 def parse_template_file(template_path):
     """
@@ -74,11 +93,15 @@ def parse_template_file(template_path):
     Returns:
         dict: Mapping of well IDs to sample names
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug(f"Parsing template file: {template_path}")
+    
     well_to_name = {}
     
     try:
         workbook = openpyxl.load_workbook(template_path)
         sheet = workbook.active
+        logger.debug(f"Opened workbook, active sheet: {sheet.title}")
         
         # Parse the first 8 rows and 12 columns
         for row in range(1, 9):  # 1-8 (rows in Excel)
@@ -89,11 +112,16 @@ def parse_template_file(template_path):
                     well_id = excel_coords_to_well_id(row, col)
                     if well_id:
                         well_to_name[well_id] = str(cell_value)
+                        logger.debug(f"Parsed cell ({row},{col}): {cell_value} -> well {well_id}")
+                else:
+                    logger.debug(f"Empty cell at ({row},{col})")
         
         workbook.close()
+        logger.debug(f"Finished parsing template. Found {len(well_to_name)} sample names")
         
     except Exception as e:
-        print(f"Error parsing template file: {str(e)}")
+        logger.error(f"Error parsing template file: {str(e)}")
+        logger.debug("Error details:", exc_info=True)
     
     return well_to_name
 
@@ -107,11 +135,16 @@ def get_sample_names(input_dir):
     Returns:
         dict: Mapping of well IDs to sample names
     """
+    logger = logging.getLogger("ddQuint")
+    logger.debug(f"Getting sample names for directory: {input_dir}")
+    
     template_path = find_template_file(input_dir)
     
     if template_path:
-        print(f"Found template file: {template_path}")
-        return parse_template_file(template_path)
+        logger.debug(f"Template file found: {template_path}")
+        sample_names = parse_template_file(template_path)
+        logger.debug(f"Successfully parsed {len(sample_names)} sample names from template")
+        return sample_names
     else:
-        print(f"No template file found for {os.path.basename(input_dir)}")
+        logger.info(f"No template file found for {os.path.basename(input_dir)}")
         return {}
