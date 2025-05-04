@@ -9,7 +9,7 @@ from matplotlib.ticker import MultipleLocator
 import matplotlib as mpl
 
 
-def create_well_plot(df, clustering_results, well_id, save_path, for_composite=False, add_copy_numbers=False, sample_name=None):
+def create_well_plot(df, clustering_results, well_id, save_path, for_composite=False, add_copy_numbers=True, sample_name=None):
     """
     Create an enhanced visualization plot for a single well with square aspect ratio.
     
@@ -87,10 +87,10 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
     
     # Plot all droplets, colored by target
     ax.scatter(df_filtered['Ch2Amplitude'], df_filtered['Ch1Amplitude'],
-              c=df_filtered['color'], s=5 if for_composite else 4, alpha=0.6)
+              c=df_filtered['color'], s=5 if for_composite else 8, alpha=0.6)
     
-    # Add copy number annotations directly on the plot for composite images
-    if for_composite and add_copy_numbers and 'copy_numbers' in clustering_results:
+    # Add copy number annotations directly on the plot (both for composite and individual)
+    if add_copy_numbers and 'copy_numbers' in clustering_results:
         copy_numbers = clustering_results['copy_numbers']
         # For each target, calculate the centroid and add a label
         for target, color in label_color_map.items():
@@ -107,9 +107,14 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
                     # Use the has_aneuploidy flag to determine if this is an aneuploidy chromosome
                     is_aneuploidy = clustering_results.get('has_aneuploidy', False) and abs(cn_value - 1.0) > 0.15
                     cn_text = f"{cn_value:.2f}"
+                    
+                    # Adjust size and font weight for individual vs composite plots
+                    font_size = 7 if for_composite else 12
+                    font_weight = 'bold' if is_aneuploidy else 'normal'
+                    
                     ax.text(cx, cy, cn_text, 
                             color='black' if not is_aneuploidy else 'darkred',
-                            fontsize=7, fontweight='bold' if is_aneuploidy else 'normal',
+                            fontsize=font_size, fontweight=font_weight,
                             ha='center', va='center',
                             bbox=dict(facecolor='white', alpha=0.7, pad=1, edgecolor='none'))
     
@@ -119,7 +124,7 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         ax.scatter(noise_points['Ch2Amplitude'], noise_points['Ch1Amplitude'],
                   c='lightgray', s=3, alpha=0.3)
     
-    # Add legend only for standalone plots (not for composite)
+    # Add legend only for standalone plots (not for composite) - without copy numbers in the text
     if not for_composite:
         # Build legend
         ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
@@ -133,22 +138,17 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
             # Get color for this target
             color = label_color_map[tgt]
             
-            # Create label text
-            if tgt == 'Negative':
-                label_text = f"{tgt}"  # No count for negative droplets
-            elif tgt in copy_numbers:
-                label_text = f"{tgt} ({copy_numbers[tgt]:.2f})"
-            else:
-                label_text = f"{tgt} (N/A)"
+            # Create simple label text without copy numbers
+            label_text = tgt
                 
             # Create legend handle
-            handle = mpl.lines.Line2D([], [], marker='o', linestyle='', markersize=6,
+            handle = mpl.lines.Line2D([], [], marker='o', linestyle='', markersize=10,
                                    markerfacecolor=color, markeredgecolor='none', label=label_text)
             legend_handles.append(handle)
         
-        # Add legend to right side of plot, exclude "Unknown"
-        ax.legend(handles=legend_handles, title="Target (copy number)",
-                 bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        # Add legend to right side of plot, with just the target names
+        ax.legend(handles=legend_handles, title="Target",
+                 bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
     
     # Set plot labels and title
     if for_composite:
