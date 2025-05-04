@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib.ticker import MultipleLocator
 import tempfile
 import shutil
+from ..visualization.well_plots import create_well_plot
 
 # Define plate layout constants
 ROW_LABELS = list('ABCDEFGH')
@@ -17,16 +18,8 @@ COL_LABELS = [str(i) for i in range(1, 13)]  # Format as "1", "2", etc.
 
 def create_composite_image(results, output_path):
     """
-    Create an optimized composite image of all wells arranged in a plate layout.
-    
-    Args:
-        results (list): List of result dictionaries for each well
-        output_path (str): Path to save the composite image
-        
-    Returns:
-        str: Path to the saved composite image
+    Create a composite image using the existing clustering results without re-running analysis.
     """
-    # Import tqdm for progress bar
     from tqdm import tqdm
     
     # Keep track of all temporary files we create
@@ -38,20 +31,16 @@ def create_composite_image(results, output_path):
             if not result.get('well'):
                 continue
                 
-            # Call the optimized well plot function to create a version without legend
-            from ddquint.visualization.well_plots import create_well_plot
-            
-            # Get the data file
+            # Get the data file (we still need the raw data for plotting)
             df_file = os.path.join(os.path.dirname(result['graph_path']), "..", "Raw Data", result['filename'])
             if not os.path.exists(df_file):
                 continue
                 
-            # Load the data and rerun the clustering
+            # Load the raw data
             import pandas as pd
-            from ddquint.core.clustering import analyze_droplets
             
             try:
-                # Find the header row containing Ch1Amplitude
+                # Find the header row
                 header_row = None
                 with open(df_file, 'r', encoding='utf-8', errors='ignore') as f:
                     for i, line in enumerate(f):
@@ -74,29 +63,38 @@ def create_composite_image(results, output_path):
                 # Filter rows with NaN values
                 df_clean = df[required_cols].dropna()
                 
-                # Analyze the droplets
-                clustering_results = analyze_droplets(df_clean)
+                # Use the existing clustering results from the first analysis
+                # No need to re-run analyze_droplets!
+                clustering_results = {
+                    'df_filtered': result.get('df_filtered'),  # Already computed
+                    'target_mapping': result.get('target_mapping'),  # Already computed
+                    'counts': result.get('counts', {}),
+                    'copy_numbers': result.get('copy_numbers', {}),
+                    'has_outlier': result.get('has_outlier', False),
+                    'chrom3_reclustered': result.get('chrom3_reclustered', False)
+                }
                 
-                # Create optimized plot for composite image - put it directly in the Graphs folder
-                # Extract the output directory from the output_path
+                # Verify we have the necessary data
+                if clustering_results['df_filtered'] is None or clustering_results['target_mapping'] is None:
+                    print(f"Warning: Missing clustering data for well {result['well']}")
+                    continue
+                
+                # Create optimized plot for composite image
                 output_dir = os.path.dirname(output_path)
                 graphs_dir = os.path.join(output_dir, "Graphs")
                 os.makedirs(graphs_dir, exist_ok=True)
                 
-                # Create a temp file in the Graphs directory with a distinct name pattern
+                # Create a temp file in the Graphs directory
                 temp_path = os.path.join(graphs_dir, f"{result['well']}_temp.png")
                 create_well_plot(df_clean, clustering_results, result['well'], temp_path, for_composite=True, add_copy_numbers=True)
                 
-                # Track the temporary file so we can delete it later
+                # Track the temporary file
                 temp_files.append(temp_path)
-                
-                # Store the temporary path in the result
                 result['temp_graph_path'] = temp_path
                 
             except Exception as e:
                 print(f"Error processing well {result.get('well')}: {e}")
-                # On error, just use the original graph
-                pass
+                continue
         
         # Create figure with adjusted size for better proportions and maximum space usage
         fig = plt.figure(figsize=(16, 11))  # Adjusted size for better clarity
@@ -234,13 +232,12 @@ def create_composite_image(results, output_path):
                 
     except Exception as e:
         print(f"Error creating composite image: {e}")
-        
-        # Even if there's an error, try to clean up temporary files
+        # Clean up temporary files on error
         for temp_file in temp_files:
             try:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
             except:
-                pass  # Ignore errors during cleanup
+                pass
     
     return output_path

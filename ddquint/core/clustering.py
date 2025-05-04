@@ -9,7 +9,7 @@ from hdbscan import HDBSCAN
 import warnings
 
 # Import functions from their proper modules - fixed function name
-from ddquint.core.copy_number import calculate_copy_numbers, detect_abnormalities
+from ..core.copy_number import calculate_copy_numbers, detect_abnormalities
 
 def analyze_droplets(df):
     """
@@ -42,16 +42,14 @@ def analyze_droplets(df):
     X = df_copy[['Ch1Amplitude', 'Ch2Amplitude']].values
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    
-    # Apply adaptive min_cluster_size based on dataset size
-    min_cluster_size = max(8, int(len(df_copy) * 0.01))  # At least 1% of total points
+
     
     # Enhanced HDBSCAN clustering with improved parameters
     clusterer = HDBSCAN(
-        min_cluster_size=min_cluster_size,
-        min_samples=max(5, min_cluster_size // 2),
+        min_cluster_size=4,
+        min_samples=70,
         cluster_selection_method='eom',
-        cluster_selection_epsilon=0.03,
+        cluster_selection_epsilon=0.06,
         metric='euclidean',
         core_dist_n_jobs=1  # Use all available cores
     )
@@ -63,22 +61,6 @@ def analyze_droplets(df):
     
     # Filter out noise points (cluster -1)
     df_filtered = df_copy[df_copy['cluster'] != -1].copy()
-    
-    # If no valid clusters were found or too few clusters, try with different parameters
-    if df_filtered.empty or len(df_filtered['cluster'].unique()) < 3:
-        # Second attempt with more aggressive parameters
-        clusterer = HDBSCAN(
-            min_cluster_size=max(5, min_cluster_size // 2),
-            min_samples=3,
-            cluster_selection_method='leaf',  # Try leaf method instead
-            alpha=0.8,  # Less conservative cluster selection
-            metric='euclidean',
-            core_dist_n_jobs=-1
-        )
-        
-        clusters = clusterer.fit_predict(X_scaled)
-        df_copy['cluster'] = clusters
-        df_filtered = df_copy[df_copy['cluster'] != -1].copy()
     
     # Define expected centroids for targets
     # These are in [FAM, HEX] order (Ch1Amplitude, Ch2Amplitude)
@@ -173,8 +155,8 @@ def analyze_droplets(df):
     has_outlier, abnormal_chroms = detect_abnormalities(copy_numbers)
     
     return {
-        'clusters': clusters,
-        'df_filtered': df_filtered,
+        'clusters': df_copy['cluster'].values,
+        'df_filtered': df_filtered, 
         'counts': label_counts,
         'copy_numbers': copy_numbers,
         'has_outlier': has_outlier,

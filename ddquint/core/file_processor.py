@@ -9,9 +9,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from ddquint.utils.well_utils import extract_well_coordinate
-from ddquint.core.clustering import analyze_droplets
-from ddquint.visualization.well_plots import create_well_plot
+from ..utils.well_utils import extract_well_coordinate
+from ..core.clustering import analyze_droplets
+from ..visualization.well_plots import create_well_plot
 
 def process_csv_file(file_path, graphs_dir, verbose=False):
     """
@@ -77,7 +77,10 @@ def process_csv_file(file_path, graphs_dir, verbose=False):
             'has_outlier': clustering_results.get('has_outlier', False),
             'copy_numbers': clustering_results.get('copy_numbers', {}),
             'counts': clustering_results.get('counts', {}),
-            'graph_path': standard_plot_path
+            'graph_path': standard_plot_path,
+            'df_filtered': clustering_results.get('df_filtered'), 
+            'target_mapping': clustering_results.get('target_mapping'), 
+            'chrom3_reclustered': clustering_results.get('chrom3_reclustered', False)
         }
         
     except Exception as e:
