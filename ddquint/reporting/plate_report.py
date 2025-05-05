@@ -29,7 +29,7 @@ thick = Side(style='thick')
 thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
 thick_border = Border(left=thick, right=thick, top=thick, bottom=thick)
 
-def create_excel_report(results, output_path, template_path=None):
+def create_plate_report(results, output_path, template_path=None):
     """
     Create an Excel report with all analysis results.
     
@@ -70,7 +70,7 @@ def create_excel_report(results, output_path, template_path=None):
         # Save the workbook
         try:
             wb.save(output_path)
-            logger.info(f"Excel report saved successfully to {output_path}")
+            logger.debug(f"Excel report saved successfully to {output_path}")
             return output_path
         except Exception as e:
             logger.error(f"Error saving Excel report: {str(e)}")

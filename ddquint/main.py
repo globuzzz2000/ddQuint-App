@@ -51,7 +51,7 @@ else:
 from ddquint.utils.gui import select_directory
 from ddquint.core.file_processor import process_directory
 from ddquint.visualization.plate_plots import create_composite_image
-from ddquint.reporting.excel_report import create_excel_report
+from ddquint.reporting import create_plate_report, create_list_report
 from ddquint.utils.template_parser import get_sample_names
 
 def setup_logging(debug=False):
@@ -146,6 +146,11 @@ def parse_arguments():
         const=True,
         help="Configuration file or command (display, template, or path to config file)"
     )
+    parser.add_argument(
+        "--plate",
+        action="store_true",
+        help="Generate plate format Excel report in addition to the standard list report"
+    )
     
     return parser.parse_args()
 
@@ -239,9 +244,15 @@ def main():
             composite_path = os.path.join(output_dir, config.COMPOSITE_IMAGE_FILENAME)
             create_composite_image(results, composite_path)
             
-            # Create Excel report with sample names
-            excel_path = os.path.join(output_dir, config.EXCEL_OUTPUT_FILENAME)
-            create_excel_report(results, excel_path)
+            # Create list format report
+            list_path = os.path.join(output_dir, "List_Results.xlsx")
+            create_list_report(results, list_path)
+            
+            # Create plate format report if requested
+            if args.plate:
+                excel_path = os.path.join(output_dir, config.EXCEL_OUTPUT_FILENAME)
+                create_plate_report(results, excel_path)
+
             
             # Count aneuploid samples
             aneuploid_count = sum(1 for r in results if r.get('has_aneuploidy', False))

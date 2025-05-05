@@ -2,8 +2,10 @@
 Reporting modules for ddQuint
 """
 
-from .excel_report import create_excel_report
+from .plate_report import create_plate_report
+from .list_report import create_list_report
 
 __all__ = [
-    'create_excel_report'
+    'create_plate_report',
+    'create_list_report'
 ]

@@ -18,7 +18,7 @@ from .well_utils import (
 )
 from .template_parser import (
     find_template_file,
-    excel_coords_to_well_id,
+    find_header_row,
     parse_template_file,
     get_sample_names
 )
@@ -44,7 +44,7 @@ __all__ = [
 
     # Template utilities
     'find_template_file',
-    'excel_coords_to_well_id',
+    'find_header_row',
     'parse_template_file',
     'get_sample_names'
 ]

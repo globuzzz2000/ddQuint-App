@@ -1,16 +1,15 @@
 """
-Template Excel parser module for ddQuint with debug logging
+Template CSV parser module for ddQuint with debug logging
 """
 
 import os
-import re
-import openpyxl
+import csv
 import logging
 from pathlib import Path
 
 def find_template_file(input_dir):
     """
-    Find the Excel template file based on the input directory name.
+    Find the CSV template file based on the input directory name.
     Searches in folders from the -2 parent directory.
     
     Args:
@@ -23,7 +22,7 @@ def find_template_file(input_dir):
     
     # Get the base name of the input directory (without path)
     dir_name = os.path.basename(input_dir)
-    template_name = f"{dir_name}.xlsx"
+    template_name = f"{dir_name}.csv"
     
     logger.debug(f"Looking for template file: {template_name}")
     logger.debug(f"Input directory: {input_dir}")
@@ -45,50 +44,38 @@ def find_template_file(input_dir):
     logger.debug(f"Template file {template_name} not found")
     return None
 
-def excel_coords_to_well_id(row, col):
+def find_header_row(file_path):
     """
-    Convert Excel row/column coordinates to well ID.
-    The mapping is:
-    - Excel row (1-8) becomes well column (01-08)
-    - Excel column (1-12) becomes well row (A-L)
-    
-    Examples:
-    - Excel A1 (row=1, col=1) → Well A01
-    - Excel B1 (row=2, col=1) → Well A02
-    - Excel A2 (row=1, col=2) → Well B01
+    Find the row containing 'Well' column header.
     
     Args:
-        row (int): Row number (1-indexed)
-        col (int): Column number (1-indexed)
+        file_path (str): Path to CSV file
         
     Returns:
-        str: Well ID like 'A01'
+        int: Row number (0-indexed) containing headers, or -1 if not found
     """
     logger = logging.getLogger("ddQuint")
     
-    logger.debug(f"Converting Excel coordinates (row={row}, col={col}) to well ID")
+    try:
+        with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+            lines = csvfile.readlines()
+            
+            for row_num, line in enumerate(lines):
+                # Check if this line contains 'Well' column
+                if 'Well,' in line:
+                    logger.debug(f"Found 'Well' header in row {row_num}")
+                    return row_num
+    except Exception as e:
+        logger.error(f"Error finding header row: {str(e)}")
     
-    if row < 1 or row > 8 or col < 1 or col > 12:
-        logger.debug(f"Invalid Excel coordinates: row={row}, col={col}")
-        return None
-    
-    # Convert Excel column to well row (A-L)
-    well_row_letter = chr(ord('A') + col - 1)
-    
-    # Convert Excel row to well column (01-08)
-    well_col_number = f"{row:02d}"
-    
-    well_id = f"{well_row_letter}{well_col_number}"
-    logger.debug(f"Converted to well ID: {well_id}")
-    
-    return well_id
+    return -1
 
 def parse_template_file(template_path):
     """
-    Parse the Excel template file to extract sample names.
+    Parse the CSV template file to extract sample names from Well column and Sample description columns.
     
     Args:
-        template_path (str): Path to the template Excel file
+        template_path (str): Path to the template CSV file
         
     Returns:
         dict: Mapping of well IDs to sample names
@@ -99,25 +86,71 @@ def parse_template_file(template_path):
     well_to_name = {}
     
     try:
-        workbook = openpyxl.load_workbook(template_path)
-        sheet = workbook.active
-        logger.debug(f"Opened workbook, active sheet: {sheet.title}")
+        # First, find which row contains the headers
+        header_row = find_header_row(template_path)
         
-        # Parse the first 8 rows and 12 columns
-        for row in range(1, 9):  # 1-8 (rows in Excel)
-            for col in range(1, 13):  # 1-12 (columns in Excel)
-                cell_value = sheet.cell(row=row, column=col).value
+        if header_row == -1:
+            logger.error("Could not find header row in template file")
+            return {}
+        
+        logger.debug(f"Header row found at index: {header_row}")
+        
+        # Read the file, skipping to the header row
+        with open(template_path, 'r', newline='', encoding='utf-8') as csvfile:
+            # Skip rows before the header
+            for _ in range(header_row):
+                next(csvfile)
+            
+            # Create reader starting from header row
+            reader = csv.DictReader(csvfile)
+            
+            # Check for required columns
+            required_columns = ['Well', 'Sample description 1', 'Sample description 2', 
+                              'Sample description 3', 'Sample description 4']
+            
+            header_found = True
+            for col in required_columns:
+                if col not in reader.fieldnames:
+                    logger.warning(f"Column '{col}' not found. Available columns: {reader.fieldnames}")
+                    header_found = False
+            
+            if not header_found:
+                # Try to find similar column names
+                logger.debug("Trying to find similar column names...")
+                available_cols = reader.fieldnames if reader.fieldnames else []
+                logger.debug(f"Available columns: {available_cols}")
+            
+            # Process each row
+            for row_num, row in enumerate(reader, start=header_row+2):  # +2 because header row is 0-indexed and data starts at next row
+                well_id = row.get('Well', '').strip()
                 
-                if cell_value:
-                    well_id = excel_coords_to_well_id(row, col)
-                    if well_id:
-                        well_to_name[well_id] = str(cell_value)
-                        logger.debug(f"Parsed cell ({row},{col}): {cell_value} -> well {well_id}")
+                # Skip empty wells
+                if not well_id:
+                    logger.debug(f"Row {row_num}: Empty well identifier")
+                    continue
+                
+                # Combine Sample description columns with " - " separator
+                sample_description_parts = []
+                for i in range(1, 5):
+                    part = row.get(f'Sample description {i}', '').strip()
+                    if part:  # Only add non-empty parts
+                        sample_description_parts.append(part)
+                
+                if sample_description_parts:
+                    sample_name = ' - '.join(sample_description_parts)
+                    
+                    # If well already exists, all instances should have the same name
+                    # so we just log if they differ
+                    if well_id in well_to_name and well_to_name[well_id] != sample_name:
+                        logger.warning(f"Multiple descriptions for well {well_id}: "
+                                       f"'{well_to_name[well_id]}' vs '{sample_name}'")
+                    else:
+                        well_to_name[well_id] = sample_name
+                        logger.debug(f"Row {row_num}: Well {well_id} -> sample '{sample_name}'")
                 else:
-                    logger.debug(f"Empty cell at ({row},{col})")
+                    logger.debug(f"Row {row_num}: Well {well_id} has no sample description")
         
-        workbook.close()
-        logger.debug(f"Finished parsing template. Found {len(well_to_name)} sample names")
+        logger.debug(f"Finished parsing template. Found {len(well_to_name)} unique well-sample mappings")
         
     except Exception as e:
         logger.error(f"Error parsing template file: {str(e)}")
