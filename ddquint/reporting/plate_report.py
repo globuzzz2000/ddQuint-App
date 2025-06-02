@@ -39,7 +39,7 @@ def create_plate_report(results, output_path, template_path=None, rotated=False)
         results (list): List of result dictionaries for each well
         output_path (str): Path to save the Excel report
         template_path (str, optional): Not used, kept for API compatibility
-        rotated (bool): If True, use rotated layout (1-12 as rows, A-H as columns)
+        rotated (bool): If True, use rotated layout (1-12 as rows, A-H as columns) without absolute values
         
     Returns:
         str: Path to the saved Excel report
@@ -53,7 +53,7 @@ def create_plate_report(results, output_path, template_path=None, rotated=False)
     
     logger.debug(f"Creating Excel report for {len(results)} results with {num_chromosomes} chromosomes")
     logger.debug(f"Output path: {output_path}")
-    logger.debug(f"Rotated layout: {rotated}")
+    logger.debug(f"Rotated layout: {rotated} (exclude absolutes: {rotated})")
     
     try:
         # Create a new workbook
@@ -102,7 +102,7 @@ def create_grid_layout_without_merging(ws, results, num_chromosomes, rotated=Fal
         ws: Worksheet to modify
         results: List of result dictionaries
         num_chromosomes: Number of chromosomes to display
-        rotated: If True, use rotated layout (1-12 as rows, A-H as columns)
+        rotated: If True, use rotated layout (1-12 as rows, A-H as columns) without absolute values
     """
     logger = logging.getLogger("ddQuint")
     config = Config.get_instance()
@@ -149,11 +149,14 @@ def create_grid_layout_without_merging(ws, results, num_chromosomes, rotated=Fal
             
             logger.debug(f"Processing well {well_id}")
             
-            # Starting column for this well (each well takes 3 columns)
-            start_col = row_idx * 3 + 2  # Start from column B (column 2)
+            # Determine well width based on layout
+            well_width = 1 if rotated else 3  # 1 column for rotated (only relative), 3 for normal
+            
+            # Starting column for this well
+            start_col = row_idx * well_width + 2  # Start from column B (column 2)
             
             # Fill in data for this well without merging
-            add_well_data(ws, start_row, start_col, well_id, result_dict.get(well_id), num_chromosomes)
+            add_well_data(ws, start_row, start_col, well_id, result_dict.get(well_id), num_chromosomes, rotated)
 
 def setup_header_values(ws, row_labels, rotated=False):
     """
@@ -162,46 +165,58 @@ def setup_header_values(ws, row_labels, rotated=False):
     Args:
         ws: Worksheet to modify
         row_labels: Labels for the horizontal divisions
-        rotated: If True, using rotated layout
+        rotated: If True, using rotated layout without absolute values or chromosome labels
     """
     logger = logging.getLogger("ddQuint")
     logger.debug(f"Setting up header values for {'rotated' if rotated else 'default'} layout")
     
+    # Determine well width based on layout
+    well_width = 1 if rotated else 3  # 1 column for rotated (only relative), 3 for normal
+    
     # Row 1: Horizontal headers
     for row_idx, row_label in enumerate(row_labels):
-        # Each well takes 3 columns
-        cell_col = row_idx * 3 + 2  # Start at column B (column 2)
+        # Each well takes well_width columns
+        cell_col = row_idx * well_width + 2  # Start at column B (column 2)
         
-        # Set header value in the first column of the well
+        # Set header value
         cell = ws.cell(row=1, column=cell_col)
         cell.value = row_label
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal='center')
         logger.debug(f"Set header {row_label} at column {cell_col}")
     
-    # Row 2: "abs." and "rel." labels
+    # Row 2: Column labels based on layout
     for row_idx, row_label in enumerate(row_labels):
-        base_col = row_idx * 3 + 2
+        base_col = row_idx * well_width + 2
         
-        # First column is blank (for chromosome name)
-        first_cell = ws.cell(row=2, column=base_col)
-        first_cell.value = ""
-        
-        # Second column: "abs."
-        abs_cell = ws.cell(row=2, column=base_col + 1)
-        abs_cell.value = "abs."
-        abs_cell.font = Font(size=9)
-        abs_cell.alignment = Alignment(horizontal='center')
-        
-        # Third column: "rel."
-        rel_cell = ws.cell(row=2, column=base_col + 2)
-        rel_cell.value = "rel."
-        rel_cell.font = Font(size=9)
-        rel_cell.alignment = Alignment(horizontal='center')
+        if rotated:
+            # Rotated layout: only relative values, no chromosome labels
+            # Single column: "rel."
+            rel_cell = ws.cell(row=2, column=base_col)
+            rel_cell.value = "rel."
+            rel_cell.font = Font(size=9)
+            rel_cell.alignment = Alignment(horizontal='center')
+        else:
+            # Default layout: chromosome name, absolute, and relative
+            # First column is blank (for chromosome name)
+            first_cell = ws.cell(row=2, column=base_col)
+            first_cell.value = ""
+            
+            # Second column: "abs."
+            abs_cell = ws.cell(row=2, column=base_col + 1)
+            abs_cell.value = "abs."
+            abs_cell.font = Font(size=9)
+            abs_cell.alignment = Alignment(horizontal='center')
+            
+            # Third column: "rel."
+            rel_cell = ws.cell(row=2, column=base_col + 2)
+            rel_cell.value = "rel."
+            rel_cell.font = Font(size=9)
+            rel_cell.alignment = Alignment(horizontal='center')
         
         logger.debug(f"Set subheaders for {row_label}")
 
-def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
+def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes, rotated=False):
     """
     Add data for a single well without merging.
     
@@ -212,11 +227,15 @@ def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
         well_id: Well identifier (e.g., 'A1')
         result: Result dictionary for this well, or None if no data
         num_chromosomes: Number of chromosomes to display
+        rotated: If True, using rotated layout without absolute values or chromosome labels
     """
     logger = logging.getLogger("ddQuint")
     config = Config.get_instance()
     
     logger.debug(f"Adding data for well {well_id} at position ({start_row}, {start_col})")
+    
+    # Determine well width based on layout
+    well_width = 1 if rotated else 3  # 1 column for rotated (only relative), 3 for normal
     
     # Add the sample name to the first row (which will be merged later)
     name_cell = ws.cell(row=start_row, column=start_col)
@@ -239,9 +258,9 @@ def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
         name_cell.font = Font(size=9, color='C0C0C0')  # Light gray for empty wells
         logger.debug(f"No data for well, using well ID as placeholder")
     
-    # Will set blank values to cells that will be merged with the name cell
-    ws.cell(row=start_row, column=start_col+1).value = ""
-    ws.cell(row=start_row, column=start_col+2).value = ""
+    # Set blank values to cells that will be merged with the name cell (only if well_width > 1)
+    for i in range(1, well_width):
+        ws.cell(row=start_row, column=start_col + i).value = ""
     
     # If we have a result for this well, fill in the chromosome data
     if result:
@@ -265,70 +284,109 @@ def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
         for chrom_idx, chrom_key in enumerate(chromosome_keys):
             # Row for this chromosome
             chrom_row = start_row + 1 + chrom_idx
-            chrom_label = f"Chr{chrom_key.replace('Chrom', '')}"
             
-            # Chromosome name cell
-            chrom_cell = ws.cell(row=chrom_row, column=start_col)
-            chrom_cell.value = chrom_label
-            chrom_cell.font = Font(size=9)
-            
-            # Absolute count cell
-            abs_cell = ws.cell(row=chrom_row, column=start_col+1)
-            abs_count = counts.get(chrom_key, 0)
-            abs_cell.value = abs_count if abs_count > 0 else None
-            abs_cell.font = Font(size=9)
-            abs_cell.alignment = Alignment(horizontal='center')
-            
-            # Relative count cell
-            rel_cell = ws.cell(row=chrom_row, column=start_col+2)
-            rel_count = copy_numbers.get(chrom_key)
-            if rel_count is not None:
-                rel_cell.value = round(rel_count, 2)
-                rel_cell.number_format = '0.00'
-                rel_cell.font = Font(size=9)
-                rel_cell.alignment = Alignment(horizontal='center')
-            
-            # Apply highlighting for buffer zones and aneuploidies
-            # Buffer zone trumps aneuploidy
-            if has_buffer_zone:
-                # Dark grey fill for buffer zone samples (entire well)
-                chrom_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
-                abs_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
-                rel_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
-                logger.debug(f"Applied buffer zone highlighting to {chrom_label}")
-            elif has_aneuploidy:
-                # Light purple fill for aneuploidy samples (entire well)
-                chrom_cell.fill = ANEUPLOIDY_FILL
-                abs_cell.fill = ANEUPLOIDY_FILL
-                rel_cell.fill = ANEUPLOIDY_FILL
-                
-                # Darker purple fill for individual aneuploidy chromosomes
+            if rotated:
+                # Rotated layout: only relative values in a single column
+                rel_cell = ws.cell(row=chrom_row, column=start_col)
+                rel_count = copy_numbers.get(chrom_key)
                 if rel_count is not None:
-                    chrom_state = copy_number_states.get(chrom_key, 'euploid')
-                    if chrom_state == 'aneuploidy':
-                        # Individual chromosome aneuploidy highlighting (darker purple)
-                        chrom_cell.fill = ANEUPLOIDY_VALUE_FILL
-                        abs_cell.fill = ANEUPLOIDY_VALUE_FILL
-                        rel_cell.fill = ANEUPLOIDY_VALUE_FILL
-                        logger.debug(f"{chrom_label} has aneuploidy value: {rel_count:.2f}")
-                    elif not copy_number_states and abs(rel_count - 1.0) > 0.15:
-                        # Fallback for legacy detection
-                        chrom_cell.fill = ANEUPLOIDY_VALUE_FILL
-                        abs_cell.fill = ANEUPLOIDY_VALUE_FILL
-                        rel_cell.fill = ANEUPLOIDY_VALUE_FILL
-                        logger.debug(f"{chrom_label} has legacy aneuploidy value: {rel_count:.2f}")
-            
-            logger.debug(f"Added {chrom_label} data: abs={abs_count}, rel={rel_count}")
+                    rel_cell.value = round(rel_count, 2)
+                    rel_cell.number_format = '0.00'
+                    rel_cell.font = Font(size=9)
+                    rel_cell.alignment = Alignment(horizontal='center')
+                
+                # Apply highlighting for buffer zones and aneuploidies
+                # Buffer zone trumps aneuploidy
+                if has_buffer_zone:
+                    # Dark grey fill for buffer zone samples
+                    rel_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
+                    logger.debug(f"Applied buffer zone highlighting to chromosome {chrom_idx + 1}")
+                elif has_aneuploidy:
+                    # Light purple fill for aneuploidy samples (entire well)
+                    rel_cell.fill = ANEUPLOIDY_FILL
+                    
+                    # Darker purple fill for individual aneuploidy chromosomes
+                    if rel_count is not None:
+                        chrom_state = copy_number_states.get(chrom_key, 'euploid')
+                        if chrom_state == 'aneuploidy':
+                            # Individual chromosome aneuploidy highlighting (darker purple)
+                            rel_cell.fill = ANEUPLOIDY_VALUE_FILL
+                            logger.debug(f"Chromosome {chrom_idx + 1} has aneuploidy value: {rel_count:.2f}")
+                        elif not copy_number_states and abs(rel_count - 1.0) > 0.15:
+                            # Fallback for legacy detection
+                            rel_cell.fill = ANEUPLOIDY_VALUE_FILL
+                            logger.debug(f"Chromosome {chrom_idx + 1} has legacy aneuploidy value: {rel_count:.2f}")
+                
+                logger.debug(f"Added chromosome {chrom_idx + 1} data (rotated): rel={rel_count}")
+            else:
+                # Default layout: chromosome labels, absolute and relative values
+                chrom_label = f"Chr{chrom_key.replace('Chrom', '')}"
+                
+                # Chromosome name cell
+                chrom_cell = ws.cell(row=chrom_row, column=start_col)
+                chrom_cell.value = chrom_label
+                chrom_cell.font = Font(size=9)
+                
+                # Absolute count cell
+                abs_cell = ws.cell(row=chrom_row, column=start_col + 1)
+                abs_count = counts.get(chrom_key, 0)
+                abs_cell.value = abs_count if abs_count > 0 else None
+                abs_cell.font = Font(size=9)
+                abs_cell.alignment = Alignment(horizontal='center')
+                
+                # Relative count cell
+                rel_cell = ws.cell(row=chrom_row, column=start_col + 2)
+                rel_count = copy_numbers.get(chrom_key)
+                if rel_count is not None:
+                    rel_cell.value = round(rel_count, 2)
+                    rel_cell.number_format = '0.00'
+                    rel_cell.font = Font(size=9)
+                    rel_cell.alignment = Alignment(horizontal='center')
+                
+                # Apply highlighting for buffer zones and aneuploidies
+                # Buffer zone trumps aneuploidy
+                if has_buffer_zone:
+                    # Dark grey fill for buffer zone samples (entire well)
+                    chrom_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
+                    abs_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
+                    rel_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
+                    logger.debug(f"Applied buffer zone highlighting to {chrom_label}")
+                elif has_aneuploidy:
+                    # Light purple fill for aneuploidy samples (entire well)
+                    chrom_cell.fill = ANEUPLOIDY_FILL
+                    abs_cell.fill = ANEUPLOIDY_FILL
+                    rel_cell.fill = ANEUPLOIDY_FILL
+                    
+                    # Darker purple fill for individual aneuploidy chromosomes
+                    if rel_count is not None:
+                        chrom_state = copy_number_states.get(chrom_key, 'euploid')
+                        if chrom_state == 'aneuploidy':
+                            # Individual chromosome aneuploidy highlighting (darker purple)
+                            chrom_cell.fill = ANEUPLOIDY_VALUE_FILL
+                            abs_cell.fill = ANEUPLOIDY_VALUE_FILL
+                            rel_cell.fill = ANEUPLOIDY_VALUE_FILL
+                            logger.debug(f"{chrom_label} has aneuploidy value: {rel_count:.2f}")
+                        elif not copy_number_states and abs(rel_count - 1.0) > 0.15:
+                            # Fallback for legacy detection
+                            chrom_cell.fill = ANEUPLOIDY_VALUE_FILL
+                            abs_cell.fill = ANEUPLOIDY_VALUE_FILL
+                            rel_cell.fill = ANEUPLOIDY_VALUE_FILL
+                            logger.debug(f"{chrom_label} has legacy aneuploidy value: {rel_count:.2f}")
+                
+                logger.debug(f"Added {chrom_label} data: abs={abs_count}, rel={rel_count}")
     else:
-        # If no data for this well, just add the chromosome labels
-        chromosome_keys = config.get_chromosome_keys()
-        for chrom_idx, chrom_key in enumerate(chromosome_keys):
-            chrom_label = f"Chr{chrom_key.replace('Chrom', '')}"
-            chrom_row = start_row + 1 + chrom_idx
-            chrom_cell = ws.cell(row=chrom_row, column=start_col)
-            chrom_cell.value = chrom_label
-            chrom_cell.font = Font(size=9, color='C0C0C0')  # Light gray for empty wells
-        logger.debug("Added empty chromosome labels")
+        # If no data for this well, handle empty wells
+        if not rotated:
+            # For default layout, add the chromosome labels
+            chromosome_keys = config.get_chromosome_keys()
+            for chrom_idx, chrom_key in enumerate(chromosome_keys):
+                chrom_label = f"Chr{chrom_key.replace('Chrom', '')}"
+                chrom_row = start_row + 1 + chrom_idx
+                chrom_cell = ws.cell(row=chrom_row, column=start_col)
+                chrom_cell.value = chrom_label
+                chrom_cell.font = Font(size=9, color='C0C0C0')  # Light gray for empty wells
+            logger.debug("Added empty chromosome labels")
+        # For rotated layout, we don't need to add anything for empty wells
 
 def apply_cell_merges(ws, num_chromosomes, rotated=False):
     """
@@ -337,18 +395,19 @@ def apply_cell_merges(ws, num_chromosomes, rotated=False):
     Args:
         ws: Worksheet to modify
         num_chromosomes: Number of chromosomes per well
-        rotated: If True, using rotated layout
+        rotated: If True, using rotated layout without absolute values
     """
     logger = logging.getLogger("ddQuint")
     logger.debug(f"Applying cell merges for {'rotated' if rotated else 'default'} layout")
     
     # Determine the number of horizontal divisions based on layout
     num_horizontal = 8 if rotated else 12  # A-H or 1-12
+    well_width = 1 if rotated else 3  # 1 column for rotated (only relative), 3 for normal
     
     # Merge cells in header row
     for row_idx in range(num_horizontal):
-        cell_col = row_idx * 3 + 2
-        ws.merge_cells(start_row=1, start_column=cell_col, end_row=1, end_column=cell_col + 2)
+        cell_col = row_idx * well_width + 2
+        ws.merge_cells(start_row=1, start_column=cell_col, end_row=1, end_column=cell_col + well_width - 1)
         logger.debug(f"Merged header for position {row_idx}")
     
     # Each well takes num_chromosomes+1 rows now
@@ -367,10 +426,10 @@ def apply_cell_merges(ws, num_chromosomes, rotated=False):
     for col_idx in range(num_vertical):
         for row_idx in range(num_horizontal):
             start_row = col_idx * well_height + 3
-            start_col = row_idx * 3 + 2
+            start_col = row_idx * well_width + 2
             
             # Merge the name cell (first row of well)
-            ws.merge_cells(start_row=start_row, start_column=start_col, end_row=start_row, end_column=start_col+2)
+            ws.merge_cells(start_row=start_row, start_column=start_col, end_row=start_row, end_column=start_col + well_width - 1)
             logger.debug(f"Merged name cell for position ({col_idx}, {row_idx})")
 
 def apply_formatting(ws, num_chromosomes, rotated=False):
@@ -380,7 +439,7 @@ def apply_formatting(ws, num_chromosomes, rotated=False):
     Args:
         ws: Worksheet to modify
         num_chromosomes: Number of chromosomes per well
-        rotated: If True, using rotated layout
+        rotated: If True, using rotated layout without absolute values
     """
     logger = logging.getLogger("ddQuint")
     logger.debug(f"Applying formatting for {'rotated' if rotated else 'default'} layout")
@@ -389,9 +448,10 @@ def apply_formatting(ws, num_chromosomes, rotated=False):
     well_height = num_chromosomes + 1
     num_vertical = 12 if rotated else 8    # Number of vertical divisions
     num_horizontal = 8 if rotated else 12  # Number of horizontal divisions
+    well_width = 1 if rotated else 3  # 1 column for rotated (only relative), 3 for normal
     
     max_row = num_vertical * well_height + 2  # Vertical divisions × well height + header rows
-    max_col = num_horizontal * 3 + 1  # Horizontal divisions × 3 columns each + 1 for labels
+    max_col = num_horizontal * well_width + 1  # Horizontal divisions × well width + 1 for labels
     
     logger.debug(f"Worksheet dimensions: {max_row}x{max_col}")
     
@@ -408,14 +468,19 @@ def apply_formatting(ws, num_chromosomes, rotated=False):
     ws.column_dimensions['A'].width = 3  # Label column
     logger.debug("Set column A width to 3")
     
-    # Each well takes 3 columns
+    # Each well takes well_width columns
     for i in range(1, max_col):  # All data columns
         col_letter = get_column_letter(i+1)  # +1 because we start at column B
-        if i % 3 == 1:  # First column of each well (chromosome name)
-            ws.column_dimensions[col_letter].width = 5
-        else:  # Data columns
+        if rotated:
+            # Rotated layout: single column for relative values only
             ws.column_dimensions[col_letter].width = 6
-        logger.debug(f"Set column {col_letter} width to {5 if i % 3 == 1 else 6}")
+        else:
+            # Default layout: chromosome names, absolute, and relative values
+            if i % well_width == 1:  # First column of each well (chromosome name)
+                ws.column_dimensions[col_letter].width = 5
+            else:  # Data columns
+                ws.column_dimensions[col_letter].width = 6
+        logger.debug(f"Set column {col_letter} width to {5 if i % well_width == 1 else 6}")
     
     # Freeze the header rows and first column
     ws.freeze_panes = ws.cell(row=3, column=2)
@@ -428,7 +493,7 @@ def apply_plate_boundaries(ws, num_chromosomes, rotated=False):
     Args:
         ws: Worksheet to modify
         num_chromosomes: Number of chromosomes per well
-        rotated: If True, using rotated layout
+        rotated: If True, using rotated layout without absolute values
     """
     logger = logging.getLogger("ddQuint")
     logger.debug(f"Applying plate boundaries for {'rotated' if rotated else 'default'} layout")
@@ -436,6 +501,7 @@ def apply_plate_boundaries(ws, num_chromosomes, rotated=False):
     well_height = num_chromosomes + 1
     num_vertical = 12 if rotated else 8    # Number of vertical divisions
     num_horizontal = 8 if rotated else 12  # Number of horizontal divisions
+    well_width = 1 if rotated else 3  # 1 column for rotated (only relative), 3 for normal
     
     # For each vertical division
     for col_idx in range(num_vertical):
@@ -445,9 +511,9 @@ def apply_plate_boundaries(ws, num_chromosomes, rotated=False):
         
         # For each horizontal division
         for row_idx in range(num_horizontal):
-            # Start and end columns for this well (each well is 3 columns wide)
-            start_col = row_idx * 3 + 2
-            end_col = start_col + 2
+            # Start and end columns for this well (each well is well_width columns wide)
+            start_col = row_idx * well_width + 2
+            end_col = start_col + well_width - 1
             
             # Apply appropriate borders to each cell in this well
             for r in range(start_row, end_row + 1):

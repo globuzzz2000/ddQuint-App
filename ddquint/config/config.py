@@ -72,11 +72,11 @@ class Config:
     
     # Expected copy number values for each chromosome (baseline for calculations)
     EXPECTED_COPY_NUMBERS = {
-        "Chrom1": 0.9716,
-        "Chrom2": 1.0041,
-        "Chrom3": 1.0291,
-        "Chrom4": 0.9899,
-        "Chrom5": 1.0047,
+        "Chrom1": 0.9687,
+        "Chrom2": 1.0060,
+        "Chrom3": 1.0285,
+        "Chrom4": 0.9893,
+        "Chrom5": 1.0059,
         "Chrom6": 1.00,
         "Chrom7": 1.00,
         "Chrom8": 1.00,

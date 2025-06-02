@@ -147,7 +147,7 @@ def parse_arguments():
         "--plate",
         nargs="?",
         const="default",
-        help="Generate plate format Excel report. Use 'rotated' for column-first layout (default: row-first layout)"
+        help="Generate plate format Excel report. Use 'rotated' to also generate rotated layout without absolute counts"
     )
     parser.add_argument(
         "--test",
@@ -286,10 +286,14 @@ def main():
             
             # Create plate format report if requested
             if args.plate is not None:
-                # Determine if rotated layout is requested
-                rotated = args.plate == "rotated"
+                # Always create the default plate report
                 excel_path = os.path.join(output_dir, config.EXCEL_OUTPUT_FILENAME)
-                create_plate_report(results, excel_path, rotated=rotated)
+                create_plate_report(results, excel_path, rotated=False)
+                
+                # If "rotated" was specified, also create the rotated version
+                if args.plate == "rotated":
+                    rotated_path = os.path.join(output_dir, "Plate_Results_Rotated.xlsx")
+                    create_plate_report(results, rotated_path, rotated=True)
             
             # Count aneuploid and buffer zone samples
             aneuploid_count = sum(1 for r in results if r.get('has_aneuploidy', False))
