@@ -162,7 +162,7 @@ def create_composite_image(results, output_path):
                             # Buffer zone trumps aneuploidy in detection, but has specific border styling
                             if result.get('has_buffer_zone', False):
                                 border_color = '#000000'  # Black border for buffer zone
-                                border_width = 2  # Thin border like euploid
+                                border_width = 1  # Thin border like euploid
                                 logger.debug(f"Applied buffer zone border (black) to well {well}")
                             elif result.get('has_aneuploidy', False):
                                 border_color = '#E6B8E6'  # Light purple border for aneuploidy (matching Excel)
@@ -170,7 +170,7 @@ def create_composite_image(results, output_path):
                                 logger.debug(f"Applied aneuploidy border (light purple) to well {well}")
                             else:
                                 border_color = '#B0B0B0'  # Light grey border for euploid samples
-                                border_width = 2  # Thin border
+                                border_width = 1  # Thin border
                                 logger.debug(f"Applied euploid border (light grey) to well {well}")
                             
                             # Apply the border

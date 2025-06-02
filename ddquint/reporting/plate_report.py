@@ -12,9 +12,9 @@ from openpyxl.utils import get_column_letter
 
 from ..config.config import Config
 
-# Define plate layout constants - swapped for column-first layout
-COL_LABELS = list('ABCDEFGH')  # Now these are the vertical labels (columns)
-ROW_LABELS = [str(i) for i in range(1, 13)]  # Now these are the horizontal labels (rows)
+# Define plate layout constants - default is row-first layout
+DEFAULT_COL_LABELS = list('ABCDEFGH')  # Vertical labels (columns)
+DEFAULT_ROW_LABELS = [str(i) for i in range(1, 13)]  # Horizontal labels (rows)
 
 # Define cell colors
 NORMAL_FILL = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
@@ -31,7 +31,7 @@ thick = Side(style='thick')
 thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
 thick_border = Border(left=thick, right=thick, top=thick, bottom=thick)
 
-def create_plate_report(results, output_path, template_path=None):
+def create_plate_report(results, output_path, template_path=None, rotated=False):
     """
     Create an Excel report with all analysis results.
     
@@ -39,6 +39,7 @@ def create_plate_report(results, output_path, template_path=None):
         results (list): List of result dictionaries for each well
         output_path (str): Path to save the Excel report
         template_path (str, optional): Not used, kept for API compatibility
+        rotated (bool): If True, use rotated layout (1-12 as rows, A-H as columns)
         
     Returns:
         str: Path to the saved Excel report
@@ -52,6 +53,7 @@ def create_plate_report(results, output_path, template_path=None):
     
     logger.debug(f"Creating Excel report for {len(results)} results with {num_chromosomes} chromosomes")
     logger.debug(f"Output path: {output_path}")
+    logger.debug(f"Rotated layout: {rotated}")
     
     try:
         # Create a new workbook
@@ -61,13 +63,13 @@ def create_plate_report(results, output_path, template_path=None):
         logger.debug("Created new workbook")
 
         # Create the full grid layout without any merging first
-        create_grid_layout_without_merging(ws, results, num_chromosomes)
+        create_grid_layout_without_merging(ws, results, num_chromosomes, rotated)
         
         # Apply all cell merges AFTER setting values
-        apply_cell_merges(ws, num_chromosomes)
+        apply_cell_merges(ws, num_chromosomes, rotated)
         
         # Apply formatting and borders
-        apply_formatting(ws, num_chromosomes)
+        apply_formatting(ws, num_chromosomes, rotated)
         
         # Save the workbook
         try:
@@ -92,31 +94,42 @@ def create_plate_report(results, output_path, template_path=None):
         logger.debug("Error details:", exc_info=True)
         return None
 
-def create_grid_layout_without_merging(ws, results, num_chromosomes):
+def create_grid_layout_without_merging(ws, results, num_chromosomes, rotated=False):
     """
     Create the grid layout for the 96-well plate without any cell merging.
-    Now arranged in column-first order.
     
     Args:
         ws: Worksheet to modify
         results: List of result dictionaries
         num_chromosomes: Number of chromosomes to display
+        rotated: If True, use rotated layout (1-12 as rows, A-H as columns)
     """
     logger = logging.getLogger("ddQuint")
     config = Config.get_instance()
     
     logger.debug(f"Creating grid layout for {len(results)} results with {num_chromosomes} chromosomes")
+    logger.debug(f"Using {'rotated' if rotated else 'default'} layout")
+    
+    # Set layout labels based on rotation
+    if rotated:
+        # Rotated layout: A-H across top, 1-12 down left side
+        col_labels = [str(i) for i in range(1, 13)]  # 1-12 down the side
+        row_labels = list('ABCDEFGH')  # A-H across the top
+    else:
+        # Default layout: 1-12 across top, A-H down left side  
+        col_labels = DEFAULT_COL_LABELS  # A-H down the side
+        row_labels = DEFAULT_ROW_LABELS  # 1-12 across the top
     
     # Set header row values
-    setup_header_values(ws)
+    setup_header_values(ws, row_labels, rotated)
     
     # Convert results list to a dictionary keyed by well ID for easy lookup
     result_dict = {r.get('well', ''): r for r in results if r.get('well') is not None}
     logger.debug(f"Created result dictionary with {len(result_dict)} valid wells")
     
-    # Process each column (A-H) - now these are the vertical divisions
-    for col_idx, col_label in enumerate(COL_LABELS):
-        logger.debug(f"Processing column {col_label}")
+    # Process each column division
+    for col_idx, col_label in enumerate(col_labels):
+        logger.debug(f"Processing {'row' if rotated else 'column'} {col_label}")
         # Starting row for this plate column (each well takes num_chromosomes+1 rows)
         start_row = col_idx * (num_chromosomes + 1) + 3  # Start from row 3 (after headers)
         
@@ -126,9 +139,14 @@ def create_grid_layout_without_merging(ws, results, num_chromosomes):
         col_label_cell.font = Font(bold=True)
         col_label_cell.alignment = Alignment(horizontal='center', vertical='center')
         
-        # Process each row (1-12) - now these are the horizontal divisions
-        for row_idx, row_label in enumerate(ROW_LABELS):
-            well_id = f"{col_label}{row_label.zfill(2)}"
+        # Process each row division
+        for row_idx, row_label in enumerate(row_labels):
+            # Generate well ID based on layout
+            if rotated:
+                well_id = f"{row_label}{col_label.zfill(2)}"
+            else:
+                well_id = f"{col_label}{row_label.zfill(2)}"
+            
             logger.debug(f"Processing well {well_id}")
             
             # Starting column for this well (each well takes 3 columns)
@@ -137,29 +155,33 @@ def create_grid_layout_without_merging(ws, results, num_chromosomes):
             # Fill in data for this well without merging
             add_well_data(ws, start_row, start_col, well_id, result_dict.get(well_id), num_chromosomes)
 
-def setup_header_values(ws):
+def setup_header_values(ws, row_labels, rotated=False):
     """
     Set up the header row values without merging.
-    Now arranged for column-first layout (1-12 across the top).
+    
+    Args:
+        ws: Worksheet to modify
+        row_labels: Labels for the horizontal divisions
+        rotated: If True, using rotated layout
     """
     logger = logging.getLogger("ddQuint")
-    logger.debug("Setting up header values")
+    logger.debug(f"Setting up header values for {'rotated' if rotated else 'default'} layout")
     
-    # Row 1: Row numbers (1-12) - now these are horizontal headers
-    for row_idx in range(1, 13):
+    # Row 1: Horizontal headers
+    for row_idx, row_label in enumerate(row_labels):
         # Each well takes 3 columns
-        cell_col = (row_idx - 1) * 3 + 2  # Start at column B (column 2)
+        cell_col = row_idx * 3 + 2  # Start at column B (column 2)
         
-        # Set row number in the first column of the well
+        # Set header value in the first column of the well
         cell = ws.cell(row=1, column=cell_col)
-        cell.value = row_idx
+        cell.value = row_label
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal='center')
-        logger.debug(f"Set row header {row_idx} at column {cell_col}")
+        logger.debug(f"Set header {row_label} at column {cell_col}")
     
     # Row 2: "abs." and "rel." labels
-    for row_idx in range(1, 13):
-        base_col = (row_idx - 1) * 3 + 2
+    for row_idx, row_label in enumerate(row_labels):
+        base_col = row_idx * 3 + 2
         
         # First column is blank (for chromosome name)
         first_cell = ws.cell(row=2, column=base_col)
@@ -177,7 +199,7 @@ def setup_header_values(ws):
         rel_cell.font = Font(size=9)
         rel_cell.alignment = Alignment(horizontal='center')
         
-        logger.debug(f"Set subheaders for row {row_idx}")
+        logger.debug(f"Set subheaders for {row_label}")
 
 def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
     """
@@ -308,58 +330,68 @@ def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
             chrom_cell.font = Font(size=9, color='C0C0C0')  # Light gray for empty wells
         logger.debug("Added empty chromosome labels")
 
-def apply_cell_merges(ws, num_chromosomes):
+def apply_cell_merges(ws, num_chromosomes, rotated=False):
     """
     Apply all cell merges after setting all cell values.
-    Updated for column-first layout.
     
     Args:
         ws: Worksheet to modify
         num_chromosomes: Number of chromosomes per well
+        rotated: If True, using rotated layout
     """
     logger = logging.getLogger("ddQuint")
-    logger.debug("Applying cell merges")
+    logger.debug(f"Applying cell merges for {'rotated' if rotated else 'default'} layout")
     
-    # Merge cells in header row (1-12 across the top)
-    for row_idx in range(1, 13):
-        cell_col = (row_idx - 1) * 3 + 2
+    # Determine the number of horizontal divisions based on layout
+    num_horizontal = 8 if rotated else 12  # A-H or 1-12
+    
+    # Merge cells in header row
+    for row_idx in range(num_horizontal):
+        cell_col = row_idx * 3 + 2
         ws.merge_cells(start_row=1, start_column=cell_col, end_row=1, end_column=cell_col + 2)
-        logger.debug(f"Merged header for row {row_idx}")
+        logger.debug(f"Merged header for position {row_idx}")
     
     # Each well takes num_chromosomes+1 rows now
     well_height = num_chromosomes + 1
     
-    # Merge column labels (A-H down the left side)
-    for col_idx in range(len(COL_LABELS)):
+    # Determine the number of vertical divisions based on layout
+    num_vertical = 12 if rotated else 8  # 1-12 or A-H
+    
+    # Merge vertical labels (down the left side)
+    for col_idx in range(num_vertical):
         start_row = col_idx * well_height + 3
         ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row+well_height-1, end_column=1)
-        logger.debug(f"Merged column label for column {COL_LABELS[col_idx]}")
+        logger.debug(f"Merged vertical label for position {col_idx}")
     
     # Merge well name cells
-    for col_idx in range(len(COL_LABELS)):
-        for row_idx in range(len(ROW_LABELS)):
+    for col_idx in range(num_vertical):
+        for row_idx in range(num_horizontal):
             start_row = col_idx * well_height + 3
             start_col = row_idx * 3 + 2
             
             # Merge the name cell (first row of well)
             ws.merge_cells(start_row=start_row, start_column=start_col, end_row=start_row, end_column=start_col+2)
-            logger.debug(f"Merged name cell for well {COL_LABELS[col_idx]}{ROW_LABELS[row_idx]}")
+            logger.debug(f"Merged name cell for position ({col_idx}, {row_idx})")
 
-def apply_formatting(ws, num_chromosomes):
+def apply_formatting(ws, num_chromosomes, rotated=False):
     """
     Apply formatting to the entire worksheet with proper borders.
     
     Args:
         ws: Worksheet to modify
         num_chromosomes: Number of chromosomes per well
+        rotated: If True, using rotated layout
     """
     logger = logging.getLogger("ddQuint")
-    logger.debug("Applying formatting")
+    logger.debug(f"Applying formatting for {'rotated' if rotated else 'default'} layout")
     
-    # Get maximum row and column in use
+    # Get maximum row and column in use based on layout
     well_height = num_chromosomes + 1
-    max_row = 8 * well_height + 2  # 8 columns of wells (A-H), each with well_height rows
-    max_col = 37  # 12 wells × 3 columns each + 1 for column labels
+    num_vertical = 12 if rotated else 8    # Number of vertical divisions
+    num_horizontal = 8 if rotated else 12  # Number of horizontal divisions
+    
+    max_row = num_vertical * well_height + 2  # Vertical divisions × well height + header rows
+    max_col = num_horizontal * 3 + 1  # Horizontal divisions × 3 columns each + 1 for labels
     
     logger.debug(f"Worksheet dimensions: {max_row}x{max_col}")
     
@@ -370,14 +402,14 @@ def apply_formatting(ws, num_chromosomes):
             cell.border = thin_border
     
     # Second pass: apply thick borders for plate boundaries
-    apply_plate_boundaries(ws, num_chromosomes)
+    apply_plate_boundaries(ws, num_chromosomes, rotated)
     
     # Set column widths
-    ws.column_dimensions['A'].width = 3  # Column labels
+    ws.column_dimensions['A'].width = 3  # Label column
     logger.debug("Set column A width to 3")
     
     # Each well takes 3 columns
-    for i in range(1, 37):  # 12 wells × 3 columns each = 36 columns
+    for i in range(1, max_col):  # All data columns
         col_letter = get_column_letter(i+1)  # +1 because we start at column B
         if i % 3 == 1:  # First column of each well (chromosome name)
             ws.column_dimensions[col_letter].width = 5
@@ -389,28 +421,30 @@ def apply_formatting(ws, num_chromosomes):
     ws.freeze_panes = ws.cell(row=3, column=2)
     logger.debug("Set freeze panes at row 3, column 2")
 
-def apply_plate_boundaries(ws, num_chromosomes):
+def apply_plate_boundaries(ws, num_chromosomes, rotated=False):
     """
     Apply thick borders around each well and at the plate boundaries.
-    Updated for column-first layout.
     
     Args:
         ws: Worksheet to modify
         num_chromosomes: Number of chromosomes per well
+        rotated: If True, using rotated layout
     """
     logger = logging.getLogger("ddQuint")
-    logger.debug("Applying plate boundaries")
+    logger.debug(f"Applying plate boundaries for {'rotated' if rotated else 'default'} layout")
     
     well_height = num_chromosomes + 1
+    num_vertical = 12 if rotated else 8    # Number of vertical divisions
+    num_horizontal = 8 if rotated else 12  # Number of horizontal divisions
     
-    # For each column of wells (A-H) - now these are vertical divisions
-    for col_idx, col_label in enumerate(COL_LABELS):
-        # Start row for this plate column (each well takes well_height rows)
+    # For each vertical division
+    for col_idx in range(num_vertical):
+        # Start row for this division (each well takes well_height rows)
         start_row = col_idx * well_height + 3
-        end_row = start_row + well_height - 1  # End row for this plate column
+        end_row = start_row + well_height - 1  # End row for this division
         
-        # For each row of wells (1-12) - now these are horizontal divisions
-        for row_idx, row_label in enumerate(ROW_LABELS):
+        # For each horizontal division
+        for row_idx in range(num_horizontal):
             # Start and end columns for this well (each well is 3 columns wide)
             start_col = row_idx * 3 + 2
             end_col = start_col + 2
