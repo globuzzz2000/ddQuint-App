@@ -12,14 +12,16 @@ from openpyxl.utils import get_column_letter
 
 from ..config.config import Config
 
-# Define plate layout constants
-ROW_LABELS = list('ABCDEFGH')
-COL_LABELS = [str(i) for i in range(1, 13)]  # 1-12
+# Define plate layout constants - swapped for column-first layout
+COL_LABELS = list('ABCDEFGH')  # Now these are the vertical labels (columns)
+ROW_LABELS = [str(i) for i in range(1, 13)]  # Now these are the horizontal labels (rows)
 
 # Define cell colors
 NORMAL_FILL = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 ANEUPLOIDY_FILL = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")
 ANEUPLOIDY_VALUE_FILL = PatternFill(start_color="D070D0", end_color="D070D0", fill_type="solid")
+BUFFER_ZONE_FILL = PatternFill(start_color="E6E6E6", end_color="E6E6E6", fill_type="solid")
+BUFFER_ZONE_VALUE_FILL = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
 
 # Define border styles
 thin = Side(style='thin')
@@ -93,6 +95,7 @@ def create_plate_report(results, output_path, template_path=None):
 def create_grid_layout_without_merging(ws, results, num_chromosomes):
     """
     Create the grid layout for the 96-well plate without any cell merging.
+    Now arranged in column-first order.
     
     Args:
         ws: Worksheet to modify
@@ -111,25 +114,25 @@ def create_grid_layout_without_merging(ws, results, num_chromosomes):
     result_dict = {r.get('well', ''): r for r in results if r.get('well') is not None}
     logger.debug(f"Created result dictionary with {len(result_dict)} valid wells")
     
-    # Process each row (A-H)
-    for row_idx, row_label in enumerate(ROW_LABELS):
-        logger.debug(f"Processing row {row_label}")
-        # Starting row for this plate row (each well takes num_chromosomes+1 rows)
-        start_row = row_idx * (num_chromosomes + 1) + 3  # Start from row 3 (after headers)
+    # Process each column (A-H) - now these are the vertical divisions
+    for col_idx, col_label in enumerate(COL_LABELS):
+        logger.debug(f"Processing column {col_label}")
+        # Starting row for this plate column (each well takes num_chromosomes+1 rows)
+        start_row = col_idx * (num_chromosomes + 1) + 3  # Start from row 3 (after headers)
         
-        # Add row label in column A
-        row_label_cell = ws.cell(row=start_row, column=1)
-        row_label_cell.value = row_label
-        row_label_cell.font = Font(bold=True)
-        row_label_cell.alignment = Alignment(horizontal='center', vertical='center')
+        # Add column label in column A
+        col_label_cell = ws.cell(row=start_row, column=1)
+        col_label_cell.value = col_label
+        col_label_cell.font = Font(bold=True)
+        col_label_cell.alignment = Alignment(horizontal='center', vertical='center')
         
-        # Process each column (1-12)
-        for col_idx, col_label in enumerate(COL_LABELS):
-            well_id = f"{row_label}{col_label.zfill(2)}"
+        # Process each row (1-12) - now these are the horizontal divisions
+        for row_idx, row_label in enumerate(ROW_LABELS):
+            well_id = f"{col_label}{row_label.zfill(2)}"
             logger.debug(f"Processing well {well_id}")
             
             # Starting column for this well (each well takes 3 columns)
-            start_col = col_idx * 3 + 2  # Start from column B (column 2)
+            start_col = row_idx * 3 + 2  # Start from column B (column 2)
             
             # Fill in data for this well without merging
             add_well_data(ws, start_row, start_col, well_id, result_dict.get(well_id), num_chromosomes)
@@ -137,25 +140,26 @@ def create_grid_layout_without_merging(ws, results, num_chromosomes):
 def setup_header_values(ws):
     """
     Set up the header row values without merging.
+    Now arranged for column-first layout (1-12 across the top).
     """
     logger = logging.getLogger("ddQuint")
     logger.debug("Setting up header values")
     
-    # Row 1: Column numbers (1-12)
-    for col_idx in range(1, 13):
+    # Row 1: Row numbers (1-12) - now these are horizontal headers
+    for row_idx in range(1, 13):
         # Each well takes 3 columns
-        cell_col = (col_idx - 1) * 3 + 2  # Start at column B (column 2)
+        cell_col = (row_idx - 1) * 3 + 2  # Start at column B (column 2)
         
-        # Set column number in the first column of the well
+        # Set row number in the first column of the well
         cell = ws.cell(row=1, column=cell_col)
-        cell.value = col_idx
+        cell.value = row_idx
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal='center')
-        logger.debug(f"Set column header {col_idx} at column {cell_col}")
+        logger.debug(f"Set row header {row_idx} at column {cell_col}")
     
     # Row 2: "abs." and "rel." labels
-    for col_idx in range(1, 13):
-        base_col = (col_idx - 1) * 3 + 2
+    for row_idx in range(1, 13):
+        base_col = (row_idx - 1) * 3 + 2
         
         # First column is blank (for chromosome name)
         first_cell = ws.cell(row=2, column=base_col)
@@ -173,7 +177,7 @@ def setup_header_values(ws):
         rel_cell.font = Font(size=9)
         rel_cell.alignment = Alignment(horizontal='center')
         
-        logger.debug(f"Set subheaders for column {col_idx}")
+        logger.debug(f"Set subheaders for row {row_idx}")
 
 def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
     """
@@ -222,11 +226,15 @@ def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
         # Get count data and copy numbers
         counts = result.get('counts', {})
         copy_numbers = result.get('copy_numbers', {})
+        copy_number_states = result.get('copy_number_states', {})
         has_aneuploidy = result.get('has_aneuploidy', False)
+        has_buffer_zone = result.get('has_buffer_zone', False)
         
         logger.debug(f"Well has aneuploidy: {has_aneuploidy}")
+        logger.debug(f"Well has buffer zone: {has_buffer_zone}")
         logger.debug(f"Counts: {counts}")
         logger.debug(f"Copy numbers: {copy_numbers}")
+        logger.debug(f"Copy number states: {copy_number_states}")
         
         # Get chromosome keys dynamically
         chromosome_keys = config.get_chromosome_keys()
@@ -258,18 +266,35 @@ def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
                 rel_cell.font = Font(size=9)
                 rel_cell.alignment = Alignment(horizontal='center')
             
-            # Apply highlighting for aneuploidies
-            if has_aneuploidy:
-                # Base coloring for all cells in aneuploidy wells
+            # Apply highlighting for buffer zones and aneuploidies
+            # Buffer zone trumps aneuploidy
+            if has_buffer_zone:
+                # Dark grey fill for buffer zone samples (entire well)
+                chrom_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
+                abs_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
+                rel_cell.fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
+                logger.debug(f"Applied buffer zone highlighting to {chrom_label}")
+            elif has_aneuploidy:
+                # Light purple fill for aneuploidy samples (entire well)
                 chrom_cell.fill = ANEUPLOIDY_FILL
                 abs_cell.fill = ANEUPLOIDY_FILL
                 rel_cell.fill = ANEUPLOIDY_FILL
                 
-                # Darker coloring for the specific aneuploidy value
+                # Darker purple fill for individual aneuploidy chromosomes
                 if rel_count is not None:
-                    if abs(rel_count - 1.0) > config.ANEUPLOIDY_DEVIATION_THRESHOLD:
+                    chrom_state = copy_number_states.get(chrom_key, 'euploid')
+                    if chrom_state == 'aneuploidy':
+                        # Individual chromosome aneuploidy highlighting (darker purple)
+                        chrom_cell.fill = ANEUPLOIDY_VALUE_FILL
+                        abs_cell.fill = ANEUPLOIDY_VALUE_FILL
                         rel_cell.fill = ANEUPLOIDY_VALUE_FILL
                         logger.debug(f"{chrom_label} has aneuploidy value: {rel_count:.2f}")
+                    elif not copy_number_states and abs(rel_count - 1.0) > 0.15:
+                        # Fallback for legacy detection
+                        chrom_cell.fill = ANEUPLOIDY_VALUE_FILL
+                        abs_cell.fill = ANEUPLOIDY_VALUE_FILL
+                        rel_cell.fill = ANEUPLOIDY_VALUE_FILL
+                        logger.debug(f"{chrom_label} has legacy aneuploidy value: {rel_count:.2f}")
             
             logger.debug(f"Added {chrom_label} data: abs={abs_count}, rel={rel_count}")
     else:
@@ -286,6 +311,7 @@ def add_well_data(ws, start_row, start_col, well_id, result, num_chromosomes):
 def apply_cell_merges(ws, num_chromosomes):
     """
     Apply all cell merges after setting all cell values.
+    Updated for column-first layout.
     
     Args:
         ws: Worksheet to modify
@@ -294,30 +320,30 @@ def apply_cell_merges(ws, num_chromosomes):
     logger = logging.getLogger("ddQuint")
     logger.debug("Applying cell merges")
     
-    # Merge cells in header row
-    for col_idx in range(1, 13):
-        cell_col = (col_idx - 1) * 3 + 2
+    # Merge cells in header row (1-12 across the top)
+    for row_idx in range(1, 13):
+        cell_col = (row_idx - 1) * 3 + 2
         ws.merge_cells(start_row=1, start_column=cell_col, end_row=1, end_column=cell_col + 2)
-        logger.debug(f"Merged header for column {col_idx}")
+        logger.debug(f"Merged header for row {row_idx}")
     
     # Each well takes num_chromosomes+1 rows now
     well_height = num_chromosomes + 1
     
-    # Merge row labels
-    for row_idx in range(len(ROW_LABELS)):
-        start_row = row_idx * well_height + 3
+    # Merge column labels (A-H down the left side)
+    for col_idx in range(len(COL_LABELS)):
+        start_row = col_idx * well_height + 3
         ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row+well_height-1, end_column=1)
-        logger.debug(f"Merged row label for row {ROW_LABELS[row_idx]}")
+        logger.debug(f"Merged column label for column {COL_LABELS[col_idx]}")
     
     # Merge well name cells
-    for row_idx in range(len(ROW_LABELS)):
-        for col_idx in range(len(COL_LABELS)):
-            start_row = row_idx * well_height + 3
-            start_col = col_idx * 3 + 2
+    for col_idx in range(len(COL_LABELS)):
+        for row_idx in range(len(ROW_LABELS)):
+            start_row = col_idx * well_height + 3
+            start_col = row_idx * 3 + 2
             
             # Merge the name cell (first row of well)
             ws.merge_cells(start_row=start_row, start_column=start_col, end_row=start_row, end_column=start_col+2)
-            logger.debug(f"Merged name cell for well {ROW_LABELS[row_idx]}{COL_LABELS[col_idx]}")
+            logger.debug(f"Merged name cell for well {COL_LABELS[col_idx]}{ROW_LABELS[row_idx]}")
 
 def apply_formatting(ws, num_chromosomes):
     """
@@ -332,8 +358,8 @@ def apply_formatting(ws, num_chromosomes):
     
     # Get maximum row and column in use
     well_height = num_chromosomes + 1
-    max_row = 8 * well_height + 2  # 8 rows of wells, each with well_height rows
-    max_col = 37  # 12 wells × 3 columns each + 1 for row labels
+    max_row = 8 * well_height + 2  # 8 columns of wells (A-H), each with well_height rows
+    max_col = 37  # 12 wells × 3 columns each + 1 for column labels
     
     logger.debug(f"Worksheet dimensions: {max_row}x{max_col}")
     
@@ -347,7 +373,7 @@ def apply_formatting(ws, num_chromosomes):
     apply_plate_boundaries(ws, num_chromosomes)
     
     # Set column widths
-    ws.column_dimensions['A'].width = 3  # Row labels
+    ws.column_dimensions['A'].width = 3  # Column labels
     logger.debug("Set column A width to 3")
     
     # Each well takes 3 columns
@@ -366,6 +392,7 @@ def apply_formatting(ws, num_chromosomes):
 def apply_plate_boundaries(ws, num_chromosomes):
     """
     Apply thick borders around each well and at the plate boundaries.
+    Updated for column-first layout.
     
     Args:
         ws: Worksheet to modify
@@ -376,16 +403,16 @@ def apply_plate_boundaries(ws, num_chromosomes):
     
     well_height = num_chromosomes + 1
     
-    # For each row of wells (A-H)
-    for row_idx, row_label in enumerate(ROW_LABELS):
-        # Start row for this plate row (each well takes well_height rows)
-        start_row = row_idx * well_height + 3
-        end_row = start_row + well_height - 1  # End row for this plate row
+    # For each column of wells (A-H) - now these are vertical divisions
+    for col_idx, col_label in enumerate(COL_LABELS):
+        # Start row for this plate column (each well takes well_height rows)
+        start_row = col_idx * well_height + 3
+        end_row = start_row + well_height - 1  # End row for this plate column
         
-        # For each column of wells (1-12)
-        for col_idx, col_label in enumerate(COL_LABELS):
+        # For each row of wells (1-12) - now these are horizontal divisions
+        for row_idx, row_label in enumerate(ROW_LABELS):
             # Start and end columns for this well (each well is 3 columns wide)
-            start_col = col_idx * 3 + 2
+            start_col = row_idx * 3 + 2
             end_col = start_col + 2
             
             # Apply appropriate borders to each cell in this well

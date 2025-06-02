@@ -21,9 +21,7 @@ warnings.filterwarnings("ignore", message=".*force_all_finite.*")
 warnings.filterwarnings("ignore", message=".*SettingWithCopyWarning.*")
 
 # Import configuration modules
-from ddquint.config.config import Config
-from ddquint.config.config_display import display_config
-from ddquint.config.template_generator import generate_config_template
+from .config import Config, display_config, generate_config_template
 
 # Suppress wxPython warning message
 if sys.platform == 'darwin':
@@ -48,11 +46,10 @@ else:
         """No-op context manager for non-macOS platforms."""
         yield
 
-from ddquint.utils.gui import select_directory
-from ddquint.core.file_processor import process_directory
-from ddquint.visualization.plate_plots import create_composite_image
-from ddquint.reporting import create_plate_report, create_list_report
-from ddquint.utils.template_parser import get_sample_names
+from .utils import select_directory, get_sample_names
+from .core import process_directory
+from .visualization import create_composite_image
+from .reporting import create_plate_report, create_list_report
 
 def setup_logging(debug=False):
     """
@@ -151,6 +148,11 @@ def parse_arguments():
         action="store_true",
         help="Generate plate format Excel report in addition to the standard list report"
     )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Test mode: creates output in separate folder without moving input files"
+    )
     
     return parser.parse_args()
 
@@ -182,6 +184,35 @@ def handle_config_command(config_arg):
         return False  # Continue with main execution after loading config
     return False
 
+def create_test_output_directory(input_dir):
+    """
+    Create a test output directory based on the input directory name.
+    
+    Args:
+        input_dir (str): Input directory path
+        
+    Returns:
+        str: Path to the test output directory
+    """
+    logger = logging.getLogger("ddQuint")
+    
+    # Get the parent directory and input directory name
+    parent_dir = os.path.dirname(input_dir)
+    input_name = os.path.basename(input_dir)
+    
+    # Create test output directory name with timestamp
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    test_output_name = f"{input_name}_test_{timestamp}"
+    test_output_dir = os.path.join(parent_dir, test_output_name)
+    
+    # Create the directory
+    os.makedirs(test_output_dir, exist_ok=True)
+    
+    logger.debug(f"Test mode: Output will be saved to {test_output_dir}")
+    logger.debug(f"Test mode: Input files in {input_dir} will remain untouched")
+    
+    return test_output_dir
+
 def main():
     """Main function to run the application."""
     
@@ -211,8 +242,12 @@ def main():
         
         logger.debug(f"Input directory: {input_dir}")
         
-        # Get output directory
-        output_dir = args.output if args.output else input_dir
+        # Determine output directory based on test mode
+        if args.test:
+            output_dir = create_test_output_directory(input_dir)
+        else:
+            output_dir = args.output if args.output else input_dir
+            
         logger.debug(f"Output directory: {output_dir}")
         
         # Create output directory if it doesn't exist
@@ -229,8 +264,8 @@ def main():
         sample_names = get_sample_names(input_dir)
         logger.debug(f"Found {len(sample_names)} sample names")
         
-        # Process the directory with sample names
-        results = process_directory(input_dir, output_dir, sample_names, verbose=args.verbose)
+        # Process the directory with sample names (test_mode parameter)
+        results = process_directory(input_dir, output_dir, sample_names, verbose=args.verbose, test_mode=args.test)
         
         # Create output files if we have results
         if results:
@@ -254,11 +289,16 @@ def main():
                 create_plate_report(results, excel_path)
 
             
-            # Count aneuploid samples
+            # Count aneuploid and buffer zone samples
             aneuploid_count = sum(1 for r in results if r.get('has_aneuploidy', False))
+            buffer_zone_count = sum(1 for r in results if r.get('has_buffer_zone', False))
             
-            logger.info(f"\nProcessed {len(results)} files ({aneuploid_count} potential aneuploidies)")
+            logger.info(f"\nProcessed {len(results)} files ({aneuploid_count} potential aneuploidies, {buffer_zone_count} buffer zone samples)")
             logger.info(f"Results saved to: {os.path.abspath(output_dir)}")
+            
+            if args.test:
+                logger.debug(f"Test mode: Input files remain in: {os.path.abspath(input_dir)}")
+            
             logger.info("=== Analysis complete ===")
             logger.info("")
             

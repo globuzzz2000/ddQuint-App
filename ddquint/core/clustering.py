@@ -1,5 +1,5 @@
 """
-Enhanced clustering module for ddQuint with dynamic chromosome support
+Enhanced clustering module for ddQuint with dynamic chromosome support and buffer zone detection
 """
 
 import numpy as np
@@ -20,7 +20,7 @@ def analyze_droplets(df):
         df (pandas.DataFrame): DataFrame containing Ch1Amplitude and Ch2Amplitude columns
         
     Returns:
-        dict: Clustering results including counts, copy numbers, and aneuploidy status
+        dict: Clustering results including counts, copy numbers, aneuploidy status, and buffer zone detection
     """
     logger = logging.getLogger("ddQuint")
     config = Config.get_instance()
@@ -37,10 +37,14 @@ def analyze_droplets(df):
         logger.debug(f"Not enough data points for clustering: {len(df_copy)} < {config.MIN_POINTS_FOR_CLUSTERING}")
         return {
             'clusters': np.array([-1] * len(df_copy)),
+            'df_filtered': df_copy,
             'counts': {},
             'copy_numbers': {},
+            'copy_number_states': {},
             'has_aneuploidy': False,
-            'target_mapping': {}
+            'has_buffer_zone': False,
+            'target_mapping': {},
+            'chrom3_reclustered': False
         }
     
     # Standardize the data for clustering
@@ -158,16 +162,49 @@ def analyze_droplets(df):
     copy_numbers = calculate_copy_numbers(label_counts)
     logger.debug(f"Copy numbers: {copy_numbers}")
     
-    # Check for aneuploidies in copy numbers
-    has_aneuploidy, abnormal_chroms = detect_aneuploidies(copy_numbers)
-    logger.debug(f"Has aneuploidy: {has_aneuploidy}, Abnormal chromosomes: {abnormal_chroms}")
+    # Classify copy number states and detect aneuploidies/buffer zones
+    copy_number_states = {}
+    has_aneuploidy = False
+    has_buffer_zone = False
+    
+    for chrom_name, copy_number in copy_numbers.items():
+        if chrom_name.startswith('Chrom'):
+            state = config.classify_copy_number_state(chrom_name, copy_number)
+            copy_number_states[chrom_name] = state
+            
+            if state == 'buffer_zone':
+                has_buffer_zone = True
+                logger.debug(f"{chrom_name} classified as buffer zone: {copy_number:.3f}")
+            elif state == 'aneuploidy':
+                has_aneuploidy = True
+                logger.debug(f"{chrom_name} classified as aneuploidy: {copy_number:.3f}")
+            else:
+                logger.debug(f"{chrom_name} classified as euploid: {copy_number:.3f}")
+    
+    # Buffer zone trumps aneuploidy - if any chromosome is in buffer zone, mark as buffer zone sample
+    if has_buffer_zone:
+        has_aneuploidy = False  # Reset aneuploidy flag when buffer zone is present
+    
+    # Check for aneuploidies in copy numbers (legacy compatibility)
+    legacy_has_aneuploidy, abnormal_chroms = detect_aneuploidies(copy_numbers)
+    
+    # Use the more sophisticated classification if available
+    if copy_number_states:
+        final_has_aneuploidy = has_aneuploidy
+    else:
+        final_has_aneuploidy = legacy_has_aneuploidy
+    
+    logger.debug(f"Final analysis - Aneuploidy: {final_has_aneuploidy}, Buffer zone: {has_buffer_zone}")
     
     return {
         'clusters': df_copy['cluster'].values,
         'df_filtered': df_filtered, 
         'counts': label_counts,
         'copy_numbers': copy_numbers,
-        'has_aneuploidy': has_aneuploidy,
+        'copy_number_states': copy_number_states,
+        'has_aneuploidy': final_has_aneuploidy,
+        'has_buffer_zone': has_buffer_zone,
         'abnormal_chromosomes': abnormal_chroms,
-        'target_mapping': target_mapping
+        'target_mapping': target_mapping,
+        'chrom3_reclustered': False  # Legacy field for compatibility
     }

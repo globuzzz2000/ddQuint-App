@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Configuration module for the ddQuint pipeline with dynamic chromosome support.
+Configuration module for the ddQuint pipeline with dynamic chromosome support and buffer zone detection.
 """
 
 import os
@@ -31,7 +31,7 @@ class Config:
     #############################################################################
     #                           Clustering Settings
     #############################################################################
-    # HDBSCAN clustering parameters
+    # HDBSCAN clustering parameters (from working version)
     HDBSCAN_MIN_CLUSTER_SIZE = 4
     HDBSCAN_MIN_SAMPLES = 70
     HDBSCAN_EPSILON = 0.06
@@ -52,11 +52,11 @@ class Config:
         "Chrom2":   [1700, 2100],
         "Chrom3":   [2700, 1850],
         "Chrom4":   [3200, 1250],
-        "Chrom5":   [3700, 700]
+        "Chrom5":   [3900, 700]
     }
     
     # Tolerance for matching clusters to targets
-    BASE_TARGET_TOLERANCE = 350
+    BASE_TARGET_TOLERANCE = 500
     
     # Scale factor limits for adaptive tolerance
     SCALE_FACTOR_MIN = 0.5
@@ -69,6 +69,30 @@ class Config:
     COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD = 0.15  # 15% deviation threshold
     COPY_NUMBER_BASELINE_MIN_CHROMS = 3  # Minimum chromosomes for baseline calc
     ANEUPLOIDY_DEVIATION_THRESHOLD = 0.15 
+    
+    # Expected copy number values for each chromosome (baseline for calculations)
+    EXPECTED_COPY_NUMBERS = {
+        "Chrom1": 0.9716,
+        "Chrom2": 1.0041,
+        "Chrom3": 1.0291,
+        "Chrom4": 0.9899,
+        "Chrom5": 1.0047,
+        "Chrom6": 1.00,
+        "Chrom7": 1.00,
+        "Chrom8": 1.00,
+        "Chrom9": 1.00,
+        "Chrom10": 1.00
+    }
+    
+    # Buffer zone settings
+    EUPLOID_TOLERANCE = 0.075  # ±0.075 from expected value for euploid range
+    ANEUPLOIDY_TOLERANCE = 0.075  # ±0.075 from aneuploidy targets for aneuploidy range
+    
+    # Aneuploidy target copy numbers (relative to expected)
+    ANEUPLOIDY_TARGETS = {
+        "low": 0.75,   # Deletion target (0.75 - 1 + expected)
+        "high": 1.25   # Duplication target (1.25 - 1 + expected)
+    }
     
     #############################################################################
     #                           Visualization Settings
@@ -91,11 +115,11 @@ class Config:
     # Color scheme for targets (up to 10 chromosomes)
     TARGET_COLORS = {
         "Negative": "#1f77b4",  # blue
-        "Chrom1":   "#ff7f0e",  # orange
-        "Chrom2":   "#2ca02c",  # green
-        "Chrom3":   "#17becf",  # cyan
-        "Chrom4":   "#d62728",  # red
-        "Chrom5":   "#9467bd",  # purple
+        "Chrom1":   "#f59a23",  # orange
+        "Chrom2":   "#7ec638",  # green
+        "Chrom3":   "#16d9ff",  # cyan
+        "Chrom4":   "#f65352",  # red
+        "Chrom5":   "#82218b",  # purple
         "Chrom6":   "#8c564b",  # brown
         "Chrom7":   "#e377c2",  # pink
         "Chrom8":   "#7f7f7f",  # gray
@@ -104,9 +128,11 @@ class Config:
         "Unknown":  "#c7c7c7"   # light gray
     }
     
-    # Aneuploidy highlighting colors
-    ANEUPLOIDY_FILL_COLOR = "#E6B8E6"  # Light purple
-    ANEUPLOIDY_VALUE_FILL_COLOR = "#D070D0"  # Darker purple
+    # Copy number state highlighting colors
+    ANEUPLOIDY_FILL_COLOR = "#E6B8E6"  # Light purple (for definitive aneuploidies)
+    ANEUPLOIDY_VALUE_FILL_COLOR = "#D070D0"  # Darker purple (for aneuploidy values)
+    BUFFER_ZONE_FILL_COLOR = "#B0B0B0"  # Dark grey (for buffer zone samples - entire row)
+    BUFFER_ZONE_VALUE_FILL_COLOR = "#808080"  # Darker grey (for buffer zone values - not used now)
     
     #############################################################################
     #                           File Management
@@ -174,6 +200,83 @@ class Config:
             List[str]: List of labels in order
         """
         return ['Negative'] + cls.get_chromosome_keys() + ['Unknown']
+    
+    @classmethod
+    def classify_copy_number_state(cls, chrom_name: str, copy_number: float) -> str:
+        """
+        Classify a copy number value into euploid, buffer zone, or aneuploidy.
+        
+        Args:
+            chrom_name: Chromosome name (e.g., 'Chrom1')
+            copy_number: Copy number value to classify
+            
+        Returns:
+            str: Classification ('euploid', 'buffer_zone', 'aneuploidy')
+        """
+        expected = cls.EXPECTED_COPY_NUMBERS.get(chrom_name, 1.0)
+        
+        # Define euploid range
+        euploid_min = expected - cls.EUPLOID_TOLERANCE
+        euploid_max = expected + cls.EUPLOID_TOLERANCE
+        
+        # Define aneuploidy target ranges
+        deletion_target = expected + (cls.ANEUPLOIDY_TARGETS["low"] - 1.0)
+        duplication_target = expected + (cls.ANEUPLOIDY_TARGETS["high"] - 1.0)
+        
+        deletion_min = deletion_target - cls.ANEUPLOIDY_TOLERANCE
+        deletion_max = deletion_target + cls.ANEUPLOIDY_TOLERANCE
+        duplication_min = duplication_target - cls.ANEUPLOIDY_TOLERANCE
+        duplication_max = duplication_target + cls.ANEUPLOIDY_TOLERANCE
+        
+        # Check if in euploid range
+        if euploid_min <= copy_number <= euploid_max:
+            return 'euploid'
+        
+        # Check if in aneuploidy ranges
+        if (deletion_min <= copy_number <= deletion_max or 
+            duplication_min <= copy_number <= duplication_max):
+            return 'aneuploidy'
+        
+        # Otherwise, it's in the buffer zone
+        return 'buffer_zone'
+    
+    @classmethod
+    def get_copy_number_ranges(cls, chrom_name: str) -> Dict[str, tuple]:
+        """
+        Get copy number ranges for a specific chromosome.
+        
+        Args:
+            chrom_name: Chromosome name (e.g., 'Chrom1')
+            
+        Returns:
+            dict: Dictionary with ranges for each classification
+        """
+        expected = cls.EXPECTED_COPY_NUMBERS.get(chrom_name, 1.0)
+        
+        # Calculate ranges
+        euploid_range = (
+            expected - cls.EUPLOID_TOLERANCE,
+            expected + cls.EUPLOID_TOLERANCE
+        )
+        
+        deletion_target = expected + (cls.ANEUPLOIDY_TARGETS["low"] - 1.0)
+        duplication_target = expected + (cls.ANEUPLOIDY_TARGETS["high"] - 1.0)
+        
+        deletion_range = (
+            deletion_target - cls.ANEUPLOIDY_TOLERANCE,
+            deletion_target + cls.ANEUPLOIDY_TOLERANCE
+        )
+        
+        duplication_range = (
+            duplication_target - cls.ANEUPLOIDY_TOLERANCE,
+            duplication_target + cls.ANEUPLOIDY_TOLERANCE
+        )
+        
+        return {
+            'euploid': euploid_range,
+            'deletion': deletion_range,
+            'duplication': duplication_range
+        }
     
     @classmethod
     def load_from_file(cls, filepath: str) -> bool:

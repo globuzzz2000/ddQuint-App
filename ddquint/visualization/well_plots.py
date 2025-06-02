@@ -1,5 +1,5 @@
 """
-Updated well plot visualization module for ddQuint with config integration
+Updated well plot visualization module for ddQuint with config integration and buffer zone support
 """
 
 import matplotlib.pyplot as plt
@@ -94,6 +94,7 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
     if add_copy_numbers and 'copy_numbers' in clustering_results:
         logger.debug("Adding copy number annotations")
         copy_numbers = clustering_results['copy_numbers']
+        copy_number_states = clustering_results.get('copy_number_states', {})
         
         # For each target, calculate the centroid and add a label
         for target, color in label_color_map.items():
@@ -107,19 +108,29 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
                     # Add copy number label
                     cn_value = copy_numbers[target]
                     
-                    # Check if this is an aneuploidy
-                    is_aneuploidy = (clustering_results.get('has_aneuploidy', False) and 
-                                     abs(cn_value - 1.0) > config.ANEUPLOIDY_DEVIATION_THRESHOLD)
+                    # Check the copy number state
+                    state = copy_number_states.get(target, 'euploid')
+                    is_aneuploidy = state == 'aneuploidy'
+                    is_buffer_zone = state == 'buffer_zone'
+                    
                     cn_text = f"{cn_value:.2f}"
                     
                     # Adjust size and font weight for individual vs composite plots
                     font_size = 7 if for_composite else 12
-                    font_weight = 'bold' if is_aneuploidy else 'normal'
+                    font_weight = 'bold' if (is_aneuploidy or is_buffer_zone) else 'normal'
                     
-                    logger.debug(f"Adding {target} copy number annotation: {cn_text} at ({cx:.1f}, {cy:.1f})")
+                    # Choose text color based on state
+                    if is_aneuploidy:
+                        text_color = 'darkred'
+                    elif is_buffer_zone:
+                        text_color = 'darkslategray'
+                    else:
+                        text_color = 'black'
+                    
+                    logger.debug(f"Adding {target} copy number annotation: {cn_text} at ({cx:.1f}, {cy:.1f}), state: {state}")
                     
                     ax.text(cx, cy, cn_text, 
-                            color='black' if not is_aneuploidy else 'darkred',
+                            color=text_color,
                             fontsize=font_size, fontweight=font_weight,
                             ha='center', va='center',
                             bbox=dict(facecolor='white', alpha=0.7, pad=1, edgecolor='none'))

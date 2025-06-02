@@ -81,7 +81,9 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
             'well': well_coord,
             'filename': basename,
             'has_aneuploidy': clustering_results.get('has_aneuploidy', False),
+            'has_buffer_zone': clustering_results.get('has_buffer_zone', False),
             'copy_numbers': clustering_results.get('copy_numbers', {}),
+            'copy_number_states': clustering_results.get('copy_number_states', {}),
             'counts': clustering_results.get('counts', {}),
             'graph_path': standard_plot_path,
             'df_filtered': clustering_results.get('df_filtered'), 
@@ -135,13 +137,15 @@ def create_error_result(well_coord, filename, error_message, graphs_dir):
         'well': well_coord,
         'filename': filename,
         'has_aneuploidy': False,
+        'has_buffer_zone': False,
         'copy_numbers': {},
+        'copy_number_states': {},
         'counts': {},
         'graph_path': save_path,
         'error': error_message
     }
 
-def process_directory(input_dir, output_dir=None, sample_names=None, verbose=False):
+def process_directory(input_dir, output_dir=None, sample_names=None, verbose=False, test_mode=False):
     """
     Process all CSV files in the input directory.
     
@@ -150,11 +154,15 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
         output_dir (str): Directory to save output files (defaults to input_dir)
         sample_names (dict): Optional mapping of well IDs to sample names
         verbose (bool): Enable verbose output
+        test_mode (bool): If True, copy files instead of moving them (for testing)
         
     Returns:
         list: List of result dictionaries
     """
     from tqdm import tqdm  # Import tqdm for progress bar
+    import logging
+    
+    logger = logging.getLogger("ddQuint")
     
     if output_dir is None:
         output_dir = input_dir
@@ -178,6 +186,12 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
         print(f"No CSV files found in {input_dir}")
         return []
     
+    # Log test mode status
+    if test_mode:
+        logger.info(f"Test mode: Files will be copied (not moved) to preserve input directory")
+    else:
+        logger.debug(f"Normal mode: Files will be moved to Raw Data directory")
+    
     # Process each CSV file with progress bar
     results = []
     processed_count = 0
@@ -195,9 +209,12 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
             
             # Copy the processed file to Raw Data directory
             try:
-                shutil.copy2(file_path, os.path.join(raw_data_dir, csv_file))
-            except Exception:
-                pass
+                raw_data_path = os.path.join(raw_data_dir, csv_file)
+                shutil.copy2(file_path, raw_data_path)
+                logger.debug(f"Copied {csv_file} to Raw Data directory")
+            except Exception as e:
+                logger.warning(f"Failed to copy {csv_file} to Raw Data: {str(e)}")
+                
         except Exception as e:
             if verbose:
                 print(f"  Error processing {csv_file}: {str(e)}")
@@ -205,13 +222,27 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
     if verbose:
         print(f"Processed {processed_count} of {len(csv_files)} files successfully")
     
-    # Move original files to Raw Data folder
-    for csv_file in csv_files:
-        file_path = os.path.join(input_dir, csv_file)
-        if os.path.exists(file_path):  # Make sure it still exists
-            try:
-                shutil.move(file_path, os.path.join(raw_data_dir, csv_file))
-            except Exception:
-                pass
+    # Handle file movement based on test mode
+    if test_mode:
+        logger.debug(f"Test mode: Original files preserved in {input_dir}")
+    else:
+        # Move original files to Raw Data folder (normal behavior)
+        moved_count = 0
+        for csv_file in csv_files:
+            file_path = os.path.join(input_dir, csv_file)
+            if os.path.exists(file_path):  # Make sure it still exists
+                try:
+                    raw_data_path = os.path.join(raw_data_dir, csv_file)
+                    # Remove the copied file first if it exists to avoid conflicts
+                    if os.path.exists(raw_data_path):
+                        os.remove(raw_data_path)
+                    # Move the original file
+                    shutil.move(file_path, raw_data_path)
+                    moved_count += 1
+                    logger.debug(f"Moved {csv_file} to Raw Data directory")
+                except Exception as e:
+                    logger.warning(f"Failed to move {csv_file}: {str(e)}")
+        
+        logger.debug(f"Moved {moved_count} files to Raw Data directory")
     
     return results

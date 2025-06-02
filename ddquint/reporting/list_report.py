@@ -1,5 +1,5 @@
 """
-List report generation module for ddQuint with tabular format
+List report generation module for ddQuint with tabular format and buffer zone support
 """
 
 import os
@@ -40,8 +40,8 @@ def create_list_report(results, output_path):
         ws.title = "List Results"
         logger.debug("Created new workbook")
         
-        # Sort results by well ID for consistent ordering
-        sorted_results = sorted(results, key=lambda x: x.get('well', ''))
+        # Sort results by well ID in column-first order (A01, A02, A03, ..., B01, B02, ...)
+        sorted_results = sorted(results, key=lambda x: parse_well_id_column_first(x.get('well', '')))
         
         # Set up headers with proper structure
         setup_headers(ws, chromosome_keys)
@@ -65,6 +65,48 @@ def create_list_report(results, output_path):
         logger.error(f"Error creating list report: {str(e)}")
         logger.debug("Error details:", exc_info=True)
         return None
+
+
+def parse_well_id_column_first(well_id):
+    """
+    Parse well ID to support column-first sorting.
+    
+    Args:
+        well_id (str): Well identifier like 'A01', 'B12', etc.
+        
+    Returns:
+        tuple: (column_number, row_number) for column-first sorting
+    """
+    if not well_id:
+        return (999, 999)  # Put empty well IDs at the end
+    
+    # Extract letter(s) for row and number(s) for column
+    row_part = ''
+    col_part = ''
+    
+    for char in well_id:
+        if char.isalpha():
+            row_part += char
+        elif char.isdigit():
+            col_part += char
+    
+    # Convert row letters to number (A=1, B=2, etc.)
+    # Handle multi-letter rows like AA, AB, etc.
+    if row_part:
+        row_number = 0
+        for i, char in enumerate(reversed(row_part.upper())):
+            row_number += (ord(char) - ord('A') + 1) * (26 ** i)
+    else:
+        row_number = 999  # Put malformed wells at the end
+    
+    # Convert column to integer, defaulting to 0 if not found
+    try:
+        col_number = int(col_part) if col_part else 0
+    except ValueError:
+        col_number = 999
+    
+    # Return (column, row) for column-first sorting
+    return (col_number, row_number)
 
 
 def setup_headers(ws, chromosome_keys):
@@ -124,7 +166,7 @@ def setup_headers(ws, chromosome_keys):
 
 def fill_well_data(ws, sorted_results, chromosome_keys, config):
     """
-    Fill in data for each well with aneuploidy highlighting.
+    Fill in data for each well with buffer zone and aneuploidy highlighting.
     """
     num_chromosomes = len(chromosome_keys)
     rel_start = 3
@@ -149,12 +191,32 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
         # Get data for this well
         counts = result.get('counts', {})
         copy_numbers = result.get('copy_numbers', {})
+        copy_number_states = result.get('copy_number_states', {})
         has_aneuploidy = result.get('has_aneuploidy', False)
+        has_buffer_zone = result.get('has_buffer_zone', False)
         
-        # Apply highlighting to Well and Sample cells if aneuploidy
-        if has_aneuploidy:
-            well_cell.fill = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")
-            sample_cell.fill = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")
+        # Determine row-level highlighting - buffer zone trumps aneuploidy
+        if has_buffer_zone:
+            # Dark grey fill for buffer zone samples (entire row)
+            row_fill = PatternFill(start_color="B0B0B0", 
+                                  end_color="B0B0B0", 
+                                  fill_type="solid")
+            apply_row_fill = True
+        elif has_aneuploidy:
+            # Light purple fill for aneuploidy samples (entire row)
+            row_fill = PatternFill(start_color="E6B8E6", 
+                                  end_color="E6B8E6", 
+                                  fill_type="solid")
+            apply_row_fill = True
+        else:
+            # No special highlighting for euploid samples
+            row_fill = None
+            apply_row_fill = False
+        
+        # Apply highlighting to Well and Sample cells
+        if apply_row_fill:
+            well_cell.fill = row_fill
+            sample_cell.fill = row_fill
         
         # Fill in relative copy numbers
         for i, chrom_key in enumerate(chromosome_keys):
@@ -167,12 +229,29 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
                 cell.value = ""
             cell.alignment = Alignment(horizontal='center', vertical='center')
             
-            # Highlight aneuploidies
-            if has_aneuploidy and rel_count is not None:
-                if abs(rel_count - 1.0) > config.ANEUPLOIDY_DEVIATION_THRESHOLD:
-                    cell.fill = PatternFill(start_color="D070D0", end_color="D070D0", fill_type="solid")
+            # Apply highlighting logic - buffer zone trumps aneuploidy for row-level fill
+            if has_buffer_zone:
+                # Buffer zone samples get uniform dark grey fill (no individual highlighting)
+                cell.fill = row_fill
+            elif has_aneuploidy:
+                # Aneuploidy samples: start with light purple, but check for individual chromosome highlighting
+                chrom_state = copy_number_states.get(chrom_key, 'euploid')
+                if chrom_state == 'aneuploidy':
+                    # Individual chromosome aneuploidy highlighting (darker purple)
+                    chrom_fill = PatternFill(start_color="D070D0", 
+                                           end_color="D070D0", 
+                                           fill_type="solid")
+                    cell.fill = chrom_fill
+                elif not copy_number_states and abs_count > 0:
+                    # Fallback: for legacy data, highlight any chromosome with data in aneuploidy samples
+                    chrom_fill = PatternFill(start_color="D070D0", 
+                                           end_color="D070D0", 
+                                           fill_type="solid")
+                    cell.fill = chrom_fill
                 else:
-                    cell.fill = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")
+                    # Non-aneuploidy chromosome in aneuploidy sample gets light purple
+                    cell.fill = row_fill
+            # Euploid samples get no highlighting (default)
         
         # Fill in absolute copy numbers
         for i, chrom_key in enumerate(chromosome_keys):
@@ -181,9 +260,18 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
             cell.value = abs_count if abs_count > 0 else ""
             cell.alignment = Alignment(horizontal='center', vertical='center')
             
-            # Highlight aneuploidies
-            if has_aneuploidy:
-                cell.fill = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")
+            # Apply row-level fill for buffer zone samples (no individual chromosome highlighting)
+            if apply_row_fill:
+                cell.fill = row_fill
+            else:
+                # For non-buffer zone samples, apply individual chromosome highlighting if it's an aneuploidy
+                chrom_state = copy_number_states.get(chrom_key, 'euploid')
+                if chrom_state == 'aneuploidy':
+                    # Individual chromosome aneuploidy highlighting (darker purple)
+                    chrom_fill = PatternFill(start_color="D070D0", 
+                                           end_color="D070D0", 
+                                           fill_type="solid")
+                    cell.fill = chrom_fill
 
 
 def apply_formatting(ws, num_results, chromosome_keys):

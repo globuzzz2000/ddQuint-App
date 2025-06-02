@@ -1,5 +1,5 @@
 """
-Updated plate plot visualization module for ddQuint with config integration
+Updated plate plot visualization module for ddQuint with config integration and buffer zone support
 """
 
 import os
@@ -81,7 +81,9 @@ def create_composite_image(results, output_path):
                     'target_mapping': result.get('target_mapping'),
                     'counts': result.get('counts', {}),
                     'copy_numbers': result.get('copy_numbers', {}),
+                    'copy_number_states': result.get('copy_number_states', {}),
                     'has_aneuploidy': result.get('has_aneuploidy', False),
+                    'has_buffer_zone': result.get('has_buffer_zone', False),
                     'chrom3_reclustered': result.get('chrom3_reclustered', False)
                 }
                 
@@ -156,15 +158,27 @@ def create_composite_image(results, output_path):
                                 # Add well ID title for data wells without sample names
                                 ax.set_title(well, fontsize=6, pad=2)
                             
-                            # Add purple border for wells with aneuploidies
-                            if result.get('has_aneuploidy', False):
-                                aneuploidy_color = config.ANEUPLOIDY_FILL_COLOR
-                                for spine in ax.spines.values():
-                                    spine.set_edgecolor(aneuploidy_color)
-                                    spine.set_color(aneuploidy_color)
-                                    spine.set_linewidth(1)
-                                    spine.set_visible(True)
-                                logger.debug(f"Applied aneuploidy border to well {well}")
+                            # Apply colored borders based on copy number state
+                            # Buffer zone trumps aneuploidy in detection, but has specific border styling
+                            if result.get('has_buffer_zone', False):
+                                border_color = '#000000'  # Black border for buffer zone
+                                border_width = 2  # Thin border like euploid
+                                logger.debug(f"Applied buffer zone border (black) to well {well}")
+                            elif result.get('has_aneuploidy', False):
+                                border_color = '#E6B8E6'  # Light purple border for aneuploidy (matching Excel)
+                                border_width = 3  # Thick border
+                                logger.debug(f"Applied aneuploidy border (light purple) to well {well}")
+                            else:
+                                border_color = '#B0B0B0'  # Light grey border for euploid samples
+                                border_width = 2  # Thin border
+                                logger.debug(f"Applied euploid border (light grey) to well {well}")
+                            
+                            # Apply the border
+                            for spine in ax.spines.values():
+                                spine.set_edgecolor(border_color)
+                                spine.set_color(border_color)
+                                spine.set_linewidth(border_width)
+                                spine.set_visible(True)
                                 
                         except Exception as e:
                             logger.debug(f"Error displaying image for well {well}: {e}")
@@ -199,23 +213,16 @@ def create_composite_image(results, output_path):
                     ax.text(0.5, 0.5, well, fontsize=8, color='gray',
                             horizontalalignment='center', verticalalignment='center',
                             transform=ax.transAxes)
+                    
+                    # Apply default grey border for empty wells
+                    for spine in ax.spines.values():
+                        spine.set_color('#cccccc')
+                        spine.set_linewidth(1)
+                        spine.set_visible(True)
                 
                 # Keep axis visibility for all plots
                 ax.set_xticks([])
                 ax.set_yticks([])
-                
-                # Use consistent border width for all graphs
-                for spine_name in ['top', 'right', 'bottom', 'left']:
-                    ax.spines[spine_name].set_visible(True)
-                    ax.spines[spine_name].set_linewidth(1)
-                    ax.spines[spine_name].set_color('black')
-                    
-                # Reapply aneuploidy border if needed (double-check)
-                if well in well_results and well_results[well].get('has_aneuploidy', False):
-                    aneuploidy_color = config.ANEUPLOIDY_FILL_COLOR
-                    for spine in ax.spines.values():
-                        spine.set_color(aneuploidy_color)
-                        spine.set_linewidth(2)
         
         # Add row labels (A-H) with proper alignment to match the actual plots
         for i, row in enumerate(row_labels):
