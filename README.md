@@ -168,6 +168,73 @@ Customize the analysis behavior with a JSON configuration file:
 9. **Visualization**: Generate individual well plots and composite plate image
 10. **Report Generation**: Create Excel reports in list and/or plate formats
 
+## Copy Number Classification and Buffer Zones
+
+The pipeline uses a sophisticated three-state classification system for copy number analysis:
+
+### Classification States
+
+1. **Euploid**: Normal copy number (around expected value ± euploid tolerance)
+2. **Aneuploidy**: Clear chromosomal gain or loss (around 0.75× or 1.25× expected ± aneuploidy tolerance)
+3. **Buffer Zone**: Uncertain intermediate values that don't clearly fit euploid or aneuploidy categories
+
+### Buffer Zone Implementation
+
+Buffer zones identify samples with copy numbers that fall between clearly defined euploid and aneuploidy ranges. These samples require manual review as they may represent:
+- Technical artifacts or measurement uncertainty
+- Mosaic samples with mixed cell populations
+- Borderline cases requiring additional validation
+
+#### Classification Logic
+
+For each chromosome, the system defines:
+
+**Euploid Range**: `expected_value ± EUPLOID_TOLERANCE`
+- Default tolerance: ±0.08 (8% deviation from expected)
+
+**Aneuploidy Ranges**:
+- **Deletion**: `(expected + (0.75 - 1.0)) ± ANEUPLOIDY_TOLERANCE`
+- **Duplication**: `(expected + (1.25 - 1.0)) ± ANEUPLOIDY_TOLERANCE`
+- Default tolerance: ±0.08 around aneuploidy targets
+
+**Buffer Zone**: Any copy number that falls outside euploid and aneuploidy ranges
+
+#### Expected Copy Numbers by Chromosome
+
+The system uses chromosome-specific expected values for accurate classification:
+
+```json
+{
+    "Chrom1": 0.9688,
+    "Chrom2": 1.0066, 
+    "Chrom3": 1.0300,
+    "Chrom4": 0.9890,
+    "Chrom5": 1.0056,
+    "Chrom6": 1.00,
+    "Chrom7": 1.00,
+    "Chrom8": 1.00,
+    "Chrom9": 1.00,
+    "Chrom10": 1.00
+}
+```
+
+#### Example Classification (Chrom1)
+
+- **Expected value**: 0.9688
+- **Euploid range**: 0.8888 - 1.0488 (0.9688 ± 0.08)
+- **Deletion target**: 0.7188 (0.9688 + (0.75 - 1.0))
+- **Deletion range**: 0.6388 - 0.7988 (0.7188 ± 0.08)
+- **Duplication target**: 1.2188 (0.9688 + (1.25 - 1.0))
+- **Duplication range**: 1.1388 - 1.2988 (1.2188 ± 0.08)
+- **Buffer zones**: 0.7988 - 0.8888 and 1.0488 - 1.1388
+
+### Configurable Parameters
+
+- `EUPLOID_TOLERANCE`: Tolerance around expected values for euploid classification (default: 0.08)
+- `ANEUPLOIDY_TOLERANCE`: Tolerance around aneuploidy targets (default: 0.08)
+- `ANEUPLOIDY_TARGETS`: Target copy numbers for deletion (0.75) and duplication (1.25)
+- `EXPECTED_COPY_NUMBERS`: Chromosome-specific expected copy number values
+
 ## Output Formats
 
 ### Excel Reports
@@ -213,10 +280,6 @@ ddQuint automatically searches for sample template files to map well positions t
 - Combines multiple description fields with " - " separator
 
 ## Advanced Features
-
-### Buffer Zone Detection
-
-Buffer zones identify samples with copy numbers that fall between clearly euploid and clearly aneuploid ranges, indicating uncertain classification that may require manual review.
 
 ### Dynamic Chromosome Support
 

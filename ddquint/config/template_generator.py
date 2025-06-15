@@ -178,8 +178,28 @@ def _create_template_dictionary(config_cls):
         "COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD": _safe_get_attr(config_cls, "COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD", 0.15),
         "COPY_NUMBER_BASELINE_MIN_CHROMS": _safe_get_attr(config_cls, "COPY_NUMBER_BASELINE_MIN_CHROMS", 3),
         "ANEUPLOIDY_DEVIATION_THRESHOLD": _safe_get_attr(config_cls, "ANEUPLOIDY_DEVIATION_THRESHOLD", 0.15),
+        
+        # Expected Copy Numbers (chromosome-specific baseline values)
+        "EXPECTED_COPY_NUMBERS": _safe_get_attr(config_cls, "EXPECTED_COPY_NUMBERS", {
+            "Chrom1": 0.9688,
+            "Chrom2": 1.0066,
+            "Chrom3": 1.0300,
+            "Chrom4": 0.9890,
+            "Chrom5": 1.0056,
+            "Chrom6": 1.00,
+            "Chrom7": 1.00,
+            "Chrom8": 1.00,
+            "Chrom9": 1.00,
+            "Chrom10": 1.00
+        }),
+        
+        # Buffer Zone & Classification Settings
         "EUPLOID_TOLERANCE": _safe_get_attr(config_cls, "EUPLOID_TOLERANCE", 0.08),
         "ANEUPLOIDY_TOLERANCE": _safe_get_attr(config_cls, "ANEUPLOIDY_TOLERANCE", 0.08),
+        "ANEUPLOIDY_TARGETS": _safe_get_attr(config_cls, "ANEUPLOIDY_TARGETS", {
+            "low": 0.75,
+            "high": 1.25
+        }),
         
         # Visualization Settings
         "TARGET_COLORS": _safe_get_attr(config_cls, "TARGET_COLORS", {
@@ -193,6 +213,8 @@ def _create_template_dictionary(config_cls):
         }),
         "ANEUPLOIDY_FILL_COLOR": _safe_get_attr(config_cls, "ANEUPLOIDY_FILL_COLOR", "#E6B8E6"),
         "ANEUPLOIDY_VALUE_FILL_COLOR": _safe_get_attr(config_cls, "ANEUPLOIDY_VALUE_FILL_COLOR", "#D070D0"),
+        "BUFFER_ZONE_FILL_COLOR": _safe_get_attr(config_cls, "BUFFER_ZONE_FILL_COLOR", "#B0B0B0"),
+        "BUFFER_ZONE_VALUE_FILL_COLOR": _safe_get_attr(config_cls, "BUFFER_ZONE_VALUE_FILL_COLOR", "#808080"),
     }
     
     # Add comments as string values at the top of the template
@@ -202,6 +224,13 @@ def _create_template_dictionary(config_cls):
         "# For full settings list": "Run 'ddquint --config'",
         "# Documentation": "Visit https://github.com/yourusername/ddquint for full documentation",
         "# Note": "Remove comment lines (starting with #) before using this file",
+        "": "",
+        "# Buffer Zone Implementation": "Samples are classified as euploid, aneuploidy, or buffer zone",
+        "# - Euploid": "Copy number within EUPLOID_TOLERANCE of expected value",
+        "# - Aneuploidy": "Copy number within ANEUPLOIDY_TOLERANCE of deletion (0.75x) or duplication (1.25x) targets", 
+        "# - Buffer Zone": "Copy numbers that fall between euploid and aneuploidy ranges",
+        "# - Use EXPECTED_COPY_NUMBERS": "Set chromosome-specific baseline values",
+        "## ": "",
     }
     
     # Merge comments with actual settings
@@ -244,8 +273,21 @@ def _print_success_message(filepath):
     logger.info(f"1. Edit the file with your preferred settings")
     logger.info(f"2. Remove comment lines (starting with #)")
     logger.info(f"3. Run: ddquint --config {filepath}")
-    logger.info(f"\nConfiguration Tips:")
-    logger.info(f"- Adjust EXPECTED_CENTROIDS for your specific assay")
-    logger.info(f"- Modify clustering parameters if needed (HDBSCAN_*)")
+    
+    logger.info(f"\n{Fore.CYAN}Configuration Tips:{Style.RESET_ALL}")
+    logger.info(f"- Adjust {Fore.YELLOW}EXPECTED_CENTROIDS{Style.RESET_ALL} for your specific assay")
+    logger.info(f"- Modify clustering parameters if needed ({Fore.YELLOW}HDBSCAN_*{Style.RESET_ALL})")
     logger.info(f"- Customize copy number thresholds for your analysis")
-    logger.info(f"- Set TARGET_COLORS to match your preferred color scheme")
+    logger.info(f"- Set {Fore.YELLOW}TARGET_COLORS{Style.RESET_ALL} to match your preferred color scheme")
+    
+    logger.info(f"\n{Fore.CYAN}Buffer Zone Configuration:{Style.RESET_ALL}")
+    logger.info(f"- {Fore.YELLOW}EUPLOID_TOLERANCE{Style.RESET_ALL}: Tolerance around expected values (default: ±0.08)")
+    logger.info(f"- {Fore.YELLOW}ANEUPLOIDY_TOLERANCE{Style.RESET_ALL}: Tolerance around aneuploidy targets (default: ±0.08)")
+    logger.info(f"- {Fore.YELLOW}EXPECTED_COPY_NUMBERS{Style.RESET_ALL}: Chromosome-specific baseline values")
+    logger.info(f"- {Fore.YELLOW}ANEUPLOIDY_TARGETS{Style.RESET_ALL}: Deletion (0.75×) and duplication (1.25×) targets")
+    
+    logger.info(f"\n{Fore.CYAN}Example Classification for Chrom1 (expected: 0.9688):{Style.RESET_ALL}")
+    logger.info(f"- Euploid range: 0.8888 - 1.0488 (±0.08)")
+    logger.info(f"- Deletion range: 0.6388 - 0.7988 (0.75× ±0.08)")
+    logger.info(f"- Duplication range: 1.1388 - 1.2988 (1.25× ±0.08)")
+    logger.info(f"- Buffer zones: 0.7988-0.8888 and 1.0488-1.1388")
