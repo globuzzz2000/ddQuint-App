@@ -188,7 +188,7 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
     
     # Log test mode status
     if test_mode:
-        logger.info(f"Test mode: Files will be copied (not moved) to preserve input directory")
+        logger.info(f"Test mode: Files will be copied (not moved) to preserve input directory\n")
     else:
         logger.debug(f"Normal mode: Files will be moved to Raw Data directory")
     

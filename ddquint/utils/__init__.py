@@ -9,7 +9,7 @@ from .file_io import (
     copy_files, 
     read_csv_with_header_detection
 )
-from .gui import select_directory, select_file, find_default_directory
+from .gui import select_directory, select_file, find_default_directory, mark_selection_complete
 from .well_utils import (
     extract_well_coordinate, 
     is_valid_well, 
@@ -35,6 +35,7 @@ __all__ = [
     'select_directory',
     'select_file',
     'find_default_directory',
+    'mark_selection_complete',
     
     # Well utilities
     'extract_well_coordinate',
