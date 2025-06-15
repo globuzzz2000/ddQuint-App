@@ -2,32 +2,67 @@
 # -*- coding: utf-8 -*-
 """
 Configuration display module for the ddQuint pipeline.
+
+Provides formatted display functionality for configuration settings
+with color-coded output and organized categorization for easy reading
+and configuration management.
 """
 
 import textwrap
 import colorama
+import logging
 from colorama import Fore, Style
-from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 def display_config(config_cls):
     """
     Display all configuration settings in a structured, easy-to-read format.
     
+    Organizes configuration settings into logical categories and displays
+    them with color-coded formatting for improved readability.
+    
     Args:
-        config_cls: The Config class
+        config_cls: The Config class to display settings from
+        
+    Example:
+        >>> from ddquint.config import Config
+        >>> display_config(Config)
     """
     # Initialize colorama for cross-platform colored output
     colorama.init()
     
-    settings = config_cls.get_all_settings()
+    try:
+        settings = config_cls.get_all_settings()
+        logger.debug(f"Displaying {len(settings)} configuration settings")
+    except Exception as e:
+        logger.error(f"Failed to get configuration settings: {str(e)}")
+        logger.error(f"Error retrieving configuration settings: {str(e)}")
+        return
     
     # Print header
-    print(f"\n{Fore.CYAN}{'='*80}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}{'ddQuint Configuration Settings':^80}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}\n")
+    logger.info(f"\n{Fore.CYAN}{'='*80}{Style.RESET_ALL}")
+    logger.info(f"{Fore.CYAN}{'ddQuint Configuration Settings':^80}{Style.RESET_ALL}")
+    logger.info(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}\n")
     
     # Group settings by category
-    categories = {
+    categories = _get_setting_categories()
+    
+    # Print settings by category
+    for category, keys in categories.items():
+        _print_category_settings(category, keys, settings)
+    
+    # Print footer with usage instructions
+    _print_usage_instructions()
+
+def _get_setting_categories():
+    """
+    Get organized categories of configuration settings.
+    
+    Returns:
+        Dictionary mapping category names to lists of setting keys
+    """
+    return {
         "Pipeline Mode Options": [
             "DEBUG_MODE"
         ],
@@ -46,7 +81,7 @@ def display_config(config_cls):
         ],
         "Copy Number Settings": [
             "COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD", "COPY_NUMBER_BASELINE_MIN_CHROMS",
-            "ANEUPLOIDY_DEVIATION_THRESHOLD"
+            "ANEUPLOIDY_DEVIATION_THRESHOLD", "EUPLOID_TOLERANCE", "ANEUPLOIDY_TOLERANCE"
         ],
         "Visualization Settings": [
             "COMPOSITE_FIGURE_SIZE", "INDIVIDUAL_FIGURE_SIZE", "COMPOSITE_PLOT_SIZE",
@@ -65,42 +100,63 @@ def display_config(config_cls):
             "PLATE_ROWS", "PLATE_COLS", "WELL_FORMAT"
         ]
     }
+
+def _print_category_settings(category, keys, settings):
+    """
+    Print settings for a specific category.
     
-    # Print settings by category
-    for category, keys in categories.items():
-        print(f"{Fore.GREEN}{category}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}{'-' * len(category)}{Style.RESET_ALL}")
+    Args:
+        category: Category name to display
+        keys: List of setting keys for this category
+        settings: Dictionary of all settings
+    """
+    logger.info(f"{Fore.GREEN}{category}{Style.RESET_ALL}")
+    logger.info(f"{Fore.GREEN}{'-' * len(category)}{Style.RESET_ALL}")
+    
+    for key in keys:
+        if key in settings:
+            value = settings[key]
+            formatted_value = _format_setting_value(value)
+            logger.info(f"{Fore.YELLOW}{key}{Style.RESET_ALL}: {formatted_value}")
+        else:
+            logger.warning(f"Setting key not found in configuration: {key}")
+    logger.info("")
+
+def _format_setting_value(value):
+    """
+    Format a setting value for display.
+    
+    Args:
+        value: The setting value to format
         
-        for key in keys:
-            if key in settings:
-                value = settings[key]
-                # Format value for display
-                if isinstance(value, dict) and len(str(value)) > 60:
-                    formatted_value = "\n" + textwrap.indent(str(value), " " * 4)
-                elif isinstance(value, list) and len(str(value)) > 60:
-                    formatted_value = "\n" + textwrap.indent(str(value), " " * 4)
-                elif isinstance(value, str) and value is None:
-                    formatted_value = "None"
-                else:
-                    formatted_value = str(value)
-                
-                print(f"{Fore.YELLOW}{key}{Style.RESET_ALL}: {formatted_value}")
-        print()
-    
-    # Print footer with usage instructions
-    print(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}")
-    print(f"\n{Fore.WHITE}Configuration Options:{Style.RESET_ALL}")
-    print(f"- View settings: {Fore.YELLOW}ddquint --config{Style.RESET_ALL}")
-    print(f"- Generate a template: {Fore.YELLOW}ddquint --config template{Style.RESET_ALL}")
-    print(f"- Generate template in specific directory: {Fore.YELLOW}ddquint --config template --output /path/to/dir{Style.RESET_ALL}")
-    print(f"- Use custom config: {Fore.YELLOW}ddquint --config your_config.json{Style.RESET_ALL}")
-    print(f"\nExample config file format:")
-    print(f"{Fore.BLUE}{{")
-    print(f'    "HDBSCAN_MIN_CLUSTER_SIZE": 4,')
-    print(f'    "HDBSCAN_MIN_SAMPLES": 70,')
-    print(f'    "EXPECTED_CENTROIDS": {{')
-    print(f'        "Negative": [800, 700],')
-    print(f'        "Chrom1": [800, 2300]')
-    print(f'    }},')
-    print(f'    "BASE_TARGET_TOLERANCE": 350')
-    print(f"}}{Style.RESET_ALL}\n")
+    Returns:
+        Formatted string representation of the value
+    """
+    # Format value for display based on type and length
+    if isinstance(value, dict) and len(str(value)) > 60:
+        return "\n" + textwrap.indent(str(value), " " * 4)
+    elif isinstance(value, list) and len(str(value)) > 60:
+        return "\n" + textwrap.indent(str(value), " " * 4)
+    elif value is None:
+        return "None"
+    else:
+        return str(value)
+
+def _print_usage_instructions():
+    """Print footer with configuration usage instructions."""
+    logger.info(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}")
+    logger.info(f"\n{Fore.WHITE}Configuration Options:{Style.RESET_ALL}")
+    logger.info(f"- View settings: {Fore.YELLOW}ddquint --config{Style.RESET_ALL}")
+    logger.info(f"- Generate a template: {Fore.YELLOW}ddquint --config template{Style.RESET_ALL}")
+    logger.info(f"- Generate template in specific directory: {Fore.YELLOW}ddquint --config template --output /path/to/dir{Style.RESET_ALL}")
+    logger.info(f"- Use custom config: {Fore.YELLOW}ddquint --config your_config.json{Style.RESET_ALL}")
+    logger.info(f"\nExample config file format:")
+    logger.info(f"{Fore.BLUE}{{")
+    logger.info(f'    "HDBSCAN_MIN_CLUSTER_SIZE": 4,')
+    logger.info(f'    "HDBSCAN_MIN_SAMPLES": 70,')
+    logger.info(f'    "EXPECTED_CENTROIDS": {{')
+    logger.info(f'        "Negative": [800, 700],')
+    logger.info(f'        "Chrom1": [800, 2300]')
+    logger.info(f'    }},')
+    logger.info(f'    "BASE_TARGET_TOLERANCE": 350')
+    logger.info(f"}}{Style.RESET_ALL}\n")

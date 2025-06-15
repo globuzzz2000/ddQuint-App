@@ -1,22 +1,47 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Copy number calculation module for ddQuint with dynamic chromosome support
+Copy number calculation module for ddQuint with dynamic chromosome support.
+
+Contains functionality for:
+1. Relative copy number calculations with normalization
+2. Aneuploidy detection based on deviation thresholds
+3. Statistical analysis across multiple samples
+4. Baseline calculation using median-based approach
+
+This module provides robust copy number analysis capabilities for
+digital droplet PCR data with support for up to 10 chromosome targets.
 """
 
 import numpy as np
 import logging
-from ..config.config import Config
+from ..config import Config, CopyNumberError
+
+logger = logging.getLogger(__name__)
 
 def calculate_copy_numbers(target_counts):
     """
     Calculate relative copy numbers for chromosome targets.
     
+    Uses a sophisticated normalization algorithm that calculates the median
+    of non-zero values, identifies chromosomes close to the median, and
+    uses their mean as the baseline for normalization.
+    
     Args:
-        target_counts (dict): Counts for each target
+        target_counts: Dictionary of target names to droplet counts
         
     Returns:
-        dict: Relative copy numbers
+        Dictionary of relative copy numbers for each chromosome
+        
+    Raises:
+        CopyNumberError: If all chromosome counts are zero or invalid
+        
+    Example:
+        >>> counts = {'Chrom1': 1000, 'Chrom2': 950, 'Chrom3': 1100}
+        >>> copy_numbers = calculate_copy_numbers(counts)
+        >>> copy_numbers['Chrom1']
+        0.952
     """
-    logger = logging.getLogger("ddQuint")
     config = Config.get_instance()
     
     # Extract all chromosome keys dynamically
@@ -41,6 +66,31 @@ def calculate_copy_numbers(target_counts):
     median_val = np.median(non_zero_vals)
     logger.debug(f"Median of non-zero values: {median_val}")
     
+    # Calculate baseline for normalization
+    baseline = _calculate_baseline(raw_vals, median_val, config)
+    
+    # Calculate relative copy numbers
+    copy_numbers = {}
+    for i, chrom in enumerate(chromosome_keys):
+        if baseline > 0 and raw_vals[i] > 0:
+            copy_num = raw_vals[i] / baseline
+            copy_numbers[chrom] = copy_num
+            logger.debug(f"{chrom} copy number: {copy_num:.3f} (raw: {raw_vals[i]}, baseline: {baseline})")
+    
+    return copy_numbers
+
+def _calculate_baseline(raw_vals, median_val, config):
+    """
+    Calculate baseline for copy number normalization.
+    
+    Args:
+        raw_vals: Array of raw chromosome counts
+        median_val: Median of non-zero values
+        config: Configuration instance
+        
+    Returns:
+        Baseline value for normalization
+    """
     # Calculate deviations from median
     with np.errstate(divide='ignore', invalid='ignore'):
         deviations = np.abs(raw_vals - median_val) / median_val
@@ -63,32 +113,39 @@ def calculate_copy_numbers(target_counts):
         baseline = median_val
         logger.debug(f"Using median as baseline: {baseline}")
     
-    # Calculate relative copy numbers
-    copy_numbers = {}
-    for i, chrom in enumerate(chromosome_keys):
-        if baseline > 0 and raw_vals[i] > 0:
-            copy_num = raw_vals[i] / baseline
-            copy_numbers[chrom] = copy_num
-            logger.debug(f"{chrom} copy number: {copy_num:.3f} (raw: {raw_vals[i]}, baseline: {baseline})")
-    
-    return copy_numbers
+    return baseline
 
 def detect_aneuploidies(copy_numbers):
     """
     Detect aneuploidies based on copy numbers with chromosome-specific thresholds.
     
+    Identifies chromosomes with copy numbers that deviate significantly
+    from the expected value of 1.0, classifying them as gains or losses.
+    
     Args:
-        copy_numbers (dict): Copy numbers for each chromosome
+        copy_numbers: Dictionary of chromosome names to copy number values
         
     Returns:
-        tuple: (has_abnormality, abnormal_chromosomes)
+        Tuple of (has_abnormality, abnormal_chromosomes_dict)
+        
+    Raises:
+        CopyNumberError: If copy number values are invalid
+        
+    Example:
+        >>> copy_nums = {'Chrom1': 1.3, 'Chrom2': 0.7, 'Chrom3': 1.0}
+        >>> has_abn, abnormal = detect_aneuploidies(copy_nums)
+        >>> has_abn
+        True
     """
-    logger = logging.getLogger("ddQuint")
     config = Config.get_instance()
-    
     abnormal_chromosomes = {}
     
     for chrom, copy_num in copy_numbers.items():
+        if not isinstance(copy_num, (int, float)) or np.isnan(copy_num):
+            error_msg = f"Invalid copy number value for {chrom}: {copy_num}"
+            logger.error(error_msg)
+            raise CopyNumberError(error_msg, chromosome=chrom, copy_number=copy_num)
+        
         # Check for deviation from normal copy number (1.0)
         deviation = abs(copy_num - 1.0)
         
@@ -112,14 +169,30 @@ def calculate_statistics(results):
     """
     Calculate statistics across multiple samples with dynamic chromosome support.
     
+    Computes mean, median, standard deviation, and range statistics
+    for copy numbers across all processed samples.
+    
     Args:
-        results (list): List of result dictionaries
+        results: List of result dictionaries from sample processing
         
     Returns:
-        dict: Statistics
+        Dictionary containing comprehensive statistics
+        
+    Raises:
+        CopyNumberError: If results contain invalid data
+        
+    Example:
+        >>> results = [{'copy_numbers': {'Chrom1': 1.0}}, {'copy_numbers': {'Chrom1': 1.1}}]
+        >>> stats = calculate_statistics(results)
+        >>> stats['chromosomes']['Chrom1']['mean']
+        1.05
     """
-    logger = logging.getLogger("ddQuint")
     config = Config.get_instance()
+    
+    if not results or not isinstance(results, list):
+        error_msg = "Invalid results data for statistics calculation"
+        logger.error(error_msg)
+        raise CopyNumberError(error_msg)
     
     # Get all chromosome keys dynamically
     chromosome_keys = config.get_chromosome_keys()
@@ -128,6 +201,7 @@ def calculate_statistics(results):
     chrom_data = {key: [] for key in chromosome_keys}
     
     abnormal_count = 0
+    buffer_zone_count = 0
     total_samples = len(results)
     
     logger.debug(f"Calculating statistics for {total_samples} samples")
@@ -135,6 +209,8 @@ def calculate_statistics(results):
     for result in results:
         if result.get('has_aneuploidy', False):
             abnormal_count += 1
+        if result.get('has_buffer_zone', False):
+            buffer_zone_count += 1
             
         copy_numbers = result.get('copy_numbers', {})
         for chrom in chromosome_keys:
@@ -145,22 +221,30 @@ def calculate_statistics(results):
     stats = {
         'sample_count': total_samples,
         'abnormal_count': abnormal_count,
+        'buffer_zone_count': buffer_zone_count,
         'abnormal_percent': (abnormal_count / total_samples * 100) if total_samples > 0 else 0,
+        'buffer_zone_percent': (buffer_zone_count / total_samples * 100) if total_samples > 0 else 0,
         'chromosomes': {}
     }
     
     for chrom, values in chrom_data.items():
         if values:
-            stats['chromosomes'][chrom] = {
-                'count': len(values),
-                'mean': np.mean(values),
-                'median': np.median(values),
-                'std': np.std(values),
-                'min': np.min(values),
-                'max': np.max(values)
-            }
-            logger.debug(f"{chrom} statistics: {stats['chromosomes'][chrom]}")
+            try:
+                stats['chromosomes'][chrom] = {
+                    'count': len(values),
+                    'mean': np.mean(values),
+                    'median': np.median(values),
+                    'std': np.std(values),
+                    'min': np.min(values),
+                    'max': np.max(values)
+                }
+                logger.debug(f"{chrom} statistics: {stats['chromosomes'][chrom]}")
+            except Exception as e:
+                error_msg = f"Error calculating statistics for {chrom}: {str(e)}"
+                logger.error(error_msg)
+                logger.debug(f"Error details: {str(e)}", exc_info=True)
+                raise CopyNumberError(error_msg, chromosome=chrom) from e
     
-    logger.debug(f"Overall statistics: {stats}")
+    logger.debug(f"Overall statistics: abnormal={abnormal_count}/{total_samples}, buffer_zone={buffer_zone_count}/{total_samples}")
     
     return stats

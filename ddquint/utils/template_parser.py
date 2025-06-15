@@ -1,11 +1,21 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Template CSV parser module for ddQuint with debug logging
+Template CSV parser module for ddQuint with comprehensive error handling.
+
+Provides functionality to find and parse CSV template files that contain
+sample name mappings for well positions. Searches parent directories and
+extracts sample descriptions with proper error handling.
 """
 
 import os
 import csv
 import logging
-from pathlib import Path
+
+from ..config import FileProcessingError, TemplateError
+
+logger = logging.getLogger(__name__)
+
 
 def find_template_file(input_dir):
     """
@@ -17,10 +27,16 @@ def find_template_file(input_dir):
         
     Returns:
         str: Path to the template file or None if not found
+        
+    Raises:
+        FileProcessingError: If input directory is invalid
     """
-    logger = logging.getLogger("ddQuint")
+    if not os.path.exists(input_dir):
+        error_msg = f"Input directory does not exist: {input_dir}"
+        logger.error(error_msg)
+        raise FileProcessingError(error_msg)
     
-    # Get the base name of the input directory (without path)
+    # Get the base name of the input directory
     dir_name = os.path.basename(input_dir)
     template_name = f"{dir_name}.csv"
     
@@ -28,21 +44,28 @@ def find_template_file(input_dir):
     logger.debug(f"Input directory: {input_dir}")
     
     # Go up 2 parent directories
-    parent_dir = os.path.dirname(os.path.dirname(input_dir))
-    logger.debug(f"Searching in parent directory: {parent_dir}")
-    
-    # Search in all subdirectories
-    for root, dirs, files in os.walk(parent_dir):
-        logger.debug(f"Searching in: {root}")
-        for file in files:
-            logger.debug(f"Found file: {file}")
-            if file == template_name:
-                template_path = os.path.join(root, file)
-                logger.debug(f"Template file found: {template_path}")
-                return template_path
-    
-    logger.debug(f"Template file {template_name} not found")
-    return None
+    try:
+        parent_dir = os.path.dirname(os.path.dirname(input_dir))
+        logger.debug(f"Searching in parent directory: {parent_dir}")
+        
+        # Search in all subdirectories
+        for root, dirs, files in os.walk(parent_dir):
+            logger.debug(f"Searching in: {root}")
+            for file in files:
+                logger.debug(f"Found file: {file}")
+                if file == template_name:
+                    template_path = os.path.join(root, file)
+                    logger.debug(f"Template file found: {template_path}")
+                    return template_path
+        
+        logger.debug(f"Template file {template_name} not found")
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Error searching for template file: {str(e)}")
+        logger.debug(f"Error details: {str(e)}", exc_info=True)
+        return None
+
 
 def find_header_row(file_path):
     """
@@ -53,8 +76,14 @@ def find_header_row(file_path):
         
     Returns:
         int: Row number (0-indexed) containing headers, or -1 if not found
+        
+    Raises:
+        FileProcessingError: If file cannot be read
     """
-    logger = logging.getLogger("ddQuint")
+    if not os.path.exists(file_path):
+        error_msg = f"Template file does not exist: {file_path}"
+        logger.error(error_msg)
+        raise FileProcessingError(error_msg)
     
     try:
         with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
@@ -65,23 +94,32 @@ def find_header_row(file_path):
                 if 'Well,' in line:
                     logger.debug(f"Found 'Well' header in row {row_num}")
                     return row_num
+                    
+        logger.debug("'Well' header not found in template file")
+        return -1
+        
     except Exception as e:
-        logger.error(f"Error finding header row: {str(e)}")
-    
-    return -1
+        error_msg = f"Error reading template file {os.path.basename(file_path)}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Error details: {str(e)}", exc_info=True)
+        raise FileProcessingError(error_msg) from e
+
 
 def parse_template_file(template_path):
     """
-    Parse the CSV template file to extract sample names from Well column and Sample description columns.
+    Parse the CSV template file to extract sample names from Well and Sample description columns.
     
     Args:
         template_path (str): Path to the template CSV file
         
     Returns:
         dict: Mapping of well IDs to sample names
+        
+    Raises:
+        TemplateError: If template parsing fails
+        FileProcessingError: If template file cannot be read
     """
-    logger = logging.getLogger("ddQuint")
-    logger.debug(f"Parsing template file: {template_path}")
+    logger.debug(f"Parsing template file: {os.path.basename(template_path)}")
     
     well_to_name = {}
     
@@ -90,8 +128,9 @@ def parse_template_file(template_path):
         header_row = find_header_row(template_path)
         
         if header_row == -1:
-            logger.error("Could not find header row in template file")
-            return {}
+            error_msg = f"Could not find header row in template file: {os.path.basename(template_path)}"
+            logger.error(error_msg)
+            raise TemplateError(error_msg)
         
         logger.debug(f"Header row found at index: {header_row}")
         
@@ -108,20 +147,23 @@ def parse_template_file(template_path):
             required_columns = ['Well', 'Sample description 1', 'Sample description 2', 
                               'Sample description 3', 'Sample description 4']
             
-            header_found = True
+            if not reader.fieldnames:
+                error_msg = f"No fieldnames found in template file: {os.path.basename(template_path)}"
+                logger.error(error_msg)
+                raise TemplateError(error_msg)
+            
+            missing_columns = []
             for col in required_columns:
                 if col not in reader.fieldnames:
-                    logger.warning(f"Column '{col}' not found. Available columns: {reader.fieldnames}")
-                    header_found = False
+                    missing_columns.append(col)
+                    logger.warning(f"Column '{col}' not found in template")
             
-            if not header_found:
-                # Try to find similar column names
-                logger.debug("Trying to find similar column names...")
-                available_cols = reader.fieldnames if reader.fieldnames else []
-                logger.debug(f"Available columns: {available_cols}")
+            if missing_columns:
+                logger.warning(f"Missing columns: {missing_columns}")
+                logger.debug(f"Available columns: {reader.fieldnames}")
             
             # Process each row
-            for row_num, row in enumerate(reader, start=header_row+2):  # +2 because header row is 0-indexed and data starts at next row
+            for row_num, row in enumerate(reader, start=header_row + 2):
                 well_id = row.get('Well', '').strip()
                 
                 # Skip empty wells
@@ -139,8 +181,7 @@ def parse_template_file(template_path):
                 if sample_description_parts:
                     sample_name = ' - '.join(sample_description_parts)
                     
-                    # If well already exists, all instances should have the same name
-                    # so we just log if they differ
+                    # Check for duplicate well IDs with different names
                     if well_id in well_to_name and well_to_name[well_id] != sample_name:
                         logger.warning(f"Multiple descriptions for well {well_id}: "
                                        f"'{well_to_name[well_id]}' vs '{sample_name}'")
@@ -151,12 +192,17 @@ def parse_template_file(template_path):
                     logger.debug(f"Row {row_num}: Well {well_id} has no sample description")
         
         logger.debug(f"Finished parsing template. Found {len(well_to_name)} unique well-sample mappings")
+        return well_to_name
         
+    except TemplateError:
+        # Re-raise template errors as-is
+        raise
     except Exception as e:
-        logger.error(f"Error parsing template file: {str(e)}")
-        logger.debug("Error details:", exc_info=True)
-    
-    return well_to_name
+        error_msg = f"Error parsing template file {os.path.basename(template_path)}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Error details: {str(e)}", exc_info=True)
+        raise TemplateError(error_msg) from e
+
 
 def get_sample_names(input_dir):
     """
@@ -166,18 +212,35 @@ def get_sample_names(input_dir):
         input_dir (str): Input directory path
         
     Returns:
-        dict: Mapping of well IDs to sample names
+        dict: Mapping of well IDs to sample names (empty dict if no template)
+        
+    Raises:
+        FileProcessingError: If input directory is invalid
     """
-    logger = logging.getLogger("ddQuint")
-    logger.debug(f"Getting sample names for directory: {input_dir}")
+    logger.debug(f"Getting sample names for directory: {os.path.basename(input_dir)}")
     
-    template_path = find_template_file(input_dir)
+    if not os.path.exists(input_dir):
+        error_msg = f"Input directory does not exist: {input_dir}"
+        logger.error(error_msg)
+        raise FileProcessingError(error_msg)
     
-    if template_path:
-        logger.debug(f"Template file found: {template_path}")
-        sample_names = parse_template_file(template_path)
-        logger.debug(f"Successfully parsed {len(sample_names)} sample names from template")
-        return sample_names
-    else:
-        logger.info(f"No template file found for {os.path.basename(input_dir)}")
-        return {}
+    try:
+        template_path = find_template_file(input_dir)
+        
+        if template_path:
+            logger.debug(f"Template file found: {os.path.basename(template_path)}")
+            sample_names = parse_template_file(template_path)
+            logger.debug(f"Successfully parsed {len(sample_names)} sample names from template")
+            return sample_names
+        else:
+            logger.info(f"No template file found for {os.path.basename(input_dir)}")
+            return {}
+            
+    except (TemplateError, FileProcessingError):
+        # Re-raise specific errors
+        raise
+    except Exception as e:
+        error_msg = f"Unexpected error getting sample names for {os.path.basename(input_dir)}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Error details: {str(e)}", exc_info=True)
+        raise FileProcessingError(error_msg) from e

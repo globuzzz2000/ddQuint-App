@@ -26,6 +26,7 @@ ddQuint/
 │   ├── config/                    # Configuration and settings
 │   │   ├── __init__.py
 │   │   ├── config.py              # Core configuration settings
+│   │   ├── exceptions.py          # Error haneling
 │   │   ├── config_display.py      # Configuration display utilities
 │   │   └── template_generator.py  # Configuration template generation
 │   ├── core/                      # Core processing modules

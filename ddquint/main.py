@@ -1,7 +1,14 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 ddQuint: Digital Droplet PCR Quintuplex Analysis
-Enhanced main entry point with configuration support and manual template selection
+
+Enhanced main entry point with comprehensive configuration support, 
+template selection capabilities, and robust error handling.
+
+This module provides the primary command-line interface for the ddQuint
+pipeline, handling argument parsing, configuration management, file
+selection, and orchestrating the complete analysis workflow.
 """
 
 import argparse
@@ -19,9 +26,11 @@ warnings.filterwarnings("ignore", message=".*force_all_finite.*")
 warnings.filterwarnings("ignore", message=".*SettingWithCopyWarning.*")
 
 # Import configuration modules
-from .config import Config, display_config, generate_config_template
+from .config import Config, display_config, generate_config_template, ddQuintError, ConfigError, FileProcessingError
 
-# Suppress wxPython warning message
+logger = logging.getLogger(__name__)
+
+# Suppress wxPython warning message on macOS
 if sys.platform == 'darwin':
     import contextlib
     import os
@@ -38,15 +47,9 @@ if sys.platform == 'darwin':
         finally:
             os.dup2(old_fd, 2)
             os.close(old_fd)
-else:
-    @contextlib.contextmanager
-    def silence_stderr():
-        """No-op context manager for non-macOS platforms."""
-        yield
 
-from .utils.gui import select_directory, select_file, mark_selection_complete
-from .utils.template_parser import get_sample_names
-from .core.file_processor import process_directory
+from .utils import select_directory, select_file, mark_selection_complete, get_sample_names
+from .core import process_directory
 from .visualization import create_composite_image
 from .reporting import create_plate_report, create_list_report
 
@@ -54,11 +57,17 @@ def setup_logging(debug=False):
     """
     Configure logging for the application.
     
+    Sets up both file and console logging with appropriate formatting
+    and log levels based on debug mode settings.
+    
     Args:
-        debug: Enable debug mode
+        debug: Enable debug mode with detailed logging
         
     Returns:
-        str: Path to the log file
+        Path to the log file for reference
+        
+    Raises:
+        ConfigError: If logging setup fails
     """
     # Update Config debug mode
     Config.DEBUG_MODE = debug
@@ -73,15 +82,22 @@ def setup_logging(debug=False):
     
     # Set up logging to file
     log_dir = os.path.join(os.path.expanduser("~"), ".ddquint", "logs")
-    os.makedirs(log_dir, exist_ok=True)
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception as e:
+        raise ConfigError(f"Failed to create log directory: {log_dir}") from e
+        
     log_file = os.path.join(log_dir, f"ddquint_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
     
     # Create file handler
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
-    ))
+    try:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+        ))
+    except Exception as e:
+        raise ConfigError(f"Failed to create log file handler: {log_file}") from e
     
     # Create console handler
     console_handler = logging.StreamHandler()
@@ -101,22 +117,35 @@ def setup_logging(debug=False):
     root_logger.addHandler(console_handler)
     
     # Configure our specific logger
-    logger = logging.getLogger("ddQuint")
+    logger = logging.getLogger(__name__)
     
     if debug:
-        logger.debug(f"Debug mode enabled: {debug}")
+        logger.debug(f"Debug mode enabled")
         logger.debug(f"Log file: {log_file}")
         logger.debug(f"Python version: {sys.version}")
         logger.debug(f"Platform: {sys.platform}")
-    else:
-        logger.debug(f"Log file: {log_file}")
     
     return log_file
 
 def parse_arguments():
-    """Parse command line arguments."""
+    """
+    Parse command line arguments.
+    
+    Returns:
+        Parsed arguments namespace
+    """
     parser = argparse.ArgumentParser(
-        description="ddQuint: Digital Droplet PCR Multiplex Analysis"
+        description="ddQuint: Digital Droplet PCR Multiplex Analysis",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  ddquint                           # Interactive mode with GUI
+  ddquint --dir /path/to/csv        # Process specific directory
+  ddquint --config                  # Display configuration
+  ddquint --config template         # Generate config template
+  ddquint --plate rotated           # Generate both plate formats
+  ddquint --test --dir /path        # Test mode (preserves input files)
+        """
     )
     parser.add_argument(
         "--dir", 
@@ -152,7 +181,7 @@ def parse_arguments():
         "--plate",
         nargs="?",
         const="default",
-        help="Generate plate format Excel report. Use 'rotated' to also generate rotated layout without absolute counts"
+        help="Generate plate format Excel report. Use 'rotated' to also generate rotated layout"
     )
     parser.add_argument(
         "--test",
@@ -170,7 +199,10 @@ def handle_config_command(config_arg):
         config_arg: Configuration argument from command line
         
     Returns:
-        bool: True if configuration command was handled, False otherwise
+        True if configuration command was handled and should exit
+        
+    Raises:
+        ConfigError: If configuration file loading fails
     """
     if config_arg is True or config_arg == "display": 
         # Display current configuration
@@ -182,12 +214,24 @@ def handle_config_command(config_arg):
         return True
     elif config_arg and os.path.isfile(config_arg):
         # Load configuration from file
-        success = Config.load_from_file(config_arg)
-        if success:
-            print(f"Configuration loaded from {config_arg}")
-        else:
-            print(f"Error loading configuration from {config_arg}")
+        try:
+            success = Config.load_from_file(config_arg)
+            if success:
+                logger.info(f"Configuration loaded from {config_arg}")
+            else:
+                error_msg = f"Failed to load configuration from {config_arg}"
+                logger.error(error_msg)
+                raise ConfigError(error_msg)
+        except Exception as e:
+            error_msg = f"Error loading configuration from {config_arg}: {str(e)}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg) from e
         return False  # Continue with main execution after loading config
+    elif config_arg:
+        # Invalid config argument
+        error_msg = f"Configuration file not found: {config_arg}"
+        logger.error(error_msg)
+        raise ConfigError(error_msg)
     return False
 
 def get_template_file(template_arg, input_dir):
@@ -196,14 +240,14 @@ def get_template_file(template_arg, input_dir):
     
     Args:
         template_arg: Template argument from command line
-        input_dir: Input directory path
+        input_dir: Input directory path for context
         
     Returns:
-        str: Path to template file or None if not found/selected
+        Path to template file or None if not found/selected
+        
+    Raises:
+        FileProcessingError: If template file cannot be processed
     """
-    logger = logging.getLogger("ddQuint")
-    
-    # Debug: Show what template_arg we received
     logger.debug(f"Template argument received: {repr(template_arg)}")
     
     if template_arg is None:
@@ -213,7 +257,7 @@ def get_template_file(template_arg, input_dir):
     elif template_arg == "prompt":
         # Prompt user to select template file
         logger.debug("Template flag set to 'prompt', showing file selection dialog")
-        print("\n>>> Please select template file for well names <<<")
+        logger.info(">>> Please select template file for well names <<<\n")
         
         # Use GUI file selector with CSV filter
         with silence_stderr():
@@ -224,10 +268,10 @@ def get_template_file(template_arg, input_dir):
             )
         
         if template_path:
-            logger.info(f"Template file selected: {template_path}")
+            logger.debug(f"Template file selected: {template_path}")
             return template_path
         else:
-            logger.info("No template file selected, proceeding without template")
+            logger.debug("No template file selected, proceeding without template")
             return None
     elif os.path.isfile(template_arg):
         # Template file path provided directly
@@ -237,13 +281,13 @@ def get_template_file(template_arg, input_dir):
             return template_arg
         else:
             logger.warning(f"Template file is not a CSV file: {template_arg}")
-            print(f"Warning: Template file '{template_arg}' is not a CSV file. Proceeding without template.")
+            logger.info(f"Warning: Template file '{template_arg}' is not a CSV file. Proceeding without template.")
             return None
     else:
         # Invalid template file path
-        logger.warning(f"Template file not found: {template_arg}")
-        print(f"Warning: Template file '{template_arg}' not found. Proceeding without template.")
-        return None
+        error_msg = f"Template file not found: {template_arg}"
+        logger.error(error_msg)
+        raise FileProcessingError(error_msg, filename=template_arg)
 
 def parse_manual_template(template_path):
     """
@@ -253,10 +297,11 @@ def parse_manual_template(template_path):
         template_path: Path to the template file
         
     Returns:
-        dict: Mapping of well IDs to sample names
+        Dictionary mapping well IDs to sample names
+        
+    Raises:
+        FileProcessingError: If template parsing fails
     """
-    logger = logging.getLogger("ddQuint")
-    
     try:
         # Import the template parsing function
         from .utils.template_parser import parse_template_file
@@ -265,7 +310,7 @@ def parse_manual_template(template_path):
         sample_names = parse_template_file(template_path)
         
         if sample_names:
-            logger.info(f"Successfully loaded {len(sample_names)} sample names from template file")
+            logger.debug(f"Successfully loaded {len(sample_names)} sample names from template file")
             if logger.isEnabledFor(logging.DEBUG):
                 for well, name in list(sample_names.items())[:5]:  # Show first 5 entries
                     logger.debug(f"  {well}: {name}")
@@ -277,24 +322,26 @@ def parse_manual_template(template_path):
         return sample_names
         
     except Exception as e:
-        logger.error(f"Error parsing template file: {str(e)}")
-        logger.debug("Error details:", exc_info=True)
-        print(f"Error parsing template file '{template_path}': {str(e)}")
-        print("Proceeding without template...")
-        return {}
+        error_msg = f"Error parsing template file {template_path}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Error details: {str(e)}", exc_info=True)
+        logger.info(f"Error parsing template file '{template_path}': {str(e)}")
+        logger.info("Proceeding without template...")
+        raise FileProcessingError(error_msg, filename=template_path) from e
 
 def create_test_output_directory(input_dir):
     """
     Create a test output directory based on the input directory name.
     
     Args:
-        input_dir (str): Input directory path
+        input_dir: Input directory path
         
     Returns:
-        str: Path to the test output directory
+        Path to the created test output directory
+        
+    Raises:
+        FileProcessingError: If directory creation fails
     """
-    logger = logging.getLogger("ddQuint")
-    
     # Get the parent directory and input directory name
     parent_dir = os.path.dirname(input_dir)
     input_name = os.path.basename(input_dir)
@@ -305,23 +352,32 @@ def create_test_output_directory(input_dir):
     test_output_dir = os.path.join(parent_dir, test_output_name)
     
     # Create the directory
-    os.makedirs(test_output_dir, exist_ok=True)
-    
-    logger.debug(f"Test mode: Output will be saved to {test_output_dir}")
-    logger.debug(f"Test mode: Input files in {input_dir} will remain untouched")
-    
-    return test_output_dir
+    try:
+        os.makedirs(test_output_dir, exist_ok=True)
+        logger.debug(f"Test mode: Output will be saved to {test_output_dir}")
+        logger.debug(f"Test mode: Input files in {input_dir} will remain untouched")
+        return test_output_dir
+    except Exception as e:
+        error_msg = f"Failed to create test output directory: {test_output_dir}"
+        logger.error(error_msg)
+        raise FileProcessingError(error_msg) from e
 
 def main():
-    """Main function to run the application."""
+    """
+    Main function to run the ddQuint application.
     
+    Orchestrates the complete analysis pipeline including argument parsing,
+    configuration handling, file processing, and report generation.
+    
+    Raises:
+        ddQuintError: For any application-specific errors
+    """
     try:
         # Parse command line arguments
         args = parse_arguments()
         
         # Setup logging
-        setup_logging(debug=args.debug)
-        logger = logging.getLogger("ddQuint")
+        log_file = setup_logging(debug=args.debug)
         logger.info("=== ddPCR Quintuplex Analysis ===")
         
         # Handle configuration commands
@@ -332,13 +388,18 @@ def main():
         # Get input directory
         input_dir = args.dir
         if not input_dir:
-            logger.info(">>> Please select folder with amplitude CSV files <<<")
+            logger.info("\n>>> Please select folder with amplitude CSV files <<<\n")
             # Silence stderr to avoid NSOpenPanel warning
             with silence_stderr():
                 input_dir = select_directory()
             if not input_dir:
                 logger.info("No directory selected. Exiting.")
                 return
+        
+        if not os.path.exists(input_dir):
+            error_msg = f"Input directory not found: {input_dir}"
+            logger.error(error_msg)
+            raise FileProcessingError(error_msg)
         
         logger.debug(f"Input directory: {input_dir}")
         
@@ -347,7 +408,6 @@ def main():
         
         # Mark file selection as complete (important for GUI cleanup)
         try:
-            from .utils.gui import mark_selection_complete
             mark_selection_complete()
         except Exception as e:
             logger.debug(f"Could not mark selection complete: {e}")
@@ -373,72 +433,92 @@ def main():
         logger.debug(f"Output directory: {output_dir}")
         
         # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except Exception as e:
+            error_msg = f"Failed to create output directory: {output_dir}"
+            logger.error(error_msg)
+            raise FileProcessingError(error_msg) from e
         
         # Create directory name pattern for graphs and raw data
         config = Config.get_instance()
         graphs_dir = os.path.join(output_dir, config.GRAPHS_DIR_NAME)
         raw_data_dir = os.path.join(output_dir, config.RAW_DATA_DIR_NAME)
-        os.makedirs(graphs_dir, exist_ok=True)
-        os.makedirs(raw_data_dir, exist_ok=True)
+        
+        try:
+            os.makedirs(graphs_dir, exist_ok=True)
+            os.makedirs(raw_data_dir, exist_ok=True)
+        except Exception as e:
+            error_msg = f"Failed to create output subdirectories"
+            logger.error(error_msg)
+            raise FileProcessingError(error_msg) from e
         
         # Process the directory with sample names (test_mode parameter)
-        results = process_directory(input_dir, output_dir, sample_names, verbose=args.verbose, test_mode=args.test)
+        results = process_directory(input_dir, output_dir, sample_names, 
+                                  verbose=args.verbose, test_mode=args.test)
         
         # Create output files if we have results
         if results:
-            # Add sample names to results
-            for result in results:
-                well_id = result.get('well')
-                if well_id and well_id in sample_names:
-                    result['sample_name'] = sample_names[well_id]
-            
-            # Create composite image with sample names
-            composite_path = os.path.join(output_dir, config.COMPOSITE_IMAGE_FILENAME)
-            create_composite_image(results, composite_path)
-            
-            # Create list format report
-            list_path = os.path.join(output_dir, "List_Results.xlsx")
-            create_list_report(results, list_path)
-            
-            # Create plate format report if requested
-            if args.plate is not None:
-                # Always create the default plate report
-                excel_path = os.path.join(output_dir, config.EXCEL_OUTPUT_FILENAME)
-                create_plate_report(results, excel_path, rotated=False)
-                
-                # If "rotated" was specified, also create the rotated version
-                if args.plate == "rotated":
-                    rotated_path = os.path.join(output_dir, "Plate_Results_Rotated.xlsx")
-                    create_plate_report(results, rotated_path, rotated=True)
-            
-            # Count aneuploid and buffer zone samples
-            aneuploid_count = sum(1 for r in results if r.get('has_aneuploidy', False))
-            buffer_zone_count = sum(1 for r in results if r.get('has_buffer_zone', False))
-            
-            logger.info(f"\nProcessed {len(results)} files ({aneuploid_count} potential aneuploidies, {buffer_zone_count} buffer zone samples)")
-            logger.info(f"\nResults saved to: {os.path.abspath(output_dir)}")
-            
-            if template_path:
-                logger.debug(f"Sample names loaded from: {os.path.basename(template_path)}")
-            elif sample_names:
-                logger.debug(f"Sample names auto-discovered from template")
-            
-            if args.test:
-                logger.debug(f"Test mode: Input files remain in: {os.path.abspath(input_dir)}")
-            
-            logger.info("=== Analysis complete ===")
-            logger.info("")
-            
+            _create_output_files(results, output_dir, sample_names, args, config)
+            _log_summary_statistics(results, output_dir, template_path, sample_names, args)
         else:
             logger.info("No valid results were generated.")
         
     except KeyboardInterrupt:
         logger.info("\nProcess interrupted by user.")
-    except Exception as e:
-        logger.info(f"\nError: {str(e)}")
+    except ddQuintError as e:
+        logger.error(f"ddQuint error: {str(e)}")
         if args and args.verbose:
             traceback.print_exc()
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        if args and args.verbose:
+            traceback.print_exc()
+        sys.exit(1)
+
+def _create_output_files(results, output_dir, sample_names, args, config):
+    """Create all output files from processing results."""
+    # Add sample names to results
+    for result in results:
+        well_id = result.get('well')
+        if well_id and well_id in sample_names:
+            result['sample_name'] = sample_names[well_id]
+    
+    # Create composite image with sample names
+    composite_path = os.path.join(output_dir, config.COMPOSITE_IMAGE_FILENAME)
+    create_composite_image(results, composite_path)
+    
+    # Create list format report
+    list_path = os.path.join(output_dir, "List_Results.xlsx")
+    create_list_report(results, list_path)
+    
+    # Create plate format report if requested
+    if args.plate is not None:
+        # Always create the default plate report
+        excel_path = os.path.join(output_dir, config.EXCEL_OUTPUT_FILENAME)
+        create_plate_report(results, excel_path, rotated=False)
+        
+        # If "rotated" was specified, also create the rotated version
+        if args.plate == "rotated":
+            rotated_path = os.path.join(output_dir, "Plate_Results_Rotated.xlsx")
+            create_plate_report(results, rotated_path, rotated=True)
+
+def _log_summary_statistics(results, output_dir, template_path, sample_names, args):
+    """Log summary statistics and completion messages."""
+    # Count aneuploid and buffer zone samples
+    aneuploid_count = sum(1 for r in results if r.get('has_aneuploidy', False))
+    buffer_zone_count = sum(1 for r in results if r.get('has_buffer_zone', False))
+    
+    logger.info(f"\nProcessed {len(results)} files ({aneuploid_count} potential aneuploidies, {buffer_zone_count} buffer zone samples)")
+    logger.info(f"\nResults saved to: {os.path.abspath(output_dir)}")
+    
+    if template_path:
+        logger.debug(f"Sample names loaded from: {os.path.basename(template_path)}")
+    elif sample_names:
+        logger.debug(f"Sample names auto-discovered from template")
+    
+    logger.info("\n=== Analysis complete ===")
 
 if __name__ == "__main__":
     main()

@@ -2,16 +2,46 @@
 # -*- coding: utf-8 -*-
 """
 Configuration module for the ddQuint pipeline with dynamic chromosome support and buffer zone detection.
+
+This module provides comprehensive configuration management for:
+1. Clustering parameters and algorithm settings
+2. Expected centroid definitions for up to 10 chromosomes
+3. Copy number calculation and classification thresholds
+4. Visualization settings and color schemes
+5. File management and template parsing options
+
+The Config class implements a singleton pattern to ensure consistent
+settings across all pipeline modules.
 """
 
 import os
 import json
 import logging
 from multiprocessing import cpu_count
-from typing import Dict, List, Union, Any, Optional
+from typing import Dict, List, Any
+
+from ..config.exceptions import ConfigError
+
+logger = logging.getLogger(__name__)
 
 class Config:
-    """Central configuration settings for the ddQuint pipeline with singleton pattern."""
+    """
+    Central configuration settings for the ddQuint pipeline with singleton pattern.
+    
+    This class provides configuration management for clustering parameters,
+    visualization settings, copy number thresholds, and file management.
+    Implements singleton pattern to ensure consistent settings across modules.
+    
+    Attributes:
+        DEBUG_MODE: Enable debug logging mode
+        EXPECTED_CENTROIDS: Target centroids for clustering
+        HDBSCAN_MIN_CLUSTER_SIZE: Minimum cluster size for HDBSCAN
+        
+    Example:
+        >>> config = Config.get_instance()
+        >>> config.DEBUG_MODE = True
+        >>> chroms = config.get_chromosome_keys()
+    """
     
     # Singleton instance
     _instance = None
@@ -185,7 +215,13 @@ class Config:
         Get all chromosome keys from expected centroids.
         
         Returns:
-            List[str]: Sorted list of chromosome keys
+            List of chromosome keys sorted numerically
+            
+        Example:
+            >>> config = Config.get_instance()
+            >>> chroms = config.get_chromosome_keys()
+            >>> chroms
+            ['Chrom1', 'Chrom2', 'Chrom3']
         """
         return sorted([key for key in cls.EXPECTED_CENTROIDS.keys() 
                       if key.startswith('Chrom')], 
@@ -197,7 +233,7 @@ class Config:
         Get ordered labels including all chromosomes.
         
         Returns:
-            List[str]: List of labels in order
+            List of labels in processing order
         """
         return ['Negative'] + cls.get_chromosome_keys() + ['Unknown']
     
@@ -206,13 +242,30 @@ class Config:
         """
         Classify a copy number value into euploid, buffer zone, or aneuploidy.
         
+        Uses chromosome-specific expected values and tolerance ranges to
+        determine the classification state for copy number analysis.
+        
         Args:
             chrom_name: Chromosome name (e.g., 'Chrom1')
             copy_number: Copy number value to classify
             
         Returns:
-            str: Classification ('euploid', 'buffer_zone', 'aneuploidy')
+            Classification string: 'euploid', 'buffer_zone', or 'aneuploidy'
+            
+        Raises:
+            ConfigError: If chromosome not found in configuration
+            
+        Example:
+            >>> config = Config.get_instance()
+            >>> state = config.classify_copy_number_state('Chrom1', 1.0)
+            >>> state
+            'euploid'
         """
+        if chrom_name not in cls.EXPECTED_COPY_NUMBERS:
+            error_msg = f"Unknown chromosome: {chrom_name}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg, config_key="EXPECTED_COPY_NUMBERS")
+        
         expected = cls.EXPECTED_COPY_NUMBERS.get(chrom_name, 1.0)
         
         # Define euploid range
@@ -249,8 +302,16 @@ class Config:
             chrom_name: Chromosome name (e.g., 'Chrom1')
             
         Returns:
-            dict: Dictionary with ranges for each classification
+            Dictionary with ranges for each classification
+            
+        Raises:
+            ConfigError: If chromosome not found in configuration
         """
+        if chrom_name not in cls.EXPECTED_COPY_NUMBERS:
+            error_msg = f"Unknown chromosome: {chrom_name}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg, config_key="EXPECTED_COPY_NUMBERS")
+        
         expected = cls.EXPECTED_COPY_NUMBERS.get(chrom_name, 1.0)
         
         # Calculate ranges
@@ -282,15 +343,23 @@ class Config:
     def load_from_file(cls, filepath: str) -> bool:
         """
         Load settings from a configuration file.
-        Supports both JSON format.
+        
+        Supports JSON format configuration files with validation
+        and error handling for malformed or missing files.
         
         Args:
-            filepath: Path to the settings file
+            filepath: Path to the configuration file
             
         Returns:
-            bool: True if settings were loaded successfully
+            True if settings were loaded successfully
+            
+        Raises:
+            ConfigError: If configuration file is invalid or cannot be loaded
         """
-        logger = logging.getLogger("ddQuint")
+        if not os.path.exists(filepath):
+            error_msg = f"Configuration file not found: {filepath}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg, config_key="filepath")
         
         try:
             # Initialize the singleton if not already done
@@ -300,13 +369,15 @@ class Config:
             if filepath.endswith('.json'):
                 return cls._load_from_json(filepath)
             else:
-                logger.error(f"Unsupported config file format: {filepath}")
-                return False
+                error_msg = f"Unsupported config file format: {filepath}"
+                logger.error(error_msg)
+                raise ConfigError(error_msg, config_key="file_format")
                 
         except Exception as e:
-            logger.error(f"Error loading settings from {filepath}: {e}")
-            logger.debug("Error details:", exc_info=True)
-            return False
+            error_msg = f"Error loading settings from {filepath}: {str(e)}"
+            logger.error(error_msg)
+            logger.debug(f"Error details: {str(e)}", exc_info=True)
+            raise ConfigError(error_msg) from e
     
     @classmethod
     def _load_from_json(cls, filepath: str) -> bool:
@@ -317,9 +388,8 @@ class Config:
             filepath: Path to the JSON file
             
         Returns:
-            bool: True if settings were loaded successfully
+            True if settings were loaded successfully
         """
-        logger = logging.getLogger("ddQuint")
         logger.debug(f"Loading configuration from JSON file: {filepath}")
         
         try:
@@ -328,6 +398,9 @@ class Config:
             
             # Update class attributes based on JSON
             for key, value in settings.items():
+                if key.startswith('#'):  # Skip comment keys
+                    continue
+                    
                 if hasattr(cls, key):
                     old_value = getattr(cls, key)
                     setattr(cls, key, value)
@@ -338,10 +411,15 @@ class Config:
             logger.debug(f"Successfully loaded configuration from {filepath}")
             return True
             
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON format in {filepath}: {str(e)}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg, config_key="json_format") from e
         except Exception as e:
-            logger.error(f"Error loading JSON settings from {filepath}: {e}")
-            logger.debug("Error details:", exc_info=True)
-            return False
+            error_msg = f"Error loading JSON settings from {filepath}: {str(e)}"
+            logger.error(error_msg)
+            logger.debug(f"Error details: {str(e)}", exc_info=True)
+            raise ConfigError(error_msg) from e
     
     @classmethod
     def save_to_file(cls, filepath: str) -> bool:
@@ -349,12 +427,14 @@ class Config:
         Save current settings to a JSON file.
         
         Args:
-            filepath: Path to save the settings
+            filepath: Path to save the configuration file
             
         Returns:
-            bool: True if settings were saved successfully
+            True if settings were saved successfully
+            
+        Raises:
+            ConfigError: If file cannot be written
         """
-        logger = logging.getLogger("ddQuint")
         logger.debug(f"Saving configuration to file: {filepath}")
         
         try:
@@ -367,9 +447,10 @@ class Config:
             return True
             
         except Exception as e:
-            logger.error(f"Error saving settings to {filepath}: {e}")
-            logger.debug("Error details:", exc_info=True)
-            return False
+            error_msg = f"Error saving settings to {filepath}: {str(e)}"
+            logger.error(error_msg)
+            logger.debug(f"Error details: {str(e)}", exc_info=True)
+            raise ConfigError(error_msg) from e
     
     @classmethod
     def get_all_settings(cls) -> Dict[str, Any]:
@@ -377,7 +458,7 @@ class Config:
         Get all settings as a dictionary.
         
         Returns:
-            dict: Dictionary of all settings
+            Dictionary of all serializable settings
         """
         settings = {}
         
@@ -392,24 +473,12 @@ class Config:
         return settings
     
     @classmethod
-    def debug(cls, message: str) -> None:
-        """
-        Print debug messages if debug mode is enabled.
-        
-        Args:
-            message: The debug message to print
-        """
-        if cls.DEBUG_MODE:
-            logger = logging.getLogger("ddQuint")
-            logger.debug(message)
-    
-    @classmethod
     def get_hdbscan_params(cls) -> Dict[str, Any]:
         """
         Get HDBSCAN clustering parameters.
         
         Returns:
-            dict: Dictionary of HDBSCAN parameters
+            Dictionary of HDBSCAN parameters ready for clustering
         """
         return {
             'min_cluster_size': cls.HDBSCAN_MIN_CLUSTER_SIZE,
@@ -417,7 +486,7 @@ class Config:
             'cluster_selection_epsilon': cls.HDBSCAN_EPSILON,
             'metric': cls.HDBSCAN_METRIC,
             'cluster_selection_method': cls.HDBSCAN_CLUSTER_SELECTION_METHOD,
-            'core_dist_n_jobs': 1  # Use all available cores
+            'core_dist_n_jobs': 1  # Use single core for reproducibility
         }
     
     @classmethod
@@ -429,13 +498,14 @@ class Config:
             scale_factor: Scale factor to apply to base tolerance
             
         Returns:
-            dict: Dictionary of target names to tolerance values
+            Dictionary of target names to tolerance values
         """
         # Ensure scale factor is within limits
         scale_factor = max(cls.SCALE_FACTOR_MIN, min(cls.SCALE_FACTOR_MAX, scale_factor))
         
         # Apply scale factor to base tolerance for all targets
-        return {target: cls.BASE_TARGET_TOLERANCE * scale_factor for target in cls.EXPECTED_CENTROIDS.keys()}
+        return {target: cls.BASE_TARGET_TOLERANCE * scale_factor 
+                for target in cls.EXPECTED_CENTROIDS.keys()}
     
     @classmethod
     def get_plot_dimensions(cls, for_composite: bool = False) -> tuple:
@@ -446,7 +516,7 @@ class Config:
             for_composite: Whether to get dimensions for composite plot
             
         Returns:
-            tuple: Figure size as (width, height)
+            Figure size as (width, height) tuple
         """
         if for_composite:
             return cls.COMPOSITE_PLOT_SIZE
@@ -459,7 +529,7 @@ class Config:
         Get axis limit settings.
         
         Returns:
-            dict: Dictionary of axis limits
+            Dictionary of axis limits for x and y axes
         """
         return {
             'x': (cls.X_AXIS_MIN, cls.X_AXIS_MAX),
@@ -472,7 +542,7 @@ class Config:
         Get grid interval settings.
         
         Returns:
-            dict: Dictionary of grid intervals
+            Dictionary of grid intervals for x and y axes
         """
         return {
             'x': cls.X_GRID_INTERVAL,

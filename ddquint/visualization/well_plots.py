@@ -1,16 +1,25 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Updated well plot visualization module for ddQuint with config integration and buffer zone support
+Well plot visualization module for ddQuint with config integration and buffer zone support.
+
+Creates individual well scatter plots with droplet classification, copy number annotations,
+and appropriate highlighting for different chromosome states. Supports both standalone
+and composite image formats.
 """
 
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.ticker as ticker
-import numpy as np
 import logging
 
-from ..config.config import Config
+from ..config import Config, VisualizationError
 
-def create_well_plot(df, clustering_results, well_id, save_path, for_composite=False, add_copy_numbers=True, sample_name=None):
+logger = logging.getLogger(__name__)
+
+
+def create_well_plot(df, clustering_results, well_id, save_path, for_composite=False, 
+                    add_copy_numbers=True, sample_name=None):
     """
     Create an enhanced visualization plot for a single well with square aspect ratio.
     
@@ -19,155 +28,194 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         clustering_results (dict): Results from clustering analysis
         well_id (str): Well identifier (e.g., 'A01')
         save_path (str): Path to save the plot
-        for_composite (bool): If True, creates a version optimized for the composite image
+        for_composite (bool): If True, creates a version optimized for composite image
         add_copy_numbers (bool): If True, adds copy number annotations to clusters
-        sample_name (str): Optional sample name to include in title
+        sample_name (str, optional): Sample name to include in title
         
     Returns:
         str: Path to the saved plot
+        
+    Raises:
+        VisualizationError: If plot creation fails
+        ValueError: If required data is missing
     """
-    logger = logging.getLogger("ddQuint")
     config = Config.get_instance()
-
-    # Get color map from config
-    label_color_map = config.TARGET_COLORS
-    logger.debug(f"Using target colors: {label_color_map}")
-
-    # Define ordered labels for legend
-    ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
     
-    # Get figure dimensions from config
-    fig_size = config.get_plot_dimensions(for_composite)
-    logger.debug(f"Using figure size: {fig_size}")
+    if df is None or df.empty:
+        error_msg = f"No data provided for well {well_id} plot"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
     
-    # Create figure with configured dimensions
-    fig = plt.figure(figsize=fig_size)
+    logger.debug(f"Creating well plot for {well_id}, composite: {for_composite}")
     
-    # Get axes with absolute positioning (left, bottom, width, height)
-    if for_composite:
-        ax = fig.add_axes([0.1, 0.1, 0.85, 0.85])  # Ensure margins for axes
-    else:
-        ax = fig.add_axes([0.1, 0.1, 0.7, 0.8])  # Space for legend
-    
-    # Check if clustering was successful
-    if 'df_filtered' not in clustering_results or clustering_results['df_filtered'].empty:
-        logger.debug(f"No valid clustering data for well {well_id}")
-        # Create a basic plot with raw data
-        ax.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'], c='gray', s=4, alpha=0.5)
-        ax.set_xlabel("HEX Amplitude")
-        ax.set_ylabel("FAM Amplitude")
-        if not for_composite:
-            ax.set_title(f"Well {well_id}")
+    try:
+        # Get configuration settings
+        label_color_map = config.TARGET_COLORS
+        fig_size = config.get_plot_dimensions(for_composite)
         
-        # Set axis limits from config
-        axis_limits = config.get_axis_limits()
-        ax.set_xlim(axis_limits['x'])
-        ax.set_ylim(axis_limits['y'])
+        logger.debug(f"Using target colors: {label_color_map}")
+        logger.debug(f"Using figure size: {fig_size}")
         
-        # Add grid with configured intervals
-        ax.grid(True)
-        grid_intervals = config.get_grid_intervals()
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(grid_intervals['x']))
-        ax.yaxis.set_major_locator(ticker.MultipleLocator(grid_intervals['y']))
+        # Create figure with configured dimensions
+        fig = plt.figure(figsize=fig_size)
         
-        # Save figure with tight layout
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        # Get axes with appropriate positioning
+        ax = _setup_axes(fig, for_composite)
+        
+        # Check if clustering was successful
+        if not _validate_clustering_data(clustering_results):
+            logger.debug(f"No valid clustering data for well {well_id}")
+            _create_basic_plot(ax, df, well_id, for_composite, config)
+        else:
+            _create_clustered_plot(ax, clustering_results, label_color_map, well_id, 
+                                 for_composite, add_copy_numbers, sample_name, config)
+        
+        # Save figure
+        dpi = 200 if for_composite else 150
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
+        
+        logger.debug(f"Well plot saved to: {save_path}")
         return save_path
+        
+    except Exception as e:
+        error_msg = f"Error creating well plot for {well_id}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Error details: {str(e)}", exc_info=True)
+        raise VisualizationError(error_msg) from e
+
+
+def _setup_axes(fig, for_composite):
+    """Set up axes with appropriate positioning."""
+    if for_composite:
+        return fig.add_axes([0.1, 0.1, 0.85, 0.85])  # Ensure margins for axes
+    else:
+        return fig.add_axes([0.1, 0.1, 0.7, 0.8])  # Space for legend
+
+
+def _validate_clustering_data(clustering_results):
+    """Validate that clustering results contain necessary data."""
+    return ('df_filtered' in clustering_results and 
+            clustering_results['df_filtered'] is not None and 
+            not clustering_results['df_filtered'].empty and
+            'target_mapping' in clustering_results and 
+            clustering_results['target_mapping'] is not None)
+
+
+def _create_basic_plot(ax, df, well_id, for_composite, config):
+    """Create a basic plot with raw data when clustering failed."""
+    ax.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'], c='gray', s=4, alpha=0.5)
+    ax.set_xlabel("HEX Amplitude")
+    ax.set_ylabel("FAM Amplitude")
     
-    # Get filtered data with clusters
+    if not for_composite:
+        ax.set_title(f"Well {well_id}")
+    
+    _apply_axis_formatting(ax, config)
+
+
+def _create_clustered_plot(ax, clustering_results, label_color_map, well_id, 
+                          for_composite, add_copy_numbers, sample_name, config):
+    """Create a plot with clustered data and annotations."""
+    # Extract data from clustering results
     df_filtered = clustering_results['df_filtered']
-    target_mapping = clustering_results['target_mapping']
     counts = clustering_results['counts']
     copy_numbers = clustering_results['copy_numbers']
     
     logger.debug(f"Plotting {len(df_filtered)} filtered droplets for well {well_id}")
     
     # Assign colors based on target labels
-    df_filtered['color'] = df_filtered['TargetLabel'].map(label_color_map)
+    df_filtered_copy = df_filtered.copy()
+    df_filtered_copy['color'] = df_filtered_copy['TargetLabel'].map(label_color_map)
     
     # Plot all droplets, colored by target
-    ax.scatter(df_filtered['Ch2Amplitude'], df_filtered['Ch1Amplitude'],
-              c=df_filtered['color'], s=5 if for_composite else 8, alpha=0.6)
+    scatter_size = 5 if for_composite else 8
+    ax.scatter(df_filtered_copy['Ch2Amplitude'], df_filtered_copy['Ch1Amplitude'],
+              c=df_filtered_copy['color'], s=scatter_size, alpha=0.6)
     
-    # Add copy number annotations directly on the plot
-    if add_copy_numbers and 'copy_numbers' in clustering_results:
-        logger.debug("Adding copy number annotations")
-        copy_numbers = clustering_results['copy_numbers']
-        copy_number_states = clustering_results.get('copy_number_states', {})
-        
-        # For each target, calculate the centroid and add a label
-        for target, color in label_color_map.items():
-            if target not in ['Negative', 'Unknown'] and target in copy_numbers:
-                # Get all points for this target
-                target_points = df_filtered[df_filtered['TargetLabel'] == target]
-                if not target_points.empty:
-                    # Calculate centroid
-                    cx = target_points['Ch2Amplitude'].mean()
-                    cy = target_points['Ch1Amplitude'].mean()
-                    # Add copy number label
-                    cn_value = copy_numbers[target]
-                    
-                    # Check the copy number state
-                    state = copy_number_states.get(target, 'euploid')
-                    is_aneuploidy = state == 'aneuploidy'
-                    is_buffer_zone = state == 'buffer_zone'
-                    
-                    cn_text = f"{cn_value:.2f}"
-                    
-                    # Adjust size and font weight for individual vs composite plots
-                    font_size = 7 if for_composite else 12
-                    font_weight = 'bold' if (is_aneuploidy or is_buffer_zone) else 'normal'
-                    
-                    # Choose text color based on state
-                    if is_aneuploidy:
-                        text_color = 'darkred'
-                    elif is_buffer_zone:
-                        text_color = 'darkslategray'
-                    else:
-                        text_color = 'black'
-                    
-                    logger.debug(f"Adding {target} copy number annotation: {cn_text} at ({cx:.1f}, {cy:.1f}), state: {state}")
-                    
-                    ax.text(cx, cy, cn_text, 
-                            color=text_color,
-                            fontsize=font_size, fontweight=font_weight,
-                            ha='center', va='center',
-                            bbox=dict(facecolor='white', alpha=0.7, pad=1, edgecolor='none'))
+    # Add copy number annotations if requested
+    if add_copy_numbers and copy_numbers:
+        _add_copy_number_annotations(ax, df_filtered_copy, copy_numbers, 
+                                   clustering_results.get('copy_number_states', {}), 
+                                   label_color_map, for_composite)
     
-    # Add noise points (cluster -1) with lower opacity
-    noise_points = df[~df.index.isin(df_filtered.index)]
-    if not noise_points.empty:
-        logger.debug(f"Adding {len(noise_points)} noise points")
-        ax.scatter(noise_points['Ch2Amplitude'], noise_points['Ch1Amplitude'],
-                  c='lightgray', s=3, alpha=0.3)
-    
-    # Add legend only for standalone plots (not for composite)
+    # Add legend for standalone plots
     if not for_composite:
-        # Build legend
-        legend_handles = []
-        
-        for tgt in ordered_labels:
-            # Skip targets with no droplets
-            if tgt not in counts or counts[tgt] == 0:
-                continue
-                
-            # Get color for this target
-            color = label_color_map[tgt]
-            
-            # Create simple label text
-            label_text = tgt
-                
-            # Create legend handle
-            handle = mpl.lines.Line2D([], [], marker='o', linestyle='', markersize=10,
-                                   markerfacecolor=color, markeredgecolor='none', label=label_text)
-            legend_handles.append(handle)
-        
-        # Add legend to right side of plot
-        ax.legend(handles=legend_handles, title="Target",
-                 bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
+        _add_legend(ax, label_color_map, counts)
     
-    # Set plot labels and title
+    # Set labels and title
+    _set_plot_labels_and_title(ax, well_id, sample_name, for_composite)
+    
+    # Apply axis formatting
+    _apply_axis_formatting(ax, config)
+
+
+def _add_copy_number_annotations(ax, df_filtered, copy_numbers, copy_number_states, 
+                               label_color_map, for_composite):
+    """Add copy number annotations to cluster centroids."""
+    logger.debug("Adding copy number annotations")
+    
+    for target, color in label_color_map.items():
+        if target not in ['Negative', 'Unknown'] and target in copy_numbers:
+            # Get all points for this target
+            target_points = df_filtered[df_filtered['TargetLabel'] == target]
+            if not target_points.empty:
+                # Calculate centroid
+                cx = target_points['Ch2Amplitude'].mean()
+                cy = target_points['Ch1Amplitude'].mean()
+                
+                # Format copy number text
+                cn_value = copy_numbers[target]
+                cn_text = f"{cn_value:.2f}"
+                
+                # Determine formatting based on state
+                state = copy_number_states.get(target, 'euploid')
+                font_size = 7 if for_composite else 12
+                font_weight = 'bold' if state in ['aneuploidy', 'buffer_zone'] else 'normal'
+                
+                # Choose text color based on state
+                if state == 'aneuploidy':
+                    text_color = 'darkred'
+                elif state == 'buffer_zone':
+                    text_color = 'darkslategray'
+                else:
+                    text_color = 'black'
+                
+                logger.debug(f"Adding {target} copy number annotation: {cn_text} "
+                           f"at ({cx:.1f}, {cy:.1f}), state: {state}")
+                
+                ax.text(cx, cy, cn_text, 
+                        color=text_color, fontsize=font_size, fontweight=font_weight,
+                        ha='center', va='center',
+                        bbox=dict(facecolor='white', alpha=0.7, pad=1, edgecolor='none'))
+
+
+def _add_legend(ax, label_color_map, counts):
+    """Add legend for standalone plots."""
+    # Define ordered labels for legend
+    ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
+    legend_handles = []
+    
+    for tgt in ordered_labels:
+        # Skip targets with no droplets
+        if tgt not in counts or counts[tgt] == 0:
+            continue
+            
+        # Get color for this target
+        color = label_color_map[tgt]
+        
+        # Create legend handle
+        handle = mpl.lines.Line2D([], [], marker='o', linestyle='', markersize=10,
+                               markerfacecolor=color, markeredgecolor='none', label=tgt)
+        legend_handles.append(handle)
+    
+    # Add legend to right side of plot
+    ax.legend(handles=legend_handles, title="Target",
+             bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
+
+
+def _set_plot_labels_and_title(ax, well_id, sample_name, for_composite):
+    """Set plot labels and title."""
     if for_composite:
         ax.set_xlabel("HEX Amplitude", fontsize=10)
         ax.set_ylabel("FAM Amplitude", fontsize=10)
@@ -181,7 +229,10 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
             ax.set_title(f"Well {well_id} - {sample_name}")
         else:
             ax.set_title(f"Well {well_id}")
-    
+
+
+def _apply_axis_formatting(ax, config):
+    """Apply consistent axis formatting."""
     # Set axis limits from config
     axis_limits = config.get_axis_limits()
     ax.set_xlim(axis_limits['x'])
@@ -193,7 +244,7 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
     ax.xaxis.set_major_locator(ticker.MultipleLocator(grid_intervals['x']))
     ax.yaxis.set_major_locator(ticker.MultipleLocator(grid_intervals['y']))
     
-    # Set equal aspect with set limits to ensure proper scaling
+    # Set consistent aspect ratio
     ax.set_aspect('auto')
     
     # Make sure spines are visible and prominent
@@ -201,11 +252,3 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         spine.set_visible(True)
         spine.set_linewidth(1.0)
         spine.set_color('#000000')  # Black borders
-    
-    # Save the figure with appropriate resolution
-    dpi = 200 if for_composite else 150
-    plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
-    plt.close(fig)
-    
-    logger.debug(f"Well plot saved to: {save_path}")
-    return save_path
