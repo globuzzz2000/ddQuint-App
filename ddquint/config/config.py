@@ -50,9 +50,9 @@ class Config:
         "Negative": [800, 700],
         "Chrom1":   [800, 2300],
         "Chrom2":   [1700, 2100],
-        "Chrom3":   [2700, 1850],
-        "Chrom4":   [3200, 1250],
-        "Chrom5":   [3900, 700]
+        "Chrom3":   [2500, 1750],
+        "Chrom4":   [3000, 1250],
+        "Chrom5":   [3500, 700]
     }
     
     # Tolerance for matching clusters to targets
@@ -72,11 +72,11 @@ class Config:
     
     # Expected copy number values for each chromosome (baseline for calculations)
     EXPECTED_COPY_NUMBERS = {
-        "Chrom1": 0.9687,
-        "Chrom2": 1.0060,
-        "Chrom3": 1.0285,
-        "Chrom4": 0.9893,
-        "Chrom5": 1.0059,
+        "Chrom1": 0.9688,
+        "Chrom2": 1.0066,
+        "Chrom3": 1.0300,
+        "Chrom4": 0.9890,
+        "Chrom5": 1.0056,
         "Chrom6": 1.00,
         "Chrom7": 1.00,
         "Chrom8": 1.00,
@@ -85,8 +85,8 @@ class Config:
     }
     
     # Buffer zone settings
-    EUPLOID_TOLERANCE = 0.075  # ±0.075 from expected value for euploid range
-    ANEUPLOIDY_TOLERANCE = 0.075  # ±0.075 from aneuploidy targets for aneuploidy range
+    EUPLOID_TOLERANCE = 0.08  # ±0.08 from expected value for euploid range
+    ANEUPLOIDY_TOLERANCE = 0.08  # ±0.08 from aneuploidy targets for aneuploidy range
     
     # Aneuploidy target copy numbers (relative to expected)
     ANEUPLOIDY_TARGETS = {
