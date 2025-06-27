@@ -31,6 +31,7 @@ dependencies = [
     "openpyxl>=3.0.5",
     "wxpython>=4.1.0",  # For GUI file selection
     "colorama>=0.4.4",  # For colored terminal output
+    "tqdm>=4.60.0",     # For progress bars
     # Platform-specific dependencies for macOS
     "pyobjc-core;platform_system=='Darwin'",
     "pyobjc-framework-Cocoa;platform_system=='Darwin'",
@@ -56,7 +57,7 @@ Documentation = "https://github.com/JakobWimmer/ddQuint#readme"
 ddquint = "ddquint.main:main"
 
 [tool.setuptools]
-packages = ["ddquint", "ddquint.core", "ddquint.utils", "ddquint.visualization", "ddquint.reporting"]
+packages = ["ddquint", "ddquint.core", "ddquint.utils", "ddquint.visualization", "ddquint.config"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

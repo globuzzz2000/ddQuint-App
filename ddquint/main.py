@@ -49,9 +49,8 @@ if sys.platform == 'darwin':
             os.close(old_fd)
 
 from .utils import select_directory, select_file, mark_selection_complete, get_sample_names
-from .core import process_directory
+from .core import process_directory, create_list_report
 from .visualization import create_composite_image
-from .reporting import create_plate_report, create_list_report
 
 def setup_logging(debug=False):
     """
@@ -143,7 +142,6 @@ Examples:
   ddquint --dir /path/to/csv        # Process specific directory
   ddquint --config                  # Display configuration
   ddquint --config template         # Generate config template
-  ddquint --plate rotated           # Generate both plate formats
   ddquint --test --dir /path        # Test mode (preserves input files)
         """
     )
@@ -176,12 +174,6 @@ Examples:
         nargs="?",
         const="prompt",
         help="Template file path for well names, or 'prompt' to select via GUI"
-    )
-    parser.add_argument(
-        "--plate",
-        nargs="?",
-        const="default",
-        help="Generate plate format Excel report. Use 'rotated' to also generate rotated layout"
     )
     parser.add_argument(
         "--test",
@@ -459,7 +451,7 @@ def main():
         
         # Create output files if we have results
         if results:
-            _create_output_files(results, output_dir, sample_names, args, config)
+            _create_output_files(results, output_dir, sample_names, config)
             _log_summary_statistics(results, output_dir, template_path, sample_names, args)
         else:
             logger.info("No valid results were generated.")
@@ -477,7 +469,7 @@ def main():
             traceback.print_exc()
         sys.exit(1)
 
-def _create_output_files(results, output_dir, sample_names, args, config):
+def _create_output_files(results, output_dir, sample_names, config):
     """Create all output files from processing results."""
     # Add sample names to results
     for result in results:
@@ -492,17 +484,6 @@ def _create_output_files(results, output_dir, sample_names, args, config):
     # Create list format report
     list_path = os.path.join(output_dir, "List_Results.xlsx")
     create_list_report(results, list_path)
-    
-    # Create plate format report if requested
-    if args.plate is not None:
-        # Always create the default plate report
-        excel_path = os.path.join(output_dir, config.EXCEL_OUTPUT_FILENAME)
-        create_plate_report(results, excel_path, rotated=False)
-        
-        # If "rotated" was specified, also create the rotated version
-        if args.plate == "rotated":
-            rotated_path = os.path.join(output_dir, "Plate_Results_Rotated.xlsx")
-            create_plate_report(results, rotated_path, rotated=True)
 
 def _log_summary_statistics(results, output_dir, template_path, sample_names, args):
     """Log summary statistics and completion messages."""

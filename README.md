@@ -12,7 +12,7 @@ A comprehensive pipeline for analyzing digital droplet PCR (ddPCR) data with sup
 - **Copy Number Analysis**: Relative and absolute copy number calculations with normalization
 - **Aneuploidy Detection**: Automated detection of chromosomal gains and losses
 - **Buffer Zone Detection**: Identification of samples with uncertain copy number states
-- **Comprehensive Reporting**: Excel reports in both plate and list formats
+- **Comprehensive Reporting**: Excel reports in list format with color-coded highlighting
 - **Visualization**: Individual well plots and composite plate overview images
 - **Flexible Configuration**: JSON-based configuration system for all parameters
 
@@ -26,28 +26,25 @@ ddQuint/
 │   ├── config/                    # Configuration and settings
 │   │   ├── __init__.py
 │   │   ├── config.py              # Core configuration settings
-│   │   ├── exceptions.py          # Error haneling
+│   │   ├── exceptions.py          # Error handling
 │   │   ├── config_display.py      # Configuration display utilities
 │   │   └── template_generator.py  # Configuration template generation
 │   ├── core/                      # Core processing modules
 │   │   ├── __init__.py
 │   │   ├── clustering.py          # HDBSCAN clustering and analysis
 │   │   ├── copy_number.py         # Copy number calculations
-│   │   └── file_processor.py      # CSV file processing
+│   │   ├── file_processor.py      # CSV file processing
+│   │   └── list_report.py         # List format Excel reports
 │   ├── utils/                     # Utility functions
 │   │   ├── __init__.py
-│   │   ├── file_io.py            # File input/output utilities
-│   │   ├── gui.py                # GUI file selection
-│   │   ├── template_parser.py    # Template CSV parsing
-│   │   └── well_utils.py         # Well coordinate utilities
-│   ├── visualization/             # Visualization modules
-│   │   ├── __init__.py
-│   │   ├── plate_plots.py        # Composite plate images
-│   │   └── well_plots.py         # Individual well plots
-│   └── reporting/                 # Report generation
+│   │   ├── file_io.py             # File input/output utilities
+│   │   ├── gui.py                 # GUI file selection
+│   │   ├── template_parser.py     # Template CSV parsing
+│   │   └── well_utils.py          # Well coordinate utilities
+│   └── visualization/             # Visualization modules
 │       ├── __init__.py
-│       ├── list_report.py        # List format Excel reports
-│       └── plate_report.py       # Plate format Excel reports
+│       ├── plate_plots.py         # Composite plate images
+│       └── well_plots.py          # Individual well plots
 ├── docs/                          # Documentation
 │   └── coding_standards.md       # Coding standards guide
 ├── pyproject.toml                 # Package configuration and dependencies
@@ -95,12 +92,6 @@ ddquint --dir /path/to/csv/files
 
 # Enable debug mode for detailed logging
 ddquint --debug --dir /path/to/csv/files
-
-# Generate Excel reports in plate format
-ddquint --plate --dir /path/to/csv/files
-
-# Generate both standard and rotated plate reports
-ddquint --plate rotated --dir /path/to/csv/files
 
 # Test mode (preserves input files)
 ddquint --test --dir /path/to/csv/files
@@ -166,7 +157,7 @@ Customize the analysis behavior with a JSON configuration file:
 7. **Copy Number Calculation**: Calculate relative and absolute copy numbers
 8. **State Classification**: Classify as euploid, aneuploidy, or buffer zone
 9. **Visualization**: Generate individual well plots and composite plate image
-10. **Report Generation**: Create Excel reports in list and/or plate formats
+10. **Report Generation**: Create Excel report in list format
 
 ## Copy Number Classification and Buffer Zones
 
@@ -237,22 +228,13 @@ The system uses chromosome-specific expected values for accurate classification:
 
 ## Output Formats
 
-### Excel Reports
+### Excel Report
 
 #### List Format (`List_Results.xlsx`)
 - Tabular layout with wells as rows
 - Separate columns for each chromosome's relative and absolute copy numbers
 - Color-coded highlighting for aneuploidies and buffer zones
-
-#### Plate Format (`Plate_Results.xlsx`)
-- 96-well plate layout matching physical plate
-- Copy number data organized by well position
-- Chromosome-specific highlighting for abnormal values
-
-#### Rotated Plate Format (`Plate_Results_Rotated.xlsx`)
-- Alternative plate layout (1-12 as rows, A-H as columns)
-- Relative copy numbers only (no absolute counts)
-- Optimized for certain analysis workflows
+- Wells sorted in column-first order (A01, B01, ..., A02, B02, ...)
 
 ### Visualization
 

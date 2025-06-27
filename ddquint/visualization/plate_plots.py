@@ -79,7 +79,7 @@ def _generate_well_images(results, output_path, temp_files):
     """Generate optimized images for each well with progress bar."""
     config = Config.get_instance()
     
-    for result in tqdm(results, desc="Creating Plate image", unit="well"):
+    for result in tqdm(results, desc="Creating Graphs", unit="well"):
         if not result.get('well'):
             continue
             

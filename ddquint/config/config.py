@@ -77,12 +77,12 @@ class Config:
     # Define expected centroids for targets (maximum 10 chromosomes)
     # Format: { "target_name": [Ch1Amplitude, Ch2Amplitude] }
     EXPECTED_CENTROIDS = {
-        "Negative": [800, 700],
-        "Chrom1":   [800, 2300],
-        "Chrom2":   [1700, 2100],
-        "Chrom3":   [2500, 1750],
-        "Chrom4":   [3000, 1250],
-        "Chrom5":   [3500, 700]
+        "Negative": [900, 700],
+        "Chrom1":   [900, 2300],
+        "Chrom2":   [1700, 2000],
+        "Chrom3":   [2400, 1750],
+        "Chrom4":   [2900, 1250],
+        "Chrom5":   [3400, 700]
     }
     
     # Tolerance for matching clusters to targets
@@ -175,7 +175,6 @@ class Config:
     CSV_EXTENSION = '.csv'
     
     # Excel report settings
-    EXCEL_OUTPUT_FILENAME = "Plate_Results.xlsx"
     COMPOSITE_IMAGE_FILENAME = "Graph_Overview.png"
     
     #############################################################################
