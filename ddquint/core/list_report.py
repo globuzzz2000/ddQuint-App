@@ -329,6 +329,7 @@ def apply_formatting(ws, num_results, chromosome_keys):
     """
     num_chromosomes = len(chromosome_keys)
     rel_start = 3
+    droplets_end = rel_start + num_chromosomes + 2
     abs_start = rel_start + num_chromosomes + 3
     max_col = abs_start + num_chromosomes - 1
     max_row = num_results + 2
@@ -363,8 +364,8 @@ def apply_formatting(ws, num_results, chromosome_keys):
                 left_border = thin
             if col == rel_start + num_chromosomes - 1 and row >= 1:
                 right_border = thin
-            if col == abs_start and row >= 1:
-                left_border = thin
+            if col == droplets_end and row >= 1:
+                right_border = thin
                 
             # Thick border at bottom of header row
             if row == 2:
