@@ -58,10 +58,13 @@ def analyze_droplets(df):
     # Make a full copy of input dataframe to avoid warnings
     df_copy = df.copy()
     
+    # Store total droplets for reporting
+    total_droplets = len(df_copy)
+    
     # Check if we have enough data points for clustering
     if len(df_copy) < config.MIN_POINTS_FOR_CLUSTERING:
         logger.debug(f"Insufficient data points for clustering: {len(df_copy)} < {config.MIN_POINTS_FOR_CLUSTERING}")
-        return _create_empty_result(df_copy)
+        return _create_empty_result(df_copy, total_droplets)
     
     # Standardize the data for clustering
     X = df_copy[['Ch1Amplitude', 'Ch2Amplitude']].values
@@ -107,6 +110,11 @@ def analyze_droplets(df):
     
     logger.debug(f"Label counts: {label_counts}")
     
+    # Calculate droplet metrics
+    negative_droplets = label_counts.get('Negative', 0)
+    usable_droplets = sum(count for label, count in label_counts.items() 
+                         if label != 'Negative' and label != 'Unknown')
+    
     # Calculate relative copy numbers
     copy_numbers = calculate_copy_numbers(label_counts)
     logger.debug(f"Copy numbers: {copy_numbers}")
@@ -114,13 +122,11 @@ def analyze_droplets(df):
     # Classify copy number states and detect aneuploidies/buffer zones
     copy_number_states, has_aneuploidy, has_buffer_zone = _classify_copy_number_states(copy_numbers, config)
     
-    # Check for aneuploidies in copy numbers (legacy compatibility)
-    legacy_has_aneuploidy, abnormal_chroms = detect_aneuploidies(copy_numbers)
+    # Detect abnormal chromosomes for detailed reporting
+    _, abnormal_chroms = detect_aneuploidies(copy_numbers)
     
-    # Use the more sophisticated classification if available
-    final_has_aneuploidy = has_aneuploidy if copy_number_states else legacy_has_aneuploidy
-    
-    logger.debug(f"Final analysis - Aneuploidy: {final_has_aneuploidy}, Buffer zone: {has_buffer_zone}")
+    logger.debug(f"Final analysis - Aneuploidy: {has_aneuploidy}, Buffer zone: {has_buffer_zone}")
+    logger.debug(f"Droplet metrics - Total: {total_droplets}, Usable: {usable_droplets}, Negative: {negative_droplets}")
     
     return {
         'clusters': df_copy['cluster'].values,
@@ -128,14 +134,16 @@ def analyze_droplets(df):
         'counts': label_counts,
         'copy_numbers': copy_numbers,
         'copy_number_states': copy_number_states,
-        'has_aneuploidy': final_has_aneuploidy,
+        'has_aneuploidy': has_aneuploidy,
         'has_buffer_zone': has_buffer_zone,
         'abnormal_chromosomes': abnormal_chroms,
         'target_mapping': target_mapping,
-        'chrom3_reclustered': False  # Legacy field for compatibility
+        'total_droplets': total_droplets,
+        'usable_droplets': usable_droplets,
+        'negative_droplets': negative_droplets
     }
 
-def _create_empty_result(df_copy):
+def _create_empty_result(df_copy, total_droplets):
     """Create empty result when clustering cannot be performed."""
     return {
         'clusters': np.array([-1] * len(df_copy)),
@@ -146,7 +154,9 @@ def _create_empty_result(df_copy):
         'has_aneuploidy': False,
         'has_buffer_zone': False,
         'target_mapping': {},
-        'chrom3_reclustered': False
+        'total_droplets': total_droplets,
+        'usable_droplets': 0,
+        'negative_droplets': 0
     }
 
 def _assign_targets_to_clusters(df_filtered, config):

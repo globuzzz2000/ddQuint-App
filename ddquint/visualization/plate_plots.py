@@ -55,11 +55,15 @@ def create_composite_image(results, output_path):
         row_labels = config.PLATE_ROWS
         col_labels = config.PLATE_COLS
         
-        # Generate optimized images for each well
+        # Create single template for empty wells (optimization)
+        empty_template_path = _create_empty_well_template(output_path, config, temp_files)
+        
+        # Generate optimized images for each well (including error wells)
         _generate_well_images(results, output_path, temp_files)
         
         # Create the composite figure
-        _create_composite_figure(results, output_path, row_labels, col_labels, config)
+        logger.info("Generating composite figure...") 
+        _create_composite_figure(results, output_path, row_labels, col_labels, config, empty_template_path)
         
         logger.debug(f"Composite image saved to: {output_path}")
         return output_path
@@ -75,35 +79,86 @@ def create_composite_image(results, output_path):
         _cleanup_temp_files(temp_files, results)
 
 
+def _create_empty_well_template(output_path, config, temp_files):
+    """
+    Create a single template image for all empty wells (optimization).
+    
+    Args:
+        output_path: Main output path 
+        config: Configuration instance
+        temp_files: List to track temp files for cleanup
+        
+    Returns:
+        str: Path to the empty well template image
+    """
+    try:
+        # Import the placeholder function from well_plots
+        from ..visualization.well_plots import create_placeholder_plot
+        
+        output_dir = os.path.dirname(output_path)
+        graphs_dir = os.path.join(output_dir, config.GRAPHS_DIR_NAME)
+        os.makedirs(graphs_dir, exist_ok=True)
+        
+        # Create single template for all empty wells
+        template_path = os.path.join(graphs_dir, "_empty_template.png")
+        create_placeholder_plot("", template_path, for_composite=True)
+        
+        # Track the template file for cleanup
+        temp_files.append(template_path)
+        
+        logger.debug("Created empty well template for reuse")
+        return template_path
+        
+    except Exception as e:
+        logger.debug(f"Error creating empty well template: {e}")
+        return None
+
+
 def _generate_well_images(results, output_path, temp_files):
-    """Generate optimized images for each well with progress bar."""
+    """Generate optimized images for each well with progress bar (including error wells)."""
     config = Config.get_instance()
     
     for result in tqdm(results, desc="Creating Graphs", unit="well"):
         if not result.get('well'):
             continue
             
-        # Get the data file path
-        df_file = _get_data_file_path(result, config)
-        if not df_file or not os.path.exists(df_file):
-            logger.debug(f"Raw data file not found: {df_file}")
-            continue
-            
-        # Load and process the raw data
-        df_clean = _load_and_clean_data(df_file)
-        if df_clean is None:
-            continue
-            
-        # Use existing clustering results
-        clustering_results = _extract_clustering_results(result)
-        if not _validate_clustering_results(clustering_results, result['well']):
-            continue
-        
-        # Create optimized plot for composite image
-        temp_path = _create_temp_well_plot(result, output_path, df_clean, 
-                                         clustering_results, config, temp_files)
+        # Create optimized plot for ALL wells (including errors)
+        temp_path = _create_temp_well_plot(result, output_path, config, temp_files)
         if temp_path:
             result['temp_graph_path'] = temp_path
+
+
+def _create_temp_well_plot(result, output_path, config, temp_files):
+    """Create temporary well plot for composite image (handles all well types)."""
+    try:
+        output_dir = os.path.dirname(output_path)
+        graphs_dir = os.path.join(output_dir, config.GRAPHS_DIR_NAME)
+        os.makedirs(graphs_dir, exist_ok=True)
+        
+        # Create temp file in the Graphs directory
+        temp_path = os.path.join(graphs_dir, f"{result['well']}_temp.png")
+        
+        # Load data for normal results
+        df_clean = None
+        if not result.get('error'):
+            df_file = _get_data_file_path(result, config)
+            if df_file and os.path.exists(df_file):
+                df_clean = _load_and_clean_data(df_file)
+        
+        # Use existing clustering results
+        clustering_results = _extract_clustering_results(result)
+        
+        # Create the plot using unified system (handles all types consistently)
+        create_well_plot(df_clean, clustering_results, result['well'], 
+                         temp_path, for_composite=True, add_copy_numbers=True)
+        
+        # Track the temporary file
+        temp_files.append(temp_path)
+        return temp_path
+        
+    except Exception as e:
+        logger.debug(f"Error creating temp plot for well {result.get('well')}: {e}")
+        return None
 
 
 def _get_data_file_path(result, config):
@@ -160,40 +215,12 @@ def _extract_clustering_results(result):
         'copy_number_states': result.get('copy_number_states', {}),
         'has_aneuploidy': result.get('has_aneuploidy', False),
         'has_buffer_zone': result.get('has_buffer_zone', False),
-        'chrom3_reclustered': result.get('chrom3_reclustered', False)
+        'chrom3_reclustered': result.get('chrom3_reclustered', False),
+        'error': result.get('error')  # Include error for unified handling
     }
 
 
-def _validate_clustering_results(clustering_results, well_id):
-    """Validate that clustering results contain necessary data."""
-    if clustering_results['df_filtered'] is None or clustering_results['target_mapping'] is None:
-        logger.debug(f"Missing clustering data for well {well_id}")
-        return False
-    return True
-
-
-def _create_temp_well_plot(result, output_path, df_clean, clustering_results, config, temp_files):
-    """Create temporary well plot for composite image."""
-    try:
-        output_dir = os.path.dirname(output_path)
-        graphs_dir = os.path.join(output_dir, config.GRAPHS_DIR_NAME)
-        os.makedirs(graphs_dir, exist_ok=True)
-        
-        # Create temp file in the Graphs directory
-        temp_path = os.path.join(graphs_dir, f"{result['well']}_temp.png")
-        create_well_plot(df_clean, clustering_results, result['well'], 
-                         temp_path, for_composite=True, add_copy_numbers=True)
-        
-        # Track the temporary file
-        temp_files.append(temp_path)
-        return temp_path
-        
-    except Exception as e:
-        logger.debug(f"Error creating temp plot for well {result.get('well')}: {e}")
-        return None
-
-
-def _create_composite_figure(results, output_path, row_labels, col_labels, config):
+def _create_composite_figure(results, output_path, row_labels, col_labels, config, empty_template_path):
     """Create the main composite figure."""
     # Create figure with configured size
     fig_size = config.COMPOSITE_FIGURE_SIZE
@@ -210,7 +237,7 @@ def _create_composite_figure(results, output_path, row_labels, col_labels, confi
     plt.subplots_adjust(left=0.04, right=0.96, top=0.96, bottom=0.04)
     
     # Create subplot for each well position
-    _create_well_subplots(fig, gs, row_labels, col_labels, well_results, config)
+    _create_well_subplots(fig, gs, row_labels, col_labels, well_results, config, empty_template_path)
     
     # Add row and column labels
     _add_plate_labels(fig, row_labels, col_labels)
@@ -220,7 +247,7 @@ def _create_composite_figure(results, output_path, row_labels, col_labels, confi
     plt.close(fig)
 
 
-def _create_well_subplots(fig, gs, row_labels, col_labels, well_results, config):
+def _create_well_subplots(fig, gs, row_labels, col_labels, well_results, config, empty_template_path):
     """Create individual subplots for each well position."""
     for i, row in enumerate(row_labels):
         for j, col_num in enumerate(range(1, int(col_labels[-1]) + 1)):
@@ -234,11 +261,30 @@ def _create_well_subplots(fig, gs, row_labels, col_labels, well_results, config)
             if well in well_results:
                 _populate_data_well(ax, well, well_results[well], config)
             else:
-                _populate_empty_well(ax, well, config)
+                _populate_empty_well_optimized(ax, well, empty_template_path)
             
             # Keep axis visibility for all plots
             ax.set_xticks([])
             ax.set_yticks([])
+
+
+def _populate_empty_well_optimized(ax, well, empty_template_path):
+    """
+    Populate empty well using pre-generated template (optimization).
+    
+    Args:
+        ax: Matplotlib axes object
+        well: Well identifier
+        empty_template_path: Path to pre-generated empty well template
+    """
+    if empty_template_path and os.path.exists(empty_template_path):
+        try:
+            # Use the pre-generated template
+            img = plt.imread(empty_template_path)
+            ax.imshow(img)
+            return
+        except Exception as e:
+            logger.debug(f"Error using empty template for well {well}: {e}")
 
 
 def _populate_data_well(ax, well, result, config):
@@ -257,6 +303,10 @@ def _populate_data_well(ax, well, result, config):
             title = sample_name if sample_name else well
             ax.set_title(title, fontsize=6, pad=2)
             
+            # Add buffer zone overlay for plate plots
+            if result.get('has_buffer_zone', False):
+                _add_plate_buffer_zone_overlay(ax)
+            
             # Apply colored borders based on copy number state
             _apply_well_border(ax, result, well)
             
@@ -271,50 +321,34 @@ def _populate_data_well(ax, well, result, config):
                 transform=ax.transAxes, fontsize=8)
 
 
-def _populate_empty_well(ax, well, config):
-    """Populate subplot for an empty well."""
-    # Create properly sized placeholder
-    axis_limits = config.get_axis_limits()
-    ax.set_xlim(axis_limits['x'])
-    ax.set_ylim(axis_limits['y'])
+def _add_plate_buffer_zone_overlay(ax):
+    """
+    Add buffer zone overlay for plate plots only.
     
-    # Add grid with configured spacing
-    ax.grid(True, alpha=0.4, linewidth=0.8)
-    grid_intervals = config.get_grid_intervals()
-    ax.xaxis.set_major_locator(MultipleLocator(grid_intervals['x']))
-    ax.yaxis.set_major_locator(MultipleLocator(grid_intervals['y']))
-    
-    # Turn off tick marks but keep the grid
-    ax.tick_params(axis='both', which='both', length=0)
-    ax.set_aspect('auto')
-    
-    # Add well identifier in gray
-    ax.text(0.5, 0.5, well, fontsize=8, color='gray',
+    Args:
+        ax: Matplotlib axes object
+    """
+    ax.text(0.5, 0.5, "Buffer Zone", 
             horizontalalignment='center', verticalalignment='center',
-            transform=ax.transAxes)
+            transform=ax.transAxes, fontsize=5, color='black',
+            bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgrey', alpha=0.8))
     
-    # Apply default grey border
-    for spine in ax.spines.values():
-        spine.set_color('#cccccc')
-        spine.set_linewidth(1)
-        spine.set_visible(True)
+    logger.debug("Added buffer zone overlay to plate plot")
 
 
 def _apply_well_border(ax, result, well):
     """Apply colored border based on well status."""
-    # Buffer zone trumps aneuploidy in detection
-    if result.get('has_buffer_zone', False):
-        border_color = '#000000'  # Black border for buffer zone
-        border_width = 1
-        logger.debug(f"Applied buffer zone border (black) to well {well}")
-    elif result.get('has_aneuploidy', False):
-        border_color = '#E6B8E6'  # Light purple border for aneuploidy
-        border_width = 3
-        logger.debug(f"Applied aneuploidy border (light purple) to well {well}")
+
+    if result.get('has_aneuploidy', False) and not result.get('has_buffer_zone', False):
+        # Only apply special border for aneuploidy if it's NOT a buffer zone
+        border_color = '#E6B8E6'  # Pink border for aneuploidy
+        border_width = 2
+        logger.debug(f"Applied aneuploidy border (pink) to well {well}")
     else:
-        border_color = '#B0B0B0'  # Light grey border for euploid
+        # Standard grey border for all other cases (including buffer zones)
+        border_color = '#B0B0B0'  # Light grey border for normal wells
         border_width = 1
-        logger.debug(f"Applied euploid border (light grey) to well {well}")
+        logger.debug(f"Applied standard border (light grey) to well {well}")
     
     # Apply the border
     for spine in ax.spines.values():

@@ -129,51 +129,64 @@ def setup_headers(ws, chromosome_keys):
         chromosome_keys (list): List of chromosome identifiers
     """
     num_chromosomes = len(chromosome_keys)
-    
+
     # Row 1: Main headers
     ws.cell(row=1, column=1, value="Well")
     ws.cell(row=2, column=1, value="")
-    
+
     ws.cell(row=1, column=2, value="Sample")
     ws.cell(row=2, column=2, value="")
-    
+
     # Relative Copy Number section
     rel_start = 3
     rel_end = 2 + num_chromosomes
     ws.cell(row=1, column=rel_start, value="Relative Copy Number")
     for i in range(rel_start, rel_end + 1):
         ws.cell(row=1, column=i + 1, value="")
-    
+
+    # Droplet Readouts section with 3 columns
+    droplet_start = rel_end + 1
+    droplet_end = droplet_start + 3 - 1
+    ws.cell(row=1, column=droplet_start, value="Droplet Readouts")
+    # Clear merged cells to prevent unwanted values
+    for i in range(droplet_start, droplet_end + 1):
+        ws.cell(row=1, column=i + 1, value="")
+
+    # Second row: Droplet readout column labels
+    droplet_subcols = ["Usable", "Positive", "Overall"]
+    for i, label in enumerate(droplet_subcols):
+        ws.cell(row=2, column=droplet_start + i, value=label)
+
     # Absolute Copy Number section
-    abs_start = rel_end + 1
+    abs_start = droplet_end + 1
     abs_end = abs_start + num_chromosomes - 1
     ws.cell(row=1, column=abs_start, value="Absolute Copy Number")
     for i in range(abs_start, abs_end + 1):
         ws.cell(row=1, column=i + 1, value="")
-    
+
     # Merge cells for headers
     ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
     ws.merge_cells(start_row=1, start_column=2, end_row=2, end_column=2)
     ws.merge_cells(start_row=1, start_column=rel_start, end_row=1, end_column=rel_end)
+    ws.merge_cells(start_row=1, start_column=droplet_start, end_row=1, end_column=droplet_end)
     ws.merge_cells(start_row=1, start_column=abs_start, end_row=1, end_column=abs_end)
-    
-    # Row 2: Chromosome headers
+
+    # Row 2: Chromosome headers for Relative and Absolute Copy Number
     for i, chrom_key in enumerate(chromosome_keys):
         chrom_label = f"Chr{chrom_key.replace('Chrom', '')}"
         ws.cell(row=2, column=rel_start + i, value=chrom_label)
         ws.cell(row=2, column=abs_start + i, value=chrom_label)
-    
+
     # Apply formatting to headers
     for cell in ws[1]:
         if cell.value:
             cell.font = Font(bold=True, size=12)
             cell.alignment = Alignment(horizontal='center', vertical='center')
-    
+
     for cell in ws[2]:
         if cell.value:
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal='center', vertical='center')
-
 
 def fill_well_data(ws, sorted_results, chromosome_keys, config):
     """
@@ -187,8 +200,14 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
     """
     num_chromosomes = len(chromosome_keys)
     rel_start = 3
-    abs_start = rel_start + num_chromosomes
+    rel_end = rel_start + num_chromosomes - 1
     
+    droplet_start = rel_end + 1
+    droplet_end = droplet_start + 2  # 3 columns for droplets
+    
+    abs_start = droplet_end + 1
+    abs_end = abs_start + num_chromosomes - 1
+
     for row_idx, result in enumerate(sorted_results, start=3):
         well_id = result.get('well', '')
         
@@ -212,22 +231,37 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
         has_aneuploidy = result.get('has_aneuploidy', False)
         has_buffer_zone = result.get('has_buffer_zone', False)
         
-        # Determine row-level highlighting - buffer zone trumps aneuploidy
+        # Extract droplet metrics from clustering results
+        total_droplets = result.get('total_droplets', 0)
+        usable_droplets = result.get('usable_droplets', 0) 
+        negative_droplets = result.get('negative_droplets', 0)
+        
+        # Calculate positive droplets: Overall - Negative
+        positive_droplets = total_droplets - negative_droplets
+        
+        # Row fill
         row_fill = None
         if has_buffer_zone:
-            row_fill = PatternFill(start_color="B0B0B0", end_color="B0B0B0", fill_type="solid")
+            row_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
         elif has_aneuploidy:
-            row_fill = PatternFill(start_color="E6B8E6", end_color="E6B8E6", fill_type="solid")
+            row_fill = PatternFill(start_color="F2CEEF", end_color="F2CEEF", fill_type="solid")
         
-        # Apply highlighting to Well and Sample cells
         if row_fill:
             well_cell.fill = row_fill
             sample_cell.fill = row_fill
         
-        # Fill in relative and absolute copy numbers
+        # Fill relative and absolute copy number data
         _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys, 
                              copy_numbers, counts, copy_number_states, row_fill, 
                              has_buffer_zone, has_aneuploidy)
+        
+        # Populate droplet readout columns with calculated values
+        droplet_values = [usable_droplets, positive_droplets, total_droplets]
+        for i, val in enumerate(droplet_values):
+            cell = ws.cell(row=row_idx, column=droplet_start + i, value=val)
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            if row_fill:
+                cell.fill = row_fill
 
 
 def _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys, 
@@ -275,7 +309,7 @@ def _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys,
             chrom_state = copy_number_states.get(chrom_key, 'euploid')
             if chrom_state == 'aneuploidy':
                 # Individual chromosome aneuploidy highlighting
-                chrom_fill = PatternFill(start_color="D070D0", end_color="D070D0", fill_type="solid")
+                chrom_fill = PatternFill(start_color="D86DCD", end_color="D86DCD", fill_type="solid")
                 rel_cell.fill = chrom_fill
                 abs_cell.fill = chrom_fill
             else:
@@ -295,12 +329,13 @@ def apply_formatting(ws, num_results, chromosome_keys):
     """
     num_chromosomes = len(chromosome_keys)
     rel_start = 3
-    abs_start = rel_start + num_chromosomes
+    abs_start = rel_start + num_chromosomes + 3
     max_col = abs_start + num_chromosomes - 1
     max_row = num_results + 2
     
     # Border styles
-    thick = Side(style='thick')
+    thick = Side(style='medium')
+    thin = Side(style='thin')
     
     # Apply borders
     for row in range(1, max_row + 1):
@@ -323,11 +358,13 @@ def apply_formatting(ws, num_results, chromosome_keys):
             if col == max_col:
                 right_border = thick
             
-            # Thick borders around sections
+            # Thin borders around sections
             if col == rel_start and row >= 1:
-                left_border = thick
+                left_border = thin
             if col == rel_start + num_chromosomes - 1 and row >= 1:
-                right_border = thick
+                right_border = thin
+            if col == abs_start and row >= 1:
+                left_border = thin
                 
             # Thick border at bottom of header row
             if row == 2:

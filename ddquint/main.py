@@ -365,12 +365,17 @@ def main():
         ddQuintError: For any application-specific errors
     """
     try:
-        # Parse command line arguments
+        # Parse command line arguments first to check for test mode
         args = parse_arguments()
         
         # Setup logging
         log_file = setup_logging(debug=args.debug)
-        logger.info("=== ddPCR Quintuplex Analysis ===")
+        
+        # Print header with test mode indication
+        if args.test:
+            logger.info("=== ddPCR Quintuplex Analysis - Test Mode ===")
+        else:
+            logger.info("=== ddPCR Quintuplex Analysis ===")
         
         # Handle configuration commands
         if args.config:
@@ -492,7 +497,7 @@ def _log_summary_statistics(results, output_dir, template_path, sample_names, ar
     buffer_zone_count = sum(1 for r in results if r.get('has_buffer_zone', False))
     
     logger.info(f"\nProcessed {len(results)} files ({aneuploid_count} potential aneuploidies, {buffer_zone_count} buffer zone samples)")
-    logger.info(f"\nResults saved to: {os.path.abspath(output_dir)}")
+    logger.info(f"Results saved to: {os.path.abspath(output_dir)}")
     
     if template_path:
         logger.debug(f"Sample names loaded from: {os.path.basename(template_path)}")

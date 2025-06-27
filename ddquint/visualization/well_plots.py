@@ -5,7 +5,7 @@ Well plot visualization module for ddQuint with config integration and buffer zo
 
 Creates individual well scatter plots with droplet classification, copy number annotations,
 and appropriate highlighting for different chromosome states. Supports both standalone
-and composite image formats.
+and composite image formats with unified plot creation logic.
 """
 
 import matplotlib.pyplot as plt
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 def create_well_plot(df, clustering_results, well_id, save_path, for_composite=False, 
                     add_copy_numbers=True, sample_name=None):
     """
-    Create an enhanced visualization plot for a single well with square aspect ratio.
+    Create an enhanced visualization plot for a single well with unified plot creation logic.
     
     Args:
         df (pandas.DataFrame): DataFrame with droplet data
@@ -41,34 +41,27 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
     """
     config = Config.get_instance()
     
-    if df is None or df.empty:
-        error_msg = f"No data provided for well {well_id} plot"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-    
     logger.debug(f"Creating well plot for {well_id}, composite: {for_composite}")
     
     try:
-        # Get configuration settings
-        label_color_map = config.TARGET_COLORS
-        fig_size = config.get_plot_dimensions(for_composite)
+        # Create the plot using unified logic
+        fig, ax = _create_base_plot(config, for_composite)
         
-        logger.debug(f"Using target colors: {label_color_map}")
-        logger.debug(f"Using figure size: {fig_size}")
+        # ALWAYS apply consistent axis formatting first (unified base)
+        _apply_axis_formatting(ax, config)
         
-        # Create figure with configured dimensions
-        fig = plt.figure(figsize=fig_size)
-        
-        # Get axes with appropriate positioning
-        ax = _setup_axes(fig, for_composite)
-        
-        # Check if clustering was successful
-        if not _validate_clustering_data(clustering_results):
-            logger.debug(f"No valid clustering data for well {well_id}")
-            _create_basic_plot(ax, df, well_id, for_composite, config)
+        # Determine plot type and add content overlay
+        if _is_error_result(clustering_results):
+            _add_error_overlay(ax, clustering_results, well_id, for_composite)
+        elif _has_insufficient_data(df, clustering_results, config):
+            # Skip "no data" overlay - just show empty plot with axes
+            pass
         else:
-            _create_clustered_plot(ax, clustering_results, label_color_map, well_id, 
-                                 for_composite, add_copy_numbers, sample_name, config)
+            _add_data_content(ax, df, clustering_results, well_id, for_composite, 
+                            add_copy_numbers, sample_name, config)
+        
+        # Set labels and title
+        _set_plot_labels_and_title(ax, well_id, sample_name, for_composite)
         
         # Save figure
         dpi = 200 if for_composite else 150
@@ -82,15 +75,83 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         error_msg = f"Error creating well plot for {well_id}: {str(e)}"
         logger.error(error_msg)
         logger.debug(f"Error details: {str(e)}", exc_info=True)
-        raise VisualizationError(error_msg) from e
+        return None
 
 
-def _setup_axes(fig, for_composite):
-    """Set up axes with appropriate positioning."""
+def _create_base_plot(config, for_composite):
+    """
+    Create the base figure and axes with consistent dimensions and setup.
+    
+    Args:
+        config: Configuration instance
+        for_composite (bool): Whether this is for composite image
+        
+    Returns:
+        tuple: (figure, axes) objects
+    """
+    # Get configuration settings
+    fig_size = config.get_plot_dimensions(for_composite)
+    
+    # Create figure with configured dimensions
+    fig = plt.figure(figsize=fig_size)
+    
+    # Set up axes with appropriate positioning
     if for_composite:
-        return fig.add_axes([0.1, 0.1, 0.85, 0.85])  # Ensure margins for axes
+        ax = fig.add_axes([0.1, 0.1, 0.85, 0.85])  # Margins for axes
     else:
-        return fig.add_axes([0.1, 0.1, 0.7, 0.8])  # Space for legend
+        ax = fig.add_axes([0.1, 0.1, 0.7, 0.8])  # Space for legend
+    
+    return fig, ax
+
+
+def _apply_axis_formatting(ax, config, border_color='#B0B0B0'):
+    """
+    Apply consistent axis formatting to ALL plots (unified base formatting).
+    
+    This ensures every plot has identical axis limits, grid, borders, and appearance
+    regardless of whether it contains data, errors, or is empty.
+    
+    Args:
+        ax: Matplotlib axes object
+        config: Configuration instance
+        border_color: Color for plot borders (default grey)
+    """
+    # Set axis limits from config
+    axis_limits = config.get_axis_limits()
+    ax.set_xlim(axis_limits['x'])
+    ax.set_ylim(axis_limits['y'])
+    
+    # Add grid with configured intervals
+    ax.grid(True, alpha=0.4, linewidth=0.8)
+    grid_intervals = config.get_grid_intervals()
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(grid_intervals['x']))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(grid_intervals['y']))
+    
+    # Set consistent aspect ratio
+    ax.set_aspect('auto')
+    
+    # Make sure spines are visible and prominent
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(1.0)
+        spine.set_color(border_color)
+
+
+def _is_error_result(clustering_results):
+    """Check if this is an error result."""
+    return clustering_results.get('error') is not None
+
+
+def _has_insufficient_data(df, clustering_results, config):
+    """Check if there's insufficient data for plotting."""
+    if df is None or df.empty:
+        return True
+    
+    if len(df) < config.MIN_POINTS_FOR_CLUSTERING:
+        return True
+        
+    # Check if clustering was successful
+    return not _validate_clustering_data(clustering_results)
 
 
 def _validate_clustering_data(clustering_results):
@@ -102,25 +163,47 @@ def _validate_clustering_data(clustering_results):
             clustering_results['target_mapping'] is not None)
 
 
-def _create_basic_plot(ax, df, well_id, for_composite, config):
-    """Create a basic plot with raw data when clustering failed."""
-    ax.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'], c='gray', s=4, alpha=0.5)
-    ax.set_xlabel("HEX Amplitude")
-    ax.set_ylabel("FAM Amplitude")
+def _add_error_overlay(ax, clustering_results, well_id, for_composite):
+    """
+    Add error message overlay on top of pre-formatted axes.
     
-    if not for_composite:
-        ax.set_title(f"Well {well_id}")
+    Args:
+        ax: Matplotlib axes object (already formatted)
+        clustering_results (dict): Clustering results containing error info
+        well_id (str): Well identifier
+        for_composite (bool): Whether this is for composite image
+    """
+    # Get error message and convert to user-friendly format
+    error_msg = clustering_results.get('error', 'Unknown Error')
+    display_msg = _get_error_message(error_msg)
     
-    _apply_axis_formatting(ax, config)
+    # Add error message overlay with appropriate styling
+    ax.text(0.5, 0.5, display_msg, 
+            horizontalalignment='center', verticalalignment='center',
+            transform=ax.transAxes, fontsize=20, color='red',
+            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
 
 
-def _create_clustered_plot(ax, clustering_results, label_color_map, well_id, 
-                          for_composite, add_copy_numbers, sample_name, config):
-    """Create a plot with clustered data and annotations."""
+def _add_data_content(ax, df, clustering_results, well_id, for_composite, 
+                     add_copy_numbers, sample_name, config):
+    """
+    Add scatter plot data content on top of pre-formatted axes.
+    
+    Args:
+        ax: Matplotlib axes object (already formatted)
+        df: DataFrame with droplet data
+        clustering_results (dict): Results from clustering analysis
+        well_id (str): Well identifier
+        for_composite (bool): Whether this is for composite image
+        add_copy_numbers (bool): Whether to add copy number annotations
+        sample_name (str): Sample name for display
+        config: Configuration instance
+    """
     # Extract data from clustering results
     df_filtered = clustering_results['df_filtered']
     counts = clustering_results['counts']
     copy_numbers = clustering_results['copy_numbers']
+    label_color_map = config.TARGET_COLORS
     
     logger.debug(f"Plotting {len(df_filtered)} filtered droplets for well {well_id}")
     
@@ -139,15 +222,30 @@ def _create_clustered_plot(ax, clustering_results, label_color_map, well_id,
                                    clustering_results.get('copy_number_states', {}), 
                                    label_color_map, for_composite)
     
+    # Add buffer zone overlay for well plots (bottom right corner)
+    if clustering_results.get('has_buffer_zone', False):
+        _add_well_buffer_zone_overlay(ax, for_composite)
+    
     # Add legend for standalone plots
     if not for_composite:
         _add_legend(ax, label_color_map, counts)
+
+
+def _add_well_buffer_zone_overlay(ax, for_composite):
+    """
+    Add buffer zone overlay for well plots (bottom right corner).
     
-    # Set labels and title
-    _set_plot_labels_and_title(ax, well_id, sample_name, for_composite)
-    
-    # Apply axis formatting
-    _apply_axis_formatting(ax, config)
+    Args:
+        ax: Matplotlib axes object
+        for_composite (bool): Whether this is for composite image
+    """
+    if not for_composite:
+        ax.text(0.98, 0.02, "Buffer Zone", 
+                horizontalalignment='right', verticalalignment='bottom',
+                transform=ax.transAxes, fontsize=20, color='black',
+                bbox=dict(boxstyle="round,pad=0.2", facecolor='lightgrey', alpha=0.8))
+        
+        logger.debug("Added buffer zone overlay to well plot")
 
 
 def _add_copy_number_annotations(ax, df_filtered, copy_numbers, copy_number_states, 
@@ -231,24 +329,70 @@ def _set_plot_labels_and_title(ax, well_id, sample_name, for_composite):
             ax.set_title(f"Well {well_id}")
 
 
-def _apply_axis_formatting(ax, config):
-    """Apply consistent axis formatting."""
-    # Set axis limits from config
-    axis_limits = config.get_axis_limits()
-    ax.set_xlim(axis_limits['x'])
-    ax.set_ylim(axis_limits['y'])
+def create_placeholder_plot(well_id, save_path, for_composite=False):
+    """
+    Create a placeholder plot for empty well positions (no CSV file).
     
-    # Add grid with configured intervals
-    ax.grid(True, alpha=0.4, linewidth=0.8)
-    grid_intervals = config.get_grid_intervals()
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(grid_intervals['x']))
-    ax.yaxis.set_major_locator(ticker.MultipleLocator(grid_intervals['y']))
+    Args:
+        well_id (str): Well identifier (e.g., 'A01')
+        save_path (str): Path to save the plot
+        for_composite (bool): If True, creates a version optimized for composite image
+        
+    Returns:
+        str: Path to the saved plot
+    """
+    config = Config.get_instance()
     
-    # Set consistent aspect ratio
-    ax.set_aspect('auto')
+    logger.debug(f"Creating placeholder plot for {well_id}, composite: {for_composite}")
     
-    # Make sure spines are visible and prominent
-    for spine in ax.spines.values():
-        spine.set_visible(True)
-        spine.set_linewidth(1.0)
-        spine.set_color('#000000')  # Black borders
+    try:
+        # Create the plot using unified logic
+        fig, ax = _create_base_plot(config, for_composite)
+        
+        # Apply consistent axis formatting with grey borders for placeholders
+        _apply_axis_formatting(ax, config, border_color='#B0B0B0')  # Same grey as populated plots
+        
+        # Set labels and title (minimal for placeholders)
+        _set_plot_labels_and_title(ax, well_id, None, for_composite)
+        
+        # Save figure
+        dpi = 200 if for_composite else 150
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
+        plt.close(fig)
+        
+        logger.debug(f"Placeholder plot saved to: {save_path}")
+        return save_path
+        
+    except Exception as e:
+        error_msg = f"Error creating placeholder plot for {well_id}: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Error details: {str(e)}", exc_info=True)
+        return None
+
+
+def _get_error_message(error_message):
+    """
+    Convert technical error messages to user-friendly messages.
+    
+    Args:
+        error_message (str): Original technical error message
+        
+    Returns:
+        str: Clean, user-friendly error message
+    """
+    error_lower = error_message.lower()
+    
+    # Categorize common errors
+    if "insufficient data points" in error_lower or "0" in error_message:
+        return "No Data\nEmpty or insufficient\ndroplets in file"
+    elif "missing required columns" in error_lower:
+        return "Invalid Format\nMissing amplitude\ncolumns"
+    elif "could not find header" in error_lower:
+        return "Invalid Format\nNo valid headers\nfound"
+    elif "could not extract well coordinate" in error_lower:
+        return "Invalid Filename\nCannot determine\nwell position"
+    elif "nan" in error_lower or "empty" in error_lower:
+        return "No Data\nFile contains no\nvalid measurements"
+    else:
+        # Generic error for unexpected issues
+        return "Processing Error\nUnable to analyze\nthis file"

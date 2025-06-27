@@ -17,13 +17,12 @@ analysis pipeline for digital droplet PCR data files.
 import os
 import shutil
 import pandas as pd
-import matplotlib.pyplot as plt
 import logging
 
 from ..utils import extract_well_coordinate
 from ..core import analyze_droplets
 from ..visualization import create_well_plot
-from ..config import FileProcessingError, WellProcessingError
+from ..config import Config, FileProcessingError, WellProcessingError
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,7 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         if header_row is None:
             error_msg = f"Could not find header row in {basename}"
             logger.error(error_msg)
-            return create_error_result(well_coord, basename, error_msg, graphs_dir)
+            return create_error_result(well_coord, basename, error_msg, graphs_dir, sample_names)
         
         # Load the CSV data
         df = pd.read_csv(file_path, skiprows=header_row)
@@ -82,17 +81,18 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         if missing_cols:
             error_msg = f"Missing required columns in {basename}: {missing_cols}"
             logger.error(error_msg)
-            return create_error_result(well_coord, basename, error_msg, graphs_dir)
+            return create_error_result(well_coord, basename, error_msg, graphs_dir, sample_names)
         
         # Filter rows with NaN values
         df_clean = df[required_cols].dropna()
         logger.debug(f"Filtered data: {len(df_clean)} droplets from {len(df)} total")
         
-        # Check if we have enough data points
-        if len(df_clean) < 10:
+        # Check if we have enough data points - be more specific about the threshold
+        min_points = Config.MIN_POINTS_FOR_CLUSTERING
+        if len(df_clean) < min_points:
             error_msg = f"Insufficient data points in {basename}: {len(df_clean)}"
-            logger.error(error_msg)
-            return create_error_result(well_coord, basename, error_msg, graphs_dir)
+            logger.debug(error_msg)
+            return create_error_result(well_coord, basename, error_msg, graphs_dir, sample_names)
         
         # Analyze the droplets
         clustering_results = analyze_droplets(df_clean)
@@ -108,7 +108,7 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
                         standard_plot_path, for_composite=False, 
                         sample_name=template_name)
         
-        # Return the results
+        # Return the analysis results with droplet metrics
         result = {
             'well': well_coord,
             'filename': basename,
@@ -119,8 +119,10 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
             'counts': clustering_results.get('counts', {}),
             'graph_path': standard_plot_path,
             'df_filtered': clustering_results.get('df_filtered'), 
-            'target_mapping': clustering_results.get('target_mapping'), 
-            'chrom3_reclustered': clustering_results.get('chrom3_reclustered', False)
+            'target_mapping': clustering_results.get('target_mapping'),
+            'total_droplets': clustering_results.get('total_droplets', len(df_clean)),
+            'usable_droplets': clustering_results.get('usable_droplets', 0),
+            'negative_droplets': clustering_results.get('negative_droplets', 0)
         }
         
         # Add sample name if available
@@ -128,6 +130,7 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
             result['sample_name'] = template_name
             
         logger.debug(f"Successfully processed {well_coord}: aneuploidy={result['has_aneuploidy']}, buffer_zone={result['has_buffer_zone']}")
+        logger.debug(f"Droplet metrics - Total: {result['total_droplets']}, Usable: {result['usable_droplets']}, Negative: {result['negative_droplets']}")
         return result
         
     except Exception as e:
@@ -136,7 +139,7 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         logger.debug(f"Error details: {str(e)}", exc_info=True)
         
         if verbose:
-            print(f"  Error processing {basename}: {str(e)}")
+            print(f"  Error processing {basename}: {_get_error_message(str(e), basename)}")
         
         # Try to extract well coordinate for error result
         try:
@@ -144,7 +147,7 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         except:
             well_coord = None
             
-        return create_error_result(well_coord, basename, str(e), graphs_dir)
+        return create_error_result(well_coord, basename, str(e), graphs_dir, sample_names)
 
 def find_header_row(file_path):
     """
@@ -176,39 +179,50 @@ def find_header_row(file_path):
         raise FileProcessingError(error_msg, filename=os.path.basename(file_path)) from e
     return None
 
-def create_error_result(well_coord, filename, error_message, graphs_dir):
+def create_error_result(well_coord, filename, error_message, graphs_dir, sample_names=None):
     """
-    Create an error result dictionary with a simple error plot.
+    Create an error result dictionary with unified plot creation.
     
-    Generates a standardized error result when file processing fails,
-    including an error visualization plot for consistency.
+    Uses the same plot creation logic as normal plots but passes error information
+    to create appropriate error visualization.
     
     Args:
         well_coord: Well coordinate (may be None if extraction failed)
         filename: Original filename that caused the error
         error_message: Description of the error that occurred
         graphs_dir: Directory to save the error plot
+        sample_names: Optional mapping for sample names
         
     Returns:
         Dictionary with error result structure
     """
     try:
-        # Create a simple error plot
-        fig = plt.figure(figsize=(6, 5))
-        plt.text(0.5, 0.5, f"Error: {error_message}", 
-                 horizontalalignment='center', verticalalignment='center',
-                 wrap=True, fontsize=10)
-        plt.axis('off')
-        plt.title(f"Processing Error: {well_coord or filename}", fontsize=12)
-        
-        # Save the plot
+        # Create plot path
         if well_coord:
             save_path = os.path.join(graphs_dir, f"{well_coord}.png")
         else:
             save_path = os.path.join(graphs_dir, f"{os.path.splitext(filename)[0]}_error.png")
         
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
+        # Create clustering results with error information
+        error_clustering_results = {
+            'error': error_message,
+            'has_aneuploidy': False,
+            'has_buffer_zone': False,
+            'copy_numbers': {},
+            'copy_number_states': {},
+            'counts': {},
+            'df_filtered': None,
+            'target_mapping': None
+        }
+        
+        # Get sample name if available
+        template_name = None
+        if sample_names and well_coord:
+            template_name = sample_names.get(well_coord)
+        
+        # Use the unified plot creation system
+        create_well_plot(None, error_clustering_results, well_coord or filename, 
+                        save_path, for_composite=False, sample_name=template_name)
         
         logger.debug(f"Created error plot: {save_path}")
         
@@ -216,7 +230,7 @@ def create_error_result(well_coord, filename, error_message, graphs_dir):
         logger.warning(f"Failed to create error plot: {str(e)}")
         save_path = None
     
-    # Return an error result dictionary
+    # Return standardized error result
     return {
         'well': well_coord,
         'filename': filename,
@@ -226,7 +240,10 @@ def create_error_result(well_coord, filename, error_message, graphs_dir):
         'copy_number_states': {},
         'counts': {},
         'graph_path': save_path,
-        'error': error_message
+        'error': _get_error_message(error_message, filename),
+        'total_droplets': 0,
+        'usable_droplets': 0,
+        'negative_droplets': 0
     }
 
 def process_directory(input_dir, output_dir=None, sample_names=None, verbose=False, test_mode=False):
@@ -290,10 +307,6 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
         return []
     
     logger.debug(f"Found {len(csv_files)} CSV files to process")
-    
-    # Log test mode status
-    if test_mode:
-        logger.info(f"Test mode: Files will be copied (not moved) to preserve input directory\n")
     
     # Process each CSV file with progress bar
     results = []
@@ -361,3 +374,31 @@ def _move_files_to_raw_data(input_dir, raw_data_dir, csv_files):
                 logger.warning(f"Failed to move {csv_file}: {str(e)}")
     
     logger.debug(f"Moved {moved_count} files to Raw Data directory")
+
+def _get_error_message(error_message, filename):
+    """
+    Convert technical error messages to user-friendly messages.
+    
+    Args:
+        error_message: Original technical error message
+        filename: Name of the file that caused the error
+        
+    Returns:
+        Clean, user-friendly error message
+    """
+    error_lower = error_message.lower()
+    
+    # Categorize common errors
+    if "insufficient data points" in error_lower or "0" in error_message:
+        return "No Data\nEmpty or insufficient\ndroplets in file"
+    elif "missing required columns" in error_lower:
+        return "Invalid Format\nMissing amplitude\ncolumns"
+    elif "could not find header" in error_lower:
+        return "Invalid Format\nNo valid headers\nfound"
+    elif "could not extract well coordinate" in error_lower:
+        return "Invalid Filename\nCannot determine\nwell position"
+    elif "nan" in error_lower or "empty" in error_lower:
+        return "No Data\nFile contains no\nvalid measurements"
+    else:
+        # Generic error for unexpected issues
+        return "Processing Error\nUnable to analyze\nthis file"
