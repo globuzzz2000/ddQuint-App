@@ -15,6 +15,7 @@ A comprehensive pipeline for analyzing digital droplet PCR (ddPCR) data with sup
 - **Comprehensive Reporting**: Excel reports in list format with color-coded highlighting
 - **Visualization**: Individual well plots and composite plate overview images
 - **Flexible Configuration**: JSON-based configuration system for all parameters
+- **Plate Template Generation**: Create QX Manager-compatible plate layout files from a simple sample list.
 
 ## Project Structure
 
@@ -40,6 +41,7 @@ ddQuint/
 │   │   ├── file_io.py             # File input/output utilities
 │   │   ├── gui.py                 # GUI file selection
 │   │   ├── template_parser.py     # Template CSV parsing
+│   │   ├── template_creator.py    # Plate template generation
 │   │   └── well_utils.py          # Well coordinate utilities
 │   └── visualization/             # Visualization modules
 │       ├── __init__.py

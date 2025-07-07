@@ -23,6 +23,10 @@ from .template_parser import (
     get_sample_names
 )
 
+from .template_creator import (
+    create_template_from_file
+)
+
 __all__ = [
     # File I/O utilities
     'ensure_directory',
@@ -47,5 +51,6 @@ __all__ = [
     'find_template_file',
     'find_header_row',
     'parse_template_file',
-    'get_sample_names'
+    'get_sample_names',
+    'create_template_from_file'
 ]

@@ -48,7 +48,7 @@ if sys.platform == 'darwin':
             os.dup2(old_fd, 2)
             os.close(old_fd)
 
-from .utils import select_directory, select_file, mark_selection_complete, get_sample_names
+from .utils import select_directory, select_file, mark_selection_complete, get_sample_names, create_template_from_file
 from .core import process_directory, create_list_report
 from .visualization import create_composite_image
 
@@ -138,8 +138,10 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  ddquint                           # Interactive mode with GUI
+  ddquint                           # Interactive analysis mode with GUI
   ddquint --dir /path/to/csv        # Process specific directory
+  ddquint --QXtemplate         # Interactively create a plate template
+  ddquint --QXtemplate list.xlsx # Create template from a specific file
   ddquint --config                  # Display configuration
   ddquint --config template         # Generate config template
   ddquint --test --dir /path        # Test mode (preserves input files)
@@ -180,8 +182,17 @@ Examples:
         action="store_true",
         help="Test mode: creates output in separate folder without moving input files"
     )
+    parser.add_argument(
+        "--QXtemplate",
+        nargs="?",
+        const="prompt",
+        default=None,
+        help="Create a plate template from a sample list (CSV/Excel). "
+             "Optionally provide a path or use 'prompt' for a GUI selector."
+    )
     
     return parser.parse_args()
+
 
 def handle_config_command(config_arg):
     """
@@ -364,13 +375,52 @@ def main():
     Raises:
         ddQuintError: For any application-specific errors
     """
+    args = None  # Define args here to be available in except blocks
     try:
-        # Parse command line arguments first to check for test mode
+        # Parse command line arguments first
         args = parse_arguments()
         
         # Setup logging
         log_file = setup_logging(debug=args.debug)
         
+        # =======================================================================
+        # ADDED: Handle Template Creator Flag
+        # =======================================================================
+        if args.QXtemplate:
+            logger.info("=== ddPCR Quintuplex - Template Creator ===")
+            input_file = args.QXtemplate
+            
+            if input_file == "prompt":
+                logger.info("\n>>> Please select the input file (CSV/Excel) containing sample names <<<\n")
+                with silence_stderr():
+                    input_file = select_file(
+                        title="Select Sample List File (CSV or Excel)",
+                        wildcard="Supported Files (*.csv;*.xlsx;*.xls)|*.csv;*.xlsx;*.xls|All files (*.*)|*.*",
+                        file_type="template" # CORRECTED: Was "input"
+                    )
+            
+            if not input_file or not os.path.isfile(input_file):
+                logger.info("No valid input file selected. Exiting.")
+                return
+
+            try:
+                create_template_from_file(input_file)
+                logger.info("\n=== Template creation complete ===")
+            except (FileProcessingError, ValueError) as e:
+                logger.error(f"Template creation failed: {e}")
+                sys.exit(1)
+            except Exception as e:
+                logger.error(f"An unexpected error occurred during template creation: {e}")
+                if args.verbose or args.debug:
+                    traceback.print_exc()
+                sys.exit(1)
+
+            # Exit after template creation is done
+            return
+        # =======================================================================
+        # End of Template Creator Handling
+        # =======================================================================
+
         # Print header with test mode indication
         if args.test:
             logger.info("=== ddPCR Quintuplex Analysis - Test Mode ===")
@@ -465,14 +515,15 @@ def main():
         logger.info("\nProcess interrupted by user.")
     except ddQuintError as e:
         logger.error(f"ddQuint error: {str(e)}")
-        if args and args.verbose:
+        if args and (args.verbose or args.debug):
             traceback.print_exc()
         sys.exit(1)
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        if args and args.verbose:
+        if args and (args.verbose or args.debug):
             traceback.print_exc()
         sys.exit(1)
+
 
 def _create_output_files(results, output_dir, sample_names, config):
     """Create all output files from processing results."""
