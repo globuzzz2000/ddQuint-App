@@ -69,7 +69,7 @@ def create_template_from_file(input_file_path):
     if total_rows % 8 == 0:
         try:
             send2trash(input_file_path)
-            logger.info(f"Moved processed input file to trash: {input_file_path}")
+            logger.debug(f"Moved processed input file to trash: {input_file_path}")
         except Exception as e:
             logger.warning(f"Could not move input file to trash: {e}")
     else:
