@@ -55,6 +55,12 @@ def create_template_from_file(input_file_path):
     output_lines = _create_template_header()
     _fill_plate_wells(output_lines, df)
 
+    # Check if samples are not a multiple of 8 and log before saving
+    if total_rows % 8 != 0:
+        logger.info(
+            f"Number of samples is not a multiple of 8. Some wells in the final column will be empty.\n"
+        )
+
     # Save the template file
     try:
         with open(output_file_path, 'w', newline='') as f:
@@ -64,19 +70,13 @@ def create_template_from_file(input_file_path):
     except IOError as e:
         raise FileProcessingError(f"Failed to write output template file: {e}", filename=output_file_path) from e
 
-    # Move the original input file to trash if processing was successful
-    # and the number of samples is a multiple of 8 (a full column)
-    if total_rows % 8 == 0:
-        try:
-            send2trash(input_file_path)
-            logger.debug(f"Moved processed input file to trash: {input_file_path}")
-        except Exception as e:
-            logger.warning(f"Could not move input file to trash: {e}")
-    else:
-        logger.warning(
-            f"Number of samples ({total_rows}) is not a multiple of 8. "
-            f"Input file was not moved to trash."
-        )
+    # Always move the original input file to trash if processing was successful
+    try:
+        send2trash(input_file_path)
+        logger.debug(f"Moved processed input file to trash: {input_file_path}")
+    except Exception as e:
+        logger.warning(f"Could not move input file to trash: {e}")
+
     return output_file_path
 
 def _read_input_file(file_path):
@@ -157,11 +157,10 @@ def _get_template_rows_for_well(well_id, sample_desc, additional_desc, control_t
         *additional_desc, control_type, "ddPCR Supermix for Probes (No dUTP)",
         "Probe Mix Triplex"
     ]
-    common_end = ["Unknown", "", "", "False", ""]
-
-    row1 = base_row + ["chr1", "Unknown", "None", "HEX"] + common_end
-    row2 = base_row + ["chr234", "Unknown", "FAM", "HEX"] + common_end
-    row3 = base_row + ["chr5", "Unknown", "FAM", "None"] + common_end
+    
+    row1 = base_row + ["chr1", "Unknown", "None", "HEX", "", "", "False", ""]
+    row2 = base_row + ["chr234", "Unknown", "FAM", "HEX", "", "", "False", ""]
+    row3 = base_row + ["chr5", "Unknown", "FAM", "None", "", "", "False", ""]
 
     return [row1, row2, row3]
 
