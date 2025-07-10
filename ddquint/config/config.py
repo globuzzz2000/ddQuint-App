@@ -77,12 +77,12 @@ class Config:
     # Define expected centroids for targets (maximum 10 chromosomes)
     # Format: { "target_name": [Ch1Amplitude, Ch2Amplitude] }
     EXPECTED_CENTROIDS = {
-        "Negative": [900, 700],
-        "Chrom1":   [900, 2300],
-        "Chrom2":   [1700, 2000],
-        "Chrom3":   [2400, 1750],
-        "Chrom4":   [2900, 1250],
-        "Chrom5":   [3400, 700]
+        "Negative": [1000, 800],
+        "Chrom1":   [1000, 2500],
+        "Chrom2":   [1900, 2300],
+        "Chrom3":   [2700, 1850],
+        "Chrom4":   [3300, 1400],
+        "Chrom5":   [3600, 900]
     }
     
     # Tolerance for matching clusters to targets
@@ -106,12 +106,7 @@ class Config:
         "Chrom2": 1.0066,
         "Chrom3": 1.0300,
         "Chrom4": 0.9890,
-        "Chrom5": 1.0056,
-        "Chrom6": 1.00,
-        "Chrom7": 1.00,
-        "Chrom8": 1.00,
-        "Chrom9": 1.00,
-        "Chrom10": 1.00
+        "Chrom5": 1.0056
     }
     
     # Buffer zone settings
