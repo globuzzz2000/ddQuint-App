@@ -3,7 +3,7 @@
 """
 ddQuint: Digital Droplet PCR Quintuplex Analysis
 
-Enhanced main entry point with comprehensive configuration support, 
+Main entry point with comprehensive configuration support, 
 template selection capabilities, and robust error handling.
 
 This module provides the primary command-line interface for the ddQuint
@@ -144,7 +144,6 @@ Examples:
   ddquint --QXtemplate list.xlsx # Create template from a specific file
   ddquint --config                  # Display configuration
   ddquint --config template         # Generate config template
-  ddquint --test --dir /path        # Test mode (preserves input files)
         """
     )
     parser.add_argument(
@@ -176,11 +175,6 @@ Examples:
         nargs="?",
         const="prompt",
         help="Template file path for well names, or 'prompt' to select via GUI"
-    )
-    parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Test mode: creates output in separate folder without moving input files"
     )
     parser.add_argument(
         "--QXtemplate",
@@ -332,39 +326,6 @@ def parse_manual_template(template_path):
         logger.info("Proceeding without template...")
         raise FileProcessingError(error_msg, filename=template_path) from e
 
-def create_test_output_directory(input_dir):
-    """
-    Create a test output directory based on the input directory name.
-    
-    Args:
-        input_dir: Input directory path
-        
-    Returns:
-        Path to the created test output directory
-        
-    Raises:
-        FileProcessingError: If directory creation fails
-    """
-    # Get the parent directory and input directory name
-    parent_dir = os.path.dirname(input_dir)
-    input_name = os.path.basename(input_dir)
-    
-    # Create test output directory name with timestamp
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    test_output_name = f"{input_name}_test_{timestamp}"
-    test_output_dir = os.path.join(parent_dir, test_output_name)
-    
-    # Create the directory
-    try:
-        os.makedirs(test_output_dir, exist_ok=True)
-        logger.debug(f"Test mode: Output will be saved to {test_output_dir}")
-        logger.debug(f"Test mode: Input files in {input_dir} will remain untouched")
-        return test_output_dir
-    except Exception as e:
-        error_msg = f"Failed to create test output directory: {test_output_dir}"
-        logger.error(error_msg)
-        raise FileProcessingError(error_msg) from e
-
 def main():
     """
     Main function to run the ddQuint application.
@@ -396,7 +357,7 @@ def main():
                     input_file = select_file(
                         title="Select Sample List File (CSV or Excel)",
                         wildcard="Supported Files (*.csv;*.xlsx;*.xls)|*.csv;*.xlsx;*.xls|All files (*.*)|*.*",
-                        file_type="template" # CORRECTED: Was "input"
+                        file_type="template"
                     )
             
             if not input_file or not os.path.isfile(input_file):
@@ -421,11 +382,8 @@ def main():
         # End of Template Creator Handling
         # =======================================================================
 
-        # Print header with test mode indication
-        if args.test:
-            logger.info("=== ddPCR Quintuplex Analysis - Test Mode ===")
-        else:
-            logger.info("=== ddPCR Quintuplex Analysis ===")
+        # Print header
+        logger.info("=== ddPCR Quintuplex Analysis ===")
         
         # Handle configuration commands
         if args.config:
@@ -471,12 +429,8 @@ def main():
         
         logger.debug(f"Found {len(sample_names)} sample names")
         
-        # Determine output directory based on test mode
-        if args.test:
-            output_dir = create_test_output_directory(input_dir)
-        else:
-            output_dir = args.output if args.output else input_dir
-            
+        # Determine output directory
+        output_dir = args.output if args.output else input_dir
         logger.debug(f"Output directory: {output_dir}")
         
         # Create output directory if it doesn't exist
@@ -487,22 +441,19 @@ def main():
             logger.error(error_msg)
             raise FileProcessingError(error_msg) from e
         
-        # Create directory name pattern for graphs and raw data
+        # Create directory name pattern for graphs
         config = Config.get_instance()
         graphs_dir = os.path.join(output_dir, config.GRAPHS_DIR_NAME)
-        raw_data_dir = os.path.join(output_dir, config.RAW_DATA_DIR_NAME)
         
         try:
             os.makedirs(graphs_dir, exist_ok=True)
-            os.makedirs(raw_data_dir, exist_ok=True)
         except Exception as e:
-            error_msg = f"Failed to create output subdirectories"
+            error_msg = f"Failed to create graphs directory"
             logger.error(error_msg)
             raise FileProcessingError(error_msg) from e
         
-        # Process the directory with sample names (test_mode parameter)
-        results = process_directory(input_dir, output_dir, sample_names, 
-                                  verbose=args.verbose, test_mode=args.test)
+        # Process the directory with sample names
+        results = process_directory(input_dir, output_dir, sample_names, verbose=args.verbose)
         
         # Create output files if we have results
         if results:
@@ -538,7 +489,7 @@ def _create_output_files(results, output_dir, sample_names, config):
     create_composite_image(results, composite_path)
     
     # Create list format report
-    list_path = os.path.join(output_dir, "List_Results.xlsx")
+    list_path = os.path.join(output_dir, "Analysis_Results.xlsx")
     create_list_report(results, list_path)
 
 def _log_summary_statistics(results, output_dir, template_path, sample_names, args):

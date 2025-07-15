@@ -95,10 +95,25 @@ class Config:
     #############################################################################
     #                           Copy Number Settings
     #############################################################################
+    # Maximum Likelihood Estimation Parameters
+    ML_MAX_ITERATIONS = 1000
+    ML_CONVERGENCE_TOLERANCE = 1e-9
+    ML_INITIAL_LAMBDA_MIN = 0.001  # Minimum initial concentration estimate
+    ML_LAMBDA_MAX_BOUND = 10.0     # Maximum allowed concentration
+    ML_NUMERICAL_EPSILON = 1e-8    # Small value to avoid numerical issues
+    
+    # Optimization method (can be 'L-BFGS-B', 'TNC', or 'SLSQP')
+    ML_OPTIMIZATION_METHOD = 'L-BFGS-B'
+    
+    # Whether to fall back to simple Poisson if ML fails
+    ML_FALLBACK_TO_SIMPLE = True
+    
+    # Log warnings for failed optimizations
+    ML_LOG_OPTIMIZATION_FAILURES = True
+
     # Copy number calculation parameters
-    COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD = 0.15  # 15% deviation threshold
+    COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD = 0.125  # 12.5% deviation threshold
     COPY_NUMBER_BASELINE_MIN_CHROMS = 3  # Minimum chromosomes for baseline calc
-    ANEUPLOIDY_DEVIATION_THRESHOLD = 0.15 
     
     # Expected copy number values for each chromosome (baseline for calculations)
     EXPECTED_COPY_NUMBERS = {

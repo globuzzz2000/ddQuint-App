@@ -12,7 +12,7 @@ import os
 import csv
 import logging
 
-from ..config import FileProcessingError, TemplateError
+from ..config import Config, FileProcessingError, TemplateError
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def find_template_file(input_dir):
     """
     Find the CSV template file based on the input directory name.
-    Searches in folders from the -2 parent directory.
+    Searches in folders from the configured parent directory levels.
     
     Args:
         input_dir (str): Input directory path
@@ -31,6 +31,8 @@ def find_template_file(input_dir):
     Raises:
         FileProcessingError: If input directory is invalid
     """
+    config = Config.get_instance()
+
     if not os.path.exists(input_dir):
         error_msg = f"Input directory does not exist: {input_dir}"
         logger.error(error_msg)
@@ -43,16 +45,18 @@ def find_template_file(input_dir):
     logger.debug(f"Looking for template file: {template_name}")
     logger.debug(f"Input directory: {input_dir}")
     
-    # Go up 2 parent directories
+    # Go up configured number of parent directories
     try:
-        parent_dir = os.path.dirname(os.path.dirname(input_dir))
-        logger.debug(f"Searching in parent directory: {parent_dir}")
+        current_dir = input_dir
+        for _ in range(config.TEMPLATE_SEARCH_PARENT_LEVELS):
+            current_dir = os.path.dirname(current_dir)
+        
+        parent_dir = current_dir
+        logger.debug(f"Searching in parent directory ({config.TEMPLATE_SEARCH_PARENT_LEVELS} levels up): {parent_dir}")
         
         # Search in all subdirectories
         for root, dirs, files in os.walk(parent_dir):
-            logger.debug(f"Searching in: {root}")
             for file in files:
-                logger.debug(f"Found file: {file}")
                 if file == template_name:
                     template_path = os.path.join(root, file)
                     logger.debug(f"Template file found: {template_path}")
@@ -168,7 +172,6 @@ def parse_template_file(template_path):
                 
                 # Skip empty wells
                 if not well_id:
-                    logger.debug(f"Row {row_num}: Empty well identifier")
                     continue
                 
                 # Combine Sample description columns with " - " separator
@@ -187,9 +190,8 @@ def parse_template_file(template_path):
                                        f"'{well_to_name[well_id]}' vs '{sample_name}'")
                     else:
                         well_to_name[well_id] = sample_name
-                        logger.debug(f"Row {row_num}: Well {well_id} -> sample '{sample_name}'")
                 else:
-                    logger.debug(f"Row {row_num}: Well {well_id} has no sample description")
+                    continue
         
         logger.debug(f"Finished parsing template. Found {len(well_to_name)} unique well-sample mappings")
         return well_to_name

@@ -3,12 +3,11 @@
 """
 File I/O utilities for ddQuint with comprehensive error handling and debug logging.
 
-Provides utilities for directory management, file operations, and CSV processing
+Provides utilities for directory management and CSV processing
 with automatic header detection and robust error handling.
 """
 
 import os
-import shutil
 import pandas as pd
 import logging
 
@@ -86,90 +85,6 @@ def list_csv_files(directory):
         logger.error(error_msg)
         logger.debug(f"Error details: {str(e)}", exc_info=True)
         raise FileProcessingError(error_msg) from e
-
-
-def move_files(files, destination):
-    """
-    Move files to a destination directory.
-    
-    Args:
-        files (list): List of file paths to move
-        destination (str): Destination directory path
-        
-    Returns:
-        list: List of successfully moved file paths
-        
-    Raises:
-        FileProcessingError: If destination cannot be created
-    """
-    logger.debug(f"Moving {len(files)} files to {destination}")
-    
-    moved_files = []
-    
-    # Ensure destination directory exists
-    ensure_directory(destination)
-    
-    for file_path in files:
-        try:
-            if os.path.exists(file_path):
-                file_name = os.path.basename(file_path)
-                dest_path = os.path.join(destination, file_name)
-                
-                logger.debug(f"Moving {file_name} to {dest_path}")
-                shutil.move(file_path, dest_path)
-                moved_files.append(dest_path)
-                logger.debug(f"Successfully moved {file_name}")
-            else:
-                logger.warning(f"File does not exist, skipping: {file_path}")
-                
-        except Exception as e:
-            logger.error(f"Error moving {os.path.basename(file_path)}: {str(e)}")
-            logger.debug(f"Error details: {str(e)}", exc_info=True)
-    
-    logger.debug(f"Successfully moved {len(moved_files)} out of {len(files)} files")
-    return moved_files
-
-
-def copy_files(files, destination):
-    """
-    Copy files to a destination directory.
-    
-    Args:
-        files (list): List of file paths to copy
-        destination (str): Destination directory path
-        
-    Returns:
-        list: List of successfully copied file paths
-        
-    Raises:
-        FileProcessingError: If destination cannot be created
-    """
-    logger.debug(f"Copying {len(files)} files to {destination}")
-    
-    copied_files = []
-    
-    # Ensure destination directory exists
-    ensure_directory(destination)
-    
-    for file_path in files:
-        try:
-            if os.path.exists(file_path):
-                file_name = os.path.basename(file_path)
-                dest_path = os.path.join(destination, file_name)
-                
-                logger.debug(f"Copying {file_name} to {dest_path}")
-                shutil.copy2(file_path, dest_path)
-                copied_files.append(dest_path)
-                logger.debug(f"Successfully copied {file_name}")
-            else:
-                logger.warning(f"File does not exist, skipping: {file_path}")
-                
-        except Exception as e:
-            logger.error(f"Error copying {os.path.basename(file_path)}: {str(e)}")
-            logger.debug(f"Error details: {str(e)}", exc_info=True)
-    
-    logger.debug(f"Successfully copied {len(copied_files)} out of {len(files)} files")
-    return copied_files
 
 
 def find_header_row(file_path, header_keywords=None):

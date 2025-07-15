@@ -8,14 +8,12 @@ Contains functionality for:
 2. Data validation and quality filtering
 3. Single file and batch directory processing
 4. Error handling and result organization
-5. File management with test mode support
 
 This module handles all file I/O operations and coordinates the
 analysis pipeline for digital droplet PCR data files.
 """
 
 import os
-import shutil
 import pandas as pd
 import logging
 
@@ -246,19 +244,18 @@ def create_error_result(well_coord, filename, error_message, graphs_dir, sample_
         'negative_droplets': 0
     }
 
-def process_directory(input_dir, output_dir=None, sample_names=None, verbose=False, test_mode=False):
+def process_directory(input_dir, output_dir=None, sample_names=None, verbose=False):
     """
     Process all CSV files in the input directory.
     
-    Performs batch processing of multiple CSV files, handles file organization,
-    and manages output directory structure with optional test mode.
+    Performs batch processing of multiple CSV files and handles output directory structure.
+    Original CSV files remain untouched in their original location.
     
     Args:
         input_dir: Directory containing CSV files to process
         output_dir: Directory to save output files (defaults to input_dir)
         sample_names: Optional mapping of well IDs to sample names
         verbose: Enable verbose output for debugging
-        test_mode: If True, copy files instead of moving them (for testing)
         
     Returns:
         List of result dictionaries from processed files
@@ -278,18 +275,15 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
     
     logger.debug(f"Processing directory: {input_dir}")
     logger.debug(f"Output directory: {output_dir}")
-    logger.debug(f"Test mode: {test_mode}")
     
     # Create output directories
     graphs_dir = os.path.join(output_dir, "Graphs")
-    raw_data_dir = os.path.join(output_dir, "Raw Data")
     
     try:
         os.makedirs(graphs_dir, exist_ok=True)
-        os.makedirs(raw_data_dir, exist_ok=True)
-        logger.debug(f"Created output directories: {graphs_dir}, {raw_data_dir}")
+        logger.debug(f"Created graphs directory: {graphs_dir}")
     except Exception as e:
-        error_msg = f"Failed to create output directories in {output_dir}: {str(e)}"
+        error_msg = f"Failed to create graphs directory in {output_dir}: {str(e)}"
         logger.error(error_msg)
         raise FileProcessingError(error_msg) from e
     
@@ -322,9 +316,6 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
             if result:
                 results.append(result)
                 processed_count += 1
-            
-            # Copy the processed file to Raw Data directory
-            _copy_file_to_raw_data(file_path, raw_data_dir, csv_file)
                 
         except Exception as e:
             error_msg = f"Error processing {csv_file}: {str(e)}"
@@ -337,43 +328,7 @@ def process_directory(input_dir, output_dir=None, sample_names=None, verbose=Fal
     if verbose:
         logger.info(f"Processed {processed_count} of {len(csv_files)} files successfully")
     
-    # Handle file movement based on test mode
-    if test_mode:
-        logger.debug(f"Test mode: Original files preserved in {input_dir}")
-    else:
-        # Move original files to Raw Data folder (normal behavior)
-        _move_files_to_raw_data(input_dir, raw_data_dir, csv_files)
-    
     return results
-
-def _copy_file_to_raw_data(file_path, raw_data_dir, csv_file):
-    """Copy a file to the Raw Data directory."""
-    try:
-        raw_data_path = os.path.join(raw_data_dir, csv_file)
-        shutil.copy2(file_path, raw_data_path)
-        logger.debug(f"Copied {csv_file} to Raw Data directory")
-    except Exception as e:
-        logger.warning(f"Failed to copy {csv_file} to Raw Data: {str(e)}")
-
-def _move_files_to_raw_data(input_dir, raw_data_dir, csv_files):
-    """Move original files to Raw Data directory in normal mode."""
-    moved_count = 0
-    for csv_file in csv_files:
-        file_path = os.path.join(input_dir, csv_file)
-        if os.path.exists(file_path):  # Make sure it still exists
-            try:
-                raw_data_path = os.path.join(raw_data_dir, csv_file)
-                # Remove the copied file first if it exists to avoid conflicts
-                if os.path.exists(raw_data_path):
-                    os.remove(raw_data_path)
-                # Move the original file
-                shutil.move(file_path, raw_data_path)
-                moved_count += 1
-                logger.debug(f"Moved {csv_file} to Raw Data directory")
-            except Exception as e:
-                logger.warning(f"Failed to move {csv_file}: {str(e)}")
-    
-    logger.debug(f"Moved {moved_count} files to Raw Data directory")
 
 def _get_error_message(error_message, filename):
     """

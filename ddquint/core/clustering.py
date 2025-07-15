@@ -115,9 +115,9 @@ def analyze_droplets(df):
     usable_droplets = sum(count for label, count in label_counts.items() 
                          if label != 'Negative' and label != 'Unknown')
     
-    # Calculate relative copy numbers
-    copy_numbers = calculate_copy_numbers(label_counts)
-    logger.debug(f"Copy numbers: {copy_numbers}")
+    # Calculate relative copy numbers with total droplets for ML estimation
+    copy_numbers = calculate_copy_numbers(label_counts, total_droplets)
+    logger.debug(f"ML-corrected copy numbers: {copy_numbers}")
     
     # Classify copy number states and detect aneuploidies/buffer zones
     copy_number_states, has_aneuploidy, has_buffer_zone = _classify_copy_number_states(copy_numbers, config)
