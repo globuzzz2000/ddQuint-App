@@ -41,11 +41,33 @@ def create_list_report(results, output_path):
         logger.error(error_msg)
         raise ValueError(error_msg)
     
+    # Filter results by minimum usable droplets
+    filtered_results = []
+    excluded_count = 0
+    
+    for result in results:
+        usable_droplets = result.get('usable_droplets', 0)
+        if usable_droplets >= config.MIN_USABLE_DROPLETS:
+            filtered_results.append(result)
+        else:
+            excluded_count += 1
+            well_id = result.get('well', 'Unknown')
+            logger.debug(f"Excluding well {well_id} from report: {usable_droplets} usable droplets < {config.MIN_USABLE_DROPLETS} minimum")
+    
+    if excluded_count > 0:
+        logger.debug(f"Excluded {excluded_count} wells from analysis report due to insufficient usable droplets (< {config.MIN_USABLE_DROPLETS})")
+    
+    if not filtered_results:
+        error_msg = f"No wells meet minimum usable droplets requirement ({config.MIN_USABLE_DROPLETS})"
+        logger.warning(error_msg)
+        # Still create an empty report rather than failing
+        filtered_results = []
+    
     # Get the number of chromosomes from config
     chromosome_keys = config.get_chromosome_keys()
     num_chromosomes = len(chromosome_keys)
     
-    logger.debug(f"Creating list report for {len(results)} results with {num_chromosomes} chromosomes")
+    logger.debug(f"Creating list report for {len(filtered_results)} results with {num_chromosomes} chromosomes")
     logger.debug(f"Output path: {output_path}")
     
     try:
@@ -56,7 +78,7 @@ def create_list_report(results, output_path):
         logger.debug("Created new workbook")
         
         # Sort results by well ID in column-first order
-        sorted_results = sorted(results, key=lambda x: parse_well_id_column_first(x.get('well', '')))
+        sorted_results = sorted(filtered_results, key=lambda x: parse_well_id_column_first(x.get('well', '')))
         
         # Set up headers with proper structure
         setup_headers(ws, chromosome_keys)
@@ -77,7 +99,6 @@ def create_list_report(results, output_path):
         logger.error(error_msg)
         logger.debug(f"Error details: {str(e)}", exc_info=True)
         raise ReportGenerationError(error_msg) from e
-
 
 def parse_well_id_column_first(well_id):
     """
@@ -160,7 +181,7 @@ def setup_headers(ws, chromosome_keys):
     # Absolute Copy Number section
     abs_start = droplet_end + 1
     abs_end = abs_start + num_chromosomes - 1
-    ws.cell(row=1, column=abs_start, value="Absolute Copy Number")
+    ws.cell(row=1, column=abs_start, value="Positive Droplet Count")
     for i in range(abs_start, abs_end + 1):
         ws.cell(row=1, column=i + 1, value="")
 
@@ -206,7 +227,6 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
     droplet_end = droplet_start + 2  # 3 columns for droplets
     
     abs_start = droplet_end + 1
-    abs_end = abs_start + num_chromosomes - 1
 
     for row_idx, result in enumerate(sorted_results, start=3):
         well_id = result.get('well', '')

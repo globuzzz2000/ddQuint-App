@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Copy number calculation module for ddQuint with iterative maximum likelihood estimation.
+Copy number calculation module for ddQuint with analytical estimation.
 
 Contains functionality for:
-1. Iterative ML estimation for true target concentrations
+1. Analytical estimation for true target concentrations
 2. Poisson-corrected copy number calculations accounting for mixed droplets
 3. Aneuploidy detection based on corrected concentrations
 4. Statistical analysis across multiple samples
 
 This module provides robust copy number analysis capabilities for
 digital droplet PCR data with proper handling of mixed-positive droplets.
+Uses analytical solution optimized for exclusive target count data.
 """
 
 import numpy as np
 import logging
-from scipy.optimize import minimize
 from ..config import Config, CopyNumberError
 
 logger = logging.getLogger(__name__)
 
 def calculate_copy_numbers(target_counts, total_droplets):
     """
-    Calculate relative copy numbers using iterative maximum likelihood estimation.
+    Calculate relative copy numbers using analytical estimation.
     
-    Uses ML estimation to account for mixed-positive droplets and obtain
+    Uses direct analytical solution to account for mixed-positive droplets and obtain
     true target concentrations, then normalizes relative to diploid baseline.
     
     Args:
@@ -38,12 +38,17 @@ def calculate_copy_numbers(target_counts, total_droplets):
         CopyNumberError: If estimation fails or data is invalid
         
     Example:
-        >>> counts = {'Chrom1': 800, 'Chrom2': 950, 'Chrom3': 1100, 'Negative': 2000}
-        >>> copy_numbers = calculate_copy_numbers(counts, 5000)
+        >>> counts = {'Chrom1': 1159, 'Chrom2': 1250, 'Chrom3': 1166, 'Negative': 3325}
+        >>> copy_numbers = calculate_copy_numbers(counts, 17431)
         >>> copy_numbers['Chrom1']
         0.952
     """
     config = Config.get_instance()
+    
+    # Check minimum usable droplets threshold
+    if total_droplets < config.MIN_USABLE_DROPLETS:
+        logger.debug(f"Insufficient droplets for analysis: {total_droplets} < {config.MIN_USABLE_DROPLETS}")
+        return {}
     
     # Extract chromosome keys and validate data
     chromosome_keys = config.get_chromosome_keys()
@@ -60,14 +65,14 @@ def calculate_copy_numbers(target_counts, total_droplets):
     logger.debug(f"Total droplets: {total_droplets}, Negative: {negative_count}")
     logger.debug(f"Chromosome counts: {chromosome_counts}")
     
-    # Estimate true concentrations using ML
+    # Estimate true concentrations using analytical solution
     try:
-        true_concentrations = _estimate_concentrations_ml(
+        true_concentrations = _estimate_concentrations_analytical(
             chromosome_counts, negative_count, total_droplets, chromosome_keys
         )
         logger.debug(f"Estimated concentrations: {true_concentrations}")
     except Exception as e:
-        error_msg = f"Maximum likelihood estimation failed: {str(e)}"
+        error_msg = f"Analytical estimation failed: {str(e)}"
         logger.error(error_msg)
         raise CopyNumberError(error_msg) from e
     
@@ -88,105 +93,111 @@ def calculate_copy_numbers(target_counts, total_droplets):
     
     return copy_numbers
 
-def _estimate_concentrations_ml(chromosome_counts, negative_count, total_droplets, chromosome_keys):
+def _estimate_concentrations_analytical(chromosome_counts, negative_count, total_droplets, chromosome_keys):
     """
-    Estimate true target concentrations using maximum likelihood.
+    Estimate true target concentrations using analytical solution.
+    
+    For independent Poisson processes where we observe exclusive counts:
+    - Empty bins (negative droplets): 0 of all targets
+    - Only target A bins: ≥1 of A, 0 of all others
+    - Only target B bins: ≥1 of B, 0 of all others
+    - etc.
+    
+    Uses the mathematical relationship:
+    P(only target i) = (1 - e^(-λᵢ)) × ∏(j≠i) e^(-λⱼ)
+    P(empty) = ∏ᵢ e^(-λᵢ)
+    
+    Therefore: P(only i) / P(empty) = (e^(λᵢ) - 1)
+    So: λᵢ = ln(1 + P(only i) / P(empty))
     
     Args:
-        chromosome_counts: Dictionary of chromosome counts
+        chromosome_counts: Dictionary of chromosome counts (exclusive)
         negative_count: Number of negative droplets
         total_droplets: Total number of droplets
         chromosome_keys: List of chromosome identifiers
         
     Returns:
         Dictionary of estimated concentrations for each chromosome
+        
+    Raises:
+        CopyNumberError: If data is inconsistent or invalid
     """
-    n_targets = len(chromosome_keys)
+    logger.debug("Starting analytical concentration estimation")
     
+    n_targets = len(chromosome_keys)
     if n_targets == 0:
         return {}
     
-    # Initial estimates using simple Poisson (ignoring mixed droplets)
-    initial_estimates = []
+    # Calculate probabilities
+    p_empty = negative_count / total_droplets
+    
+    if p_empty <= 0:
+        raise CopyNumberError("No negative droplets found - cannot estimate concentrations")
+    if p_empty >= 1:
+        raise CopyNumberError("All droplets are negative - no targets detected")
+    
+    logger.debug(f"P(empty) = {negative_count}/{total_droplets} = {p_empty:.6f}")
+    
+    # Calculate λ values using analytical formula
+    concentrations = {}
+    
     for chrom in chromosome_keys:
         count = chromosome_counts[chrom]
-        if count > 0:
-            # Simple estimate: assume no interference
-            fraction_positive = min(count / total_droplets, 0.999)
-            lambda_init = -np.log(1 - fraction_positive)
-        else:
-            lambda_init = 0.001  # Small positive value to avoid numerical issues
-        initial_estimates.append(lambda_init)
-    
-    logger.debug(f"Initial estimates: {dict(zip(chromosome_keys, initial_estimates))}")
-    
-    # Define likelihood function
-    def negative_log_likelihood(lambdas):
-        """Calculate negative log-likelihood for given concentrations."""
-        try:
-            # Ensure positive concentrations
-            lambdas = np.maximum(lambdas, 1e-8)
-            
-            # Calculate expected droplet counts
-            prob_negative = np.exp(-np.sum(lambdas))
-            expected_negative = total_droplets * prob_negative
-            
-            expected_positive = {}
-            for i, chrom in enumerate(chromosome_keys):
-                # Probability of being positive for this target
-                prob_positive_this = 1 - np.exp(-lambdas[i])
-                expected_positive[chrom] = total_droplets * prob_positive_this
-            
-            # Calculate log-likelihood using Poisson distribution
-            log_likelihood = 0.0
-            
-            # Negative droplets
-            if negative_count > 0 and expected_negative > 0:
-                log_likelihood += negative_count * np.log(expected_negative) - expected_negative
-            
-            # Positive droplets for each target
-            for chrom in chromosome_keys:
-                observed = chromosome_counts[chrom]
-                expected = expected_positive[chrom]
-                if observed > 0 and expected > 0:
-                    log_likelihood += observed * np.log(expected) - expected
-            
-            return -log_likelihood  # Return negative for minimization
-            
-        except (ValueError, RuntimeWarning) as e:
-            logger.debug(f"Numerical issue in likelihood calculation: {e}")
-            return 1e10  # Large penalty for invalid parameters
-    
-    # Optimization bounds (concentrations must be positive)
-    bounds = [(1e-8, 10.0) for _ in range(n_targets)]
-    
-    # Run optimization
-    try:
-        result = minimize(
-            negative_log_likelihood,
-            initial_estimates,
-            method='L-BFGS-B',
-            bounds=bounds,
-            options={'maxiter': 1000, 'ftol': 1e-9}
-        )
+        p_only_chrom = count / total_droplets
         
-        if not result.success:
-            logger.warning(f"Optimization did not converge: {result.message}")
-            # Fall back to initial estimates if optimization fails
-            estimated_lambdas = initial_estimates
+        logger.debug(f"P(only {chrom}) = {count}/{total_droplets} = {p_only_chrom:.6f}")
+        
+        if count == 0:
+            # No droplets for this target
+            concentrations[chrom] = 0.0
+            logger.debug(f"{chrom}: No droplets detected, λ = 0.0")
         else:
-            estimated_lambdas = result.x
+            # Calculate λᵢ = ln(1 + P(only i) / P(empty))
+            ratio = p_only_chrom / p_empty
+            lambda_i = np.log(1 + ratio)
+            concentrations[chrom] = lambda_i
             
-    except Exception as e:
-        logger.warning(f"Optimization failed: {e}, using initial estimates")
-        estimated_lambdas = initial_estimates
+            logger.debug(f"{chrom}: P(only)/P(empty) = {ratio:.6f}, λ = {lambda_i:.6f}")
     
-    # Create concentration dictionary
-    concentrations = {}
-    for i, chrom in enumerate(chromosome_keys):
-        concentrations[chrom] = max(estimated_lambdas[i], 0.0)
+    # Validation: Check consistency with empty droplets
+    _validate_concentration_estimates(concentrations, p_empty, chromosome_keys)
     
     return concentrations
+
+def _validate_concentration_estimates(concentrations, p_empty_observed, chromosome_keys):
+    """
+    Validate that estimated concentrations are consistent with observed data.
+    
+    Checks that the sum of individual λ values is approximately equal to
+    the total λ derived from empty droplets: -ln(P(empty)) = Σλᵢ
+    
+    Args:
+        concentrations: Dictionary of estimated λ values
+        p_empty_observed: Observed probability of empty droplets
+        chromosome_keys: List of chromosome identifiers
+        
+    Raises:
+        CopyNumberError: If estimates are very inconsistent
+    """
+    lambda_total_from_individual = sum(concentrations.values())
+    lambda_total_from_empty = -np.log(p_empty_observed)
+    
+    relative_error = abs(lambda_total_from_individual - lambda_total_from_empty) / lambda_total_from_empty
+    
+    logger.debug(f"Validation check:")
+    logger.debug(f"  Sum of individual λ values: {lambda_total_from_individual:.6f}")
+    logger.debug(f"  λ_total from empty droplets: {lambda_total_from_empty:.6f}")
+    logger.debug(f"  Relative error: {relative_error:.3%}")
+    
+    # Allow up to 5% relative error (should be much smaller for good data)
+    if relative_error > 0.05:
+        logger.warning(f"Large inconsistency in concentration estimates: {relative_error:.3%} error")
+        logger.warning("This may indicate non-Poisson effects or data quality issues")
+    
+    # For very large errors, raise an exception
+    if relative_error > 0.20:
+        raise CopyNumberError(f"Concentration estimates are inconsistent: {relative_error:.1%} error. "
+                            "Data may not follow Poisson distribution assumptions.")
 
 def _calculate_baseline(concentrations, config):
     """
@@ -230,7 +241,7 @@ def _calculate_baseline(concentrations, config):
 
 def detect_aneuploidies(copy_numbers):
     """
-    Detect aneuploidies based on ML-corrected copy numbers.
+    Detect aneuploidies based on analytically-corrected copy numbers.
     
     Identifies chromosomes with copy numbers that deviate significantly
     from the expected value of 1.0, using the corrected concentrations
@@ -281,7 +292,7 @@ def detect_aneuploidies(copy_numbers):
 
 def calculate_statistics(results):
     """
-    Calculate statistics across multiple samples using ML-corrected copy numbers.
+    Calculate statistics across multiple samples using analytically-corrected copy numbers.
     
     Computes mean, median, standard deviation, and range statistics
     for copy numbers across all processed samples, using the corrected
@@ -319,7 +330,7 @@ def calculate_statistics(results):
     buffer_zone_count = 0
     total_samples = len(results)
     
-    logger.debug(f"Calculating statistics for {total_samples} samples using ML-corrected values")
+    logger.debug(f"Calculating statistics for {total_samples} samples using analytically-corrected values")
     
     for result in results:
         if result.get('has_aneuploidy', False):

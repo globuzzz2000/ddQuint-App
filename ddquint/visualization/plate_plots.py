@@ -138,18 +138,14 @@ def _create_temp_well_plot(result, output_path, config, temp_files):
         # Create temp file in the Graphs directory
         temp_path = os.path.join(graphs_dir, f"{result['well']}_temp.png")
         
-        # Load data for normal results
-        df_clean = None
-        if not result.get('error'):
-            df_file = _get_data_file_path(result, config)
-            if df_file and os.path.exists(df_file):
-                df_clean = _load_and_clean_data(df_file)
+        # Use the already processed data from results - no need to reload CSV!
+        df_filtered = result.get('df_filtered')
         
         # Use existing clustering results
         clustering_results = _extract_clustering_results(result)
         
         # Create the plot using unified system (handles all types consistently)
-        create_well_plot(df_clean, clustering_results, result['well'], 
+        create_well_plot(df_filtered, clustering_results, result['well'], 
                          temp_path, for_composite=True, add_copy_numbers=True)
         
         # Track the temporary file
@@ -161,48 +157,7 @@ def _create_temp_well_plot(result, output_path, config, temp_files):
         return None
 
 
-def _get_data_file_path(result, config):
-    """Get the path to the raw data file for a result."""
-    try:
-        return os.path.join(os.path.dirname(result['graph_path']), "..", 
-                           config.RAW_DATA_DIR_NAME, result['filename'])
-    except (KeyError, TypeError):
-        logger.debug(f"Could not construct data file path for result: {result.get('well', 'unknown')}")
-        return None
 
-
-def _load_and_clean_data(df_file):
-    """Load and clean CSV data file."""
-    try:
-        # Find the header row
-        header_row = None
-        with open(df_file, 'r', encoding='utf-8', errors='ignore') as f:
-            for i, line in enumerate(f):
-                if ('Ch1Amplitude' in line or 'Ch1 Amplitude' in line) and \
-                   ('Ch2Amplitude' in line or 'Ch2 Amplitude' in line):
-                    header_row = i
-                    break
-        
-        if header_row is None:
-            logger.debug(f"Could not find header row in {os.path.basename(df_file)}")
-            return None
-            
-        # Load the CSV data
-        df = pd.read_csv(df_file, skiprows=header_row)
-        
-        # Check for required columns
-        required_cols = ['Ch1Amplitude', 'Ch2Amplitude']
-        if not all(col in df.columns for col in required_cols):
-            logger.debug(f"Required columns not found in {os.path.basename(df_file)}")
-            return None
-        
-        # Filter rows with NaN values and create explicit copy
-        df_clean = df[required_cols].dropna().copy()
-        return df_clean
-        
-    except Exception as e:
-        logger.debug(f"Error loading data file {os.path.basename(df_file)}: {e}")
-        return None
 
 
 def _extract_clustering_results(result):

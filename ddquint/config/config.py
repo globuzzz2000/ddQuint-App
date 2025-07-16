@@ -45,32 +45,7 @@ class Config:
     
     # Singleton instance
     _instance = None
-    
-    #############################################################################
-    #                           Pipeline Mode Options
-    #############################################################################
-    DEBUG_MODE = False                   # Debug logging mode (enable with --debug flag)
-    
-    #############################################################################
-    #                           Performance Settings
-    #############################################################################
-    NUM_PROCESSES = max(1, int(cpu_count() * 0.75))  # Use 75% of cores
-    BATCH_SIZE = 100
-    SHOW_PROGRESS = True
-    
-    #############################################################################
-    #                           Clustering Settings
-    #############################################################################
-    # HDBSCAN clustering parameters (from working version)
-    HDBSCAN_MIN_CLUSTER_SIZE = 4
-    HDBSCAN_MIN_SAMPLES = 70
-    HDBSCAN_EPSILON = 0.06
-    HDBSCAN_METRIC = 'euclidean'
-    HDBSCAN_CLUSTER_SELECTION_METHOD = 'eom'
-    
-    # Minimum data points required for clustering
-    MIN_POINTS_FOR_CLUSTERING = 50
-    
+
     #############################################################################
     #                           Expected Centroids
     #############################################################################
@@ -92,27 +67,27 @@ class Config:
     SCALE_FACTOR_MIN = 0.5
     SCALE_FACTOR_MAX = 1.0
     
+
+    #############################################################################
+    #                           Clustering Settings
+    #############################################################################
+    # HDBSCAN clustering parameters (from working version)
+    HDBSCAN_MIN_CLUSTER_SIZE = 4
+    HDBSCAN_MIN_SAMPLES = 70
+    HDBSCAN_EPSILON = 0.06
+    HDBSCAN_METRIC = 'euclidean'
+    HDBSCAN_CLUSTER_SELECTION_METHOD = 'eom'
+    
+    # Minimum data points required for clustering
+    MIN_POINTS_FOR_CLUSTERING = 50
+    
+
     #############################################################################
     #                           Copy Number Settings
     #############################################################################
-    # Maximum Likelihood Estimation Parameters
-    ML_MAX_ITERATIONS = 1000
-    ML_CONVERGENCE_TOLERANCE = 1e-9
-    ML_INITIAL_LAMBDA_MIN = 0.001  # Minimum initial concentration estimate
-    ML_LAMBDA_MAX_BOUND = 10.0     # Maximum allowed concentration
-    ML_NUMERICAL_EPSILON = 1e-8    # Small value to avoid numerical issues
-    
-    # Optimization method (can be 'L-BFGS-B', 'TNC', or 'SLSQP')
-    ML_OPTIMIZATION_METHOD = 'L-BFGS-B'
-    
-    # Whether to fall back to simple Poisson if ML fails
-    ML_FALLBACK_TO_SIMPLE = True
-    
-    # Log warnings for failed optimizations
-    ML_LOG_OPTIMIZATION_FAILURES = True
-
     # Copy number calculation parameters
-    COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD = 0.125  # 12.5% deviation threshold
+    MIN_USABLE_DROPLETS = 3000
+    COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD = 0.15  # 15% deviation threshold
     COPY_NUMBER_BASELINE_MIN_CHROMS = 3  # Minimum chromosomes for baseline calc
     
     # Expected copy number values for each chromosome (baseline for calculations)
@@ -128,12 +103,12 @@ class Config:
     EUPLOID_TOLERANCE = 0.08  # ±0.08 from expected value for euploid range
     ANEUPLOIDY_TOLERANCE = 0.08  # ±0.08 from aneuploidy targets for aneuploidy range
     
-    # Aneuploidy target copy numbers (relative to expected)
+    # Aneuploidy target copy numbers
     ANEUPLOIDY_TARGETS = {
         "low": 0.75,   # Deletion target (0.75 - 1 + expected)
         "high": 1.25   # Duplication target (1.25 - 1 + expected)
     }
-    
+
     #############################################################################
     #                           Visualization Settings
     #############################################################################
@@ -179,20 +154,15 @@ class Config:
     #############################################################################
     # Default output directories
     GRAPHS_DIR_NAME = "Graphs"
-    RAW_DATA_DIR_NAME = "Raw Data"
-    
-    # File name patterns
-    CSV_EXTENSION = '.csv'
-    
-    # Excel report settings
     COMPOSITE_IMAGE_FILENAME = "Graph_Overview.png"
+    CSV_EXTENSION = '.csv'        # File name patterns
     
     #############################################################################
     #                           Template Parsing
     #############################################################################
     # Template search parameters
     TEMPLATE_SEARCH_PARENT_LEVELS = 2  # How many parent directories to search up
-    TEMPLATE_PATTERN = "{dir_name}.xlsx"  # Template file naming pattern
+    TEMPLATE_PATTERN = "{dir_name}.csv"  # Template file naming pattern
     
     #############################################################################
     #                           Well Management

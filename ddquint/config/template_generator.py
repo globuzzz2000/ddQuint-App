@@ -98,6 +98,14 @@ def generate_config_template(config_cls, filename=None, output_dir=None):
             print(f"\nTo use this template:")
             print(f"1. Edit the file with your preferred settings")
             print(f"2. Run: {Fore.CYAN}ddquint --config {filepath}{Style.RESET_ALL}")
+            
+            print(f"\n{Fore.WHITE}Key Settings to Consider:{Style.RESET_ALL}")
+            print(f"• {Fore.CYAN}EXPECTED_CENTROIDS{Style.RESET_ALL}: Update for your assay's target positions")
+            print(f"• {Fore.CYAN}EXPECTED_COPY_NUMBERS{Style.RESET_ALL}: Adjust baseline values for your chromosomes")
+            print(f"• {Fore.CYAN}HDBSCAN_*{Style.RESET_ALL}: Tune clustering parameters for your data density")
+            print(f"• {Fore.CYAN}EUPLOID_TOLERANCE{Style.RESET_ALL}: Set acceptable range for normal copy numbers")
+            print(f"• {Fore.CYAN}ML_*{Style.RESET_ALL}: Configure maximum likelihood estimation behavior")
+            
             print(f"\n{Fore.WHITE}{'='*80}{Style.RESET_ALL}\n")
             
             logger.debug("Template generation completed successfully")
@@ -184,9 +192,9 @@ def _create_template_dictionary(config_cls):
             "SCALE_FACTOR_MAX": _safe_get_attr(config_cls, "SCALE_FACTOR_MAX", 1.0),
             
             # Copy Number Settings
+            "MIN_USABLE_DROPLETS": _safe_get_attr(config_cls, "MIN_USABLE_DROPLETS", 3000),
             "COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD": _safe_get_attr(config_cls, "COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD", 0.15),
             "COPY_NUMBER_BASELINE_MIN_CHROMS": _safe_get_attr(config_cls, "COPY_NUMBER_BASELINE_MIN_CHROMS", 3),
-            "ANEUPLOIDY_DEVIATION_THRESHOLD": _safe_get_attr(config_cls, "ANEUPLOIDY_DEVIATION_THRESHOLD", 0.15),
             
             # Expected Copy Numbers - use actual config values
             "EXPECTED_COPY_NUMBERS": _safe_get_attr(config_cls, "EXPECTED_COPY_NUMBERS", {
@@ -204,6 +212,16 @@ def _create_template_dictionary(config_cls):
                 "low": 0.75,
                 "high": 1.25
             }),
+            
+            # Maximum Likelihood Estimation Parameters
+            "ML_MAX_ITERATIONS": _safe_get_attr(config_cls, "ML_MAX_ITERATIONS", 1000),
+            "ML_CONVERGENCE_TOLERANCE": _safe_get_attr(config_cls, "ML_CONVERGENCE_TOLERANCE", 1e-9),
+            "ML_INITIAL_LAMBDA_MIN": _safe_get_attr(config_cls, "ML_INITIAL_LAMBDA_MIN", 0.001),
+            "ML_LAMBDA_MAX_BOUND": _safe_get_attr(config_cls, "ML_LAMBDA_MAX_BOUND", 10.0),
+            "ML_NUMERICAL_EPSILON": _safe_get_attr(config_cls, "ML_NUMERICAL_EPSILON", 1e-8),
+            "ML_OPTIMIZATION_METHOD": _safe_get_attr(config_cls, "ML_OPTIMIZATION_METHOD", "L-BFGS-B"),
+            "ML_FALLBACK_TO_SIMPLE": _safe_get_attr(config_cls, "ML_FALLBACK_TO_SIMPLE", True),
+            "ML_LOG_OPTIMIZATION_FAILURES": _safe_get_attr(config_cls, "ML_LOG_OPTIMIZATION_FAILURES", True),
             
             # Visualization Settings - use actual config values
             "COMPOSITE_FIGURE_SIZE": _safe_get_attr(config_cls, "COMPOSITE_FIGURE_SIZE", [16, 11]),
@@ -246,7 +264,7 @@ def _create_template_dictionary(config_cls):
             
             # Template Parsing
             "TEMPLATE_SEARCH_PARENT_LEVELS": _safe_get_attr(config_cls, "TEMPLATE_SEARCH_PARENT_LEVELS", 2),
-            "TEMPLATE_PATTERN": _safe_get_attr(config_cls, "TEMPLATE_PATTERN", "{dir_name}.xlsx"),
+            "TEMPLATE_PATTERN": _safe_get_attr(config_cls, "TEMPLATE_PATTERN", "{dir_name}.csv"),
             
             # Well Management
             "PLATE_ROWS": _safe_get_attr(config_cls, "PLATE_ROWS", ["A","B","C","D","E","F","G","H"]),

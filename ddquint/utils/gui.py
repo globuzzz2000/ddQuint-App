@@ -228,6 +228,44 @@ def select_directory():
         return None
 
 
+def select_multiple_directories():
+    """
+    Show multiple directory selection dialog with memory of the last input directory.
+    
+    Returns:
+        list: List of selected directory paths, or empty list if cancelled
+    """
+    logger.debug("Starting multiple directory selection")
+    
+    # Load saved user settings
+    settings = get_user_settings()
+    last_input_dir = settings.get('last_input_directory')
+    logger.debug(f"Last used input directory: {last_input_dir}")
+    
+    # Determine default path
+    default_path = _get_default_input_path(last_input_dir)
+    
+    # Try using wxPython dialog
+    directories = _try_gui_multiple_directory_selection(default_path)
+    
+    if directories is None:
+        # Fall back to CLI mode if GUI failed
+        directories = _cli_multiple_directory_selection(default_path)
+    
+    # Filter valid directories
+    valid_directories = [d for d in directories if d and os.path.isdir(d)]
+    
+    if valid_directories:
+        # Save the first selected directory for next time
+        settings['last_input_directory'] = valid_directories[0]
+        save_user_settings(settings)
+        
+        return valid_directories
+    else:
+        logger.error(f"No valid directories selected from: {directories}")
+        return []
+
+
 def select_file(default_path=None, title="Select file", wildcard="CSV files (*.csv)|*.csv", file_type="template"):
     """
     Display a file selection dialog and return the selected path.
@@ -401,6 +439,69 @@ def _try_gui_directory_selection(default_path):
         return None
 
 
+def _try_gui_multiple_directory_selection(default_path):
+    """Try to use wxPython for multiple directory selection."""
+    try:
+        logger.debug("Attempting wxPython multiple directory selection")
+        
+        if not HAS_WX:
+            raise ImportError("wxPython not available")
+        
+        # Initialize the wx.App if it doesn't exist yet
+        initialize_wx_app()
+        
+        selected_dirs = []
+        
+        with _silence_stderr():
+            while True:
+                style = wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST
+                
+                if not selected_dirs:
+                    message = "Select folders with ddPCR CSV files (first folder)"
+                else:
+                    message = f"Select additional folders ({len(selected_dirs)} selected) or Cancel to finish"
+                
+                dlg = wx.DirDialog(
+                    None, 
+                    message=message,
+                    defaultPath=default_path if default_path else "", 
+                    style=style
+                )
+                
+                logger.debug(f"Showing directory dialog (iteration {len(selected_dirs) + 1})")
+                
+                if dlg.ShowModal() == wx.ID_OK:
+                    directory = dlg.GetPath()
+                    logger.debug(f"Selected directory: {directory}")
+                    
+                    if directory not in selected_dirs:
+                        selected_dirs.append(directory)
+                        logger.debug(f"Added directory: {directory}")
+                    else:
+                        logger.debug(f"Directory already selected: {directory}")
+                else:
+                    logger.debug("Dialog cancelled")
+                    dlg.Destroy()
+                    break
+                
+                dlg.Destroy()
+                
+                # If this is the first selection, continue the loop
+                # If user cancels on subsequent selections, we exit
+        
+        logger.debug(f"Final selected directories: {selected_dirs}")
+        return selected_dirs
+            
+    except ImportError:
+        logger.info("wxPython not available, falling back to console input")
+        return None
+    except Exception as e:
+        logger.error(f"Error in GUI multiple directory dialog: {str(e)}")
+        logger.debug(f"Error details: {str(e)}", exc_info=True)
+        logger.info("Falling back to console input")
+        return None
+
+
 def _try_gui_file_selection(default_path, title, wildcard):
     """Try to use wxPython for file selection."""
     try:
@@ -460,6 +561,39 @@ def _cli_directory_selection(default_path):
         print(f"Using default path: {directory}")
     
     return directory
+
+
+def _cli_multiple_directory_selection(default_path):
+    """Handle multiple directory selection via command line input."""
+    print("\nEnter full paths to directories containing CSV files (one per line, empty line to finish):")
+    if default_path:
+        print(f"[Default first directory: {default_path}]")
+    
+    directories = []
+    first_input = True
+    
+    while True:
+        if first_input:
+            prompt = "> "
+            first_input = False
+        else:
+            prompt = f"[{len(directories)} selected] > "
+        
+        directory = input(prompt).strip()
+        
+        if not directory:
+            if not directories and default_path:
+                # First input is empty, use default
+                directories.append(default_path)
+                print(f"Using default path: {default_path}")
+            break
+        
+        if directory not in directories:
+            directories.append(directory)
+        else:
+            print(f"Already selected: {directory}")
+    
+    return directories
 
 
 def _cli_file_selection(title, wildcard, default_path):
