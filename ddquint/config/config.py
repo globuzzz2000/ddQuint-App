@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Configuration module for the ddQuint pipeline with dynamic chromosome support and buffer zone detection.
+Configuration module for the ddQuint pipeline with standard deviation-based tolerances.
 
 This module provides comprehensive configuration management for:
 1. Clustering parameters and algorithm settings
 2. Expected centroid definitions for up to 10 chromosomes
-3. Copy number calculation and classification thresholds
+3. Standard deviation-based copy number classification with tolerance multiplier
 4. Visualization settings and color schemes
 5. File management and template parsing options
 
@@ -83,7 +83,7 @@ class Config:
     
 
     #############################################################################
-    #                           Copy Number Settings
+    #                    Standard Deviation-Based Copy Number Settings
     #############################################################################
     # Copy number calculation parameters
     MIN_USABLE_DROPLETS = 3000
@@ -99,14 +99,22 @@ class Config:
         "Chrom5": 1.0056
     }
     
-    # Buffer zone settings
-    EUPLOID_TOLERANCE = 0.08  # ±0.08 from expected value for euploid range
-    ANEUPLOIDY_TOLERANCE = 0.08  # ±0.08 from aneuploidy targets for aneuploidy range
+    # Standard deviation for each chromosome (empirically determined)
+    EXPECTED_STANDARD_DEVIATION = {
+        "Chrom1": 0.0299,
+        "Chrom2": 0.0243,
+        "Chrom3": 0.0286,
+        "Chrom4": 0.0244,
+        "Chrom5": 0.0225
+    }
     
-    # Aneuploidy target copy numbers
+    # Tolerance multiplier for standard deviation-based classification
+    TOLERANCE_MULTIPLIER = 3
+    
+    # Aneuploidy target multipliers (multiplicative factors for expected values)
     ANEUPLOIDY_TARGETS = {
-        "low": 0.75,   # Deletion target (0.75 - 1 + expected)
-        "high": 1.25   # Duplication target (1.25 - 1 + expected)
+        "low": 0.75,   # Deletion target (expected * 0.75)
+        "high": 1.25   # Duplication target (expected * 1.25)
     }
 
     #############################################################################
@@ -217,11 +225,36 @@ class Config:
         return ['Negative'] + cls.get_chromosome_keys() + ['Unknown']
     
     @classmethod
+    def get_tolerance_for_chromosome(cls, chrom_name: str) -> float:
+        """
+        Get the tolerance value for a specific chromosome based on its standard deviation.
+        
+        Args:
+            chrom_name: Chromosome name (e.g., 'Chrom1')
+            
+        Returns:
+            Tolerance value calculated as std_dev * multiplier
+            
+        Raises:
+            ConfigError: If chromosome not found in configuration
+        """
+        if chrom_name not in cls.EXPECTED_STANDARD_DEVIATION:
+            error_msg = f"Unknown chromosome for standard deviation: {chrom_name}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg, config_key="EXPECTED_STANDARD_DEVIATION")
+        
+        std_dev = cls.EXPECTED_STANDARD_DEVIATION[chrom_name]
+        tolerance = std_dev * cls.TOLERANCE_MULTIPLIER
+        
+        logger.debug(f"{chrom_name}: std_dev={std_dev:.4f}, tolerance={tolerance:.4f}")
+        return tolerance
+    
+    @classmethod
     def classify_copy_number_state(cls, chrom_name: str, copy_number: float) -> str:
         """
-        Classify a copy number value into euploid, buffer zone, or aneuploidy.
+        Classify a copy number value using standard deviation-based tolerances.
         
-        Uses chromosome-specific expected values and tolerance ranges to
+        Uses chromosome-specific standard deviations with a tolerance multiplier to
         determine the classification state for copy number analysis.
         
         Args:
@@ -245,37 +278,48 @@ class Config:
             logger.error(error_msg)
             raise ConfigError(error_msg, config_key="EXPECTED_COPY_NUMBERS")
         
-        expected = cls.EXPECTED_COPY_NUMBERS.get(chrom_name, 1.0)
+        # Get expected value and tolerance for this chromosome
+        expected = cls.EXPECTED_COPY_NUMBERS[chrom_name]
+        tolerance = cls.get_tolerance_for_chromosome(chrom_name)
         
-        # Define euploid range
-        euploid_min = expected - cls.EUPLOID_TOLERANCE
-        euploid_max = expected + cls.EUPLOID_TOLERANCE
+        # Define euploid range using chromosome-specific tolerance
+        euploid_min = expected - tolerance
+        euploid_max = expected + tolerance
         
-        # Define aneuploidy target ranges
-        deletion_target = expected + (cls.ANEUPLOIDY_TARGETS["low"] - 1.0)
-        duplication_target = expected + (cls.ANEUPLOIDY_TARGETS["high"] - 1.0)
+        # Define aneuploidy target ranges using the same tolerance
+        deletion_target = expected * cls.ANEUPLOIDY_TARGETS["low"]
+        duplication_target = expected * cls.ANEUPLOIDY_TARGETS["high"]
         
-        deletion_min = deletion_target - cls.ANEUPLOIDY_TOLERANCE
-        deletion_max = deletion_target + cls.ANEUPLOIDY_TOLERANCE
-        duplication_min = duplication_target - cls.ANEUPLOIDY_TOLERANCE
-        duplication_max = duplication_target + cls.ANEUPLOIDY_TOLERANCE
+        deletion_min = deletion_target - tolerance
+        deletion_max = deletion_target + tolerance
+        duplication_min = duplication_target - tolerance
+        duplication_max = duplication_target + tolerance
+        
+        logger.debug(f"{chrom_name} classification ranges:")
+        logger.debug(f"  Euploid: [{euploid_min:.4f}, {euploid_max:.4f}]")
+        logger.debug(f"  Deletion: [{deletion_min:.4f}, {deletion_max:.4f}]")
+        logger.debug(f"  Duplication: [{duplication_min:.4f}, {duplication_max:.4f}]")
+        logger.debug(f"  Copy number: {copy_number:.4f}")
         
         # Check if in euploid range
         if euploid_min <= copy_number <= euploid_max:
+            logger.debug(f"  -> euploid")
             return 'euploid'
         
         # Check if in aneuploidy ranges
         if (deletion_min <= copy_number <= deletion_max or 
             duplication_min <= copy_number <= duplication_max):
+            logger.debug(f"  -> aneuploidy")
             return 'aneuploidy'
         
         # Otherwise, it's in the buffer zone
+        logger.debug(f"  -> buffer_zone")
         return 'buffer_zone'
     
     @classmethod
     def get_copy_number_ranges(cls, chrom_name: str) -> Dict[str, tuple]:
         """
-        Get copy number ranges for a specific chromosome.
+        Get copy number ranges for a specific chromosome using standard deviation-based tolerances.
         
         Args:
             chrom_name: Chromosome name (e.g., 'Chrom1')
@@ -291,25 +335,27 @@ class Config:
             logger.error(error_msg)
             raise ConfigError(error_msg, config_key="EXPECTED_COPY_NUMBERS")
         
-        expected = cls.EXPECTED_COPY_NUMBERS.get(chrom_name, 1.0)
+        expected = cls.EXPECTED_COPY_NUMBERS[chrom_name]
+        tolerance = cls.get_tolerance_for_chromosome(chrom_name)
         
-        # Calculate ranges
+        # Calculate ranges using chromosome-specific tolerance
         euploid_range = (
-            expected - cls.EUPLOID_TOLERANCE,
-            expected + cls.EUPLOID_TOLERANCE
+            expected - tolerance,
+            expected + tolerance
         )
         
-        deletion_target = expected + (cls.ANEUPLOIDY_TARGETS["low"] - 1.0)
-        duplication_target = expected + (cls.ANEUPLOIDY_TARGETS["high"] - 1.0)
+        # Use multiplicative targets for aneuploidy
+        deletion_target = expected * cls.ANEUPLOIDY_TARGETS["low"]
+        duplication_target = expected * cls.ANEUPLOIDY_TARGETS["high"]
         
         deletion_range = (
-            deletion_target - cls.ANEUPLOIDY_TOLERANCE,
-            deletion_target + cls.ANEUPLOIDY_TOLERANCE
+            deletion_target - tolerance,
+            deletion_target + tolerance
         )
         
         duplication_range = (
-            duplication_target - cls.ANEUPLOIDY_TOLERANCE,
-            duplication_target + cls.ANEUPLOIDY_TOLERANCE
+            duplication_target - tolerance,
+            duplication_target + tolerance
         )
         
         return {

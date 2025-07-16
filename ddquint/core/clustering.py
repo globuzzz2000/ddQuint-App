@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Clustering module for ddQuint with dynamic chromosome support and buffer zone detection.
+Clustering module for ddQuint with standard deviation-based classification system.
 
 Contains functionality for:
 1. HDBSCAN-based droplet clustering
 2. Copy number calculation and normalization
-3. Aneuploidy and buffer zone detection
+3. Standard deviation-based aneuploidy and buffer zone detection
 4. Target assignment based on expected centroids
 
 This module integrates with the broader ddQuint pipeline to provide
@@ -31,7 +31,7 @@ def analyze_droplets(df):
     
     Performs HDBSCAN clustering on droplet amplitude data and calculates
     copy numbers for each chromosome target. Includes buffer zone and
-    aneuploidy detection.
+    aneuploidy detection using standard deviation-based tolerances.
     
     Args:
         df: DataFrame containing Ch1Amplitude and Ch2Amplitude columns
@@ -119,8 +119,8 @@ def analyze_droplets(df):
     copy_numbers = calculate_copy_numbers(label_counts, total_droplets)
     logger.debug(f"ML-corrected copy numbers: {copy_numbers}")
     
-    # Classify copy number states and detect aneuploidies/buffer zones
-    copy_number_states, has_aneuploidy, has_buffer_zone = _classify_copy_number_states(copy_numbers, config)
+    # Classify copy number states using standard deviation-based tolerances
+    copy_number_states, has_aneuploidy, has_buffer_zone = _classify_copy_number_states_std_dev(copy_numbers, config)
     
     # Detect abnormal chromosomes for detailed reporting
     _, abnormal_chroms = detect_aneuploidies(copy_numbers)
@@ -266,9 +266,9 @@ def _assign_remaining_targets(expected_centroids, cluster_centroids, target_tol,
         else:
             logger.debug(f"Cluster {cl_best} too far from {target} (distance: {d_best:.2f} > tolerance: {target_tol[target]})")
 
-def _classify_copy_number_states(copy_numbers, config):
+def _classify_copy_number_states_std_dev(copy_numbers, config):
     """
-    Classify copy number states and detect aneuploidies/buffer zones.
+    Classify copy number states using standard deviation-based tolerances.
     
     Args:
         copy_numbers: Dictionary of chromosome copy numbers
@@ -281,22 +281,33 @@ def _classify_copy_number_states(copy_numbers, config):
     has_aneuploidy = False
     has_buffer_zone = False
     
+    logger.debug("Classifying copy number states using standard deviation-based tolerances")
+    
     for chrom_name, copy_number in copy_numbers.items():
         if chrom_name.startswith('Chrom'):
+            # Use the new standard deviation-based classification
             state = config.classify_copy_number_state(chrom_name, copy_number)
             copy_number_states[chrom_name] = state
             
+            # Get tolerance for logging
+            tolerance = config.get_tolerance_for_chromosome(chrom_name)
+            expected = config.EXPECTED_COPY_NUMBERS.get(chrom_name, 1.0)
+            
             if state == 'buffer_zone':
                 has_buffer_zone = True
-                logger.debug(f"{chrom_name} classified as buffer zone: {copy_number:.3f}")
+                logger.debug(f"{chrom_name} classified as buffer zone: {copy_number:.3f} "
+                           f"(expected: {expected:.3f}, tolerance: ±{tolerance:.3f})")
             elif state == 'aneuploidy':
                 has_aneuploidy = True
-                logger.debug(f"{chrom_name} classified as aneuploidy: {copy_number:.3f}")
+                logger.debug(f"{chrom_name} classified as aneuploidy: {copy_number:.3f} "
+                           f"(expected: {expected:.3f}, tolerance: ±{tolerance:.3f})")
             else:
-                logger.debug(f"{chrom_name} classified as euploid: {copy_number:.3f}")
+                logger.debug(f"{chrom_name} classified as euploid: {copy_number:.3f} "
+                           f"(expected: {expected:.3f}, tolerance: ±{tolerance:.3f})")
     
     # Buffer zone trumps aneuploidy - if any chromosome is in buffer zone, mark as buffer zone sample
     if has_buffer_zone:
         has_aneuploidy = False  # Reset aneuploidy flag when buffer zone is present
+        logger.debug("Sample marked as buffer zone (overrides aneuploidy classification)")
     
     return copy_number_states, has_aneuploidy, has_buffer_zone

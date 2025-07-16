@@ -72,8 +72,9 @@ def calculate_copy_numbers(target_counts, total_droplets):
         )
         logger.debug(f"Estimated concentrations: {true_concentrations}")
     except Exception as e:
+        # Log the specific error type for debugging without printing to console
         error_msg = f"Analytical estimation failed: {str(e)}"
-        logger.error(error_msg)
+        logger.debug(error_msg)  # Only debug level - no warning/error level
         raise CopyNumberError(error_msg) from e
     
     # Calculate baseline for normalization
@@ -191,13 +192,15 @@ def _validate_concentration_estimates(concentrations, p_empty_observed, chromoso
     
     # Allow up to 5% relative error (should be much smaller for good data)
     if relative_error > 0.05:
-        logger.warning(f"Large inconsistency in concentration estimates: {relative_error:.3%} error")
-        logger.warning("This may indicate non-Poisson effects or data quality issues")
+        # Only log to debug level, not warning level
+        logger.debug(f"Large inconsistency in concentration estimates: {relative_error:.3%} error")
+        logger.debug("This may indicate non-Poisson effects or data quality issues")
     
     # For very large errors, raise an exception
     if relative_error > 0.20:
         raise CopyNumberError(f"Concentration estimates are inconsistent: {relative_error:.1%} error. "
                             "Data may not follow Poisson distribution assumptions.")
+
 
 def _calculate_baseline(concentrations, config):
     """

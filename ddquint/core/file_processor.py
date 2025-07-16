@@ -85,15 +85,35 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         df_clean = df[required_cols].dropna()
         logger.debug(f"Filtered data: {len(df_clean)} droplets from {len(df)} total")
         
-        # Check if we have enough data points - be more specific about the threshold
+        # Check if we have enough data points
         min_points = Config.MIN_POINTS_FOR_CLUSTERING
         if len(df_clean) < min_points:
             error_msg = f"Insufficient data points in {basename}: {len(df_clean)}"
             logger.debug(error_msg)
             return create_error_result(well_coord, basename, error_msg, graphs_dir, sample_names)
         
-        # Analyze the droplets
-        clustering_results = analyze_droplets(df_clean)
+        # Analyze the droplets - this might fail at copy number step
+        try:
+            clustering_results = analyze_droplets(df_clean)
+        except Exception as clustering_error:
+            # Clustering failed - try to preserve basic droplet metrics if possible
+            total_droplets = len(df_clean)
+            
+            # Create error result with preserved droplet counts
+            error_result = create_error_result(
+                well_coord, basename, str(clustering_error), graphs_dir, 
+                sample_names, total_droplets=total_droplets
+            )
+            
+            # Log the specific error type for debugging
+            if "concentration estimates" in str(clustering_error).lower():
+                logger.debug(f"Copy number estimation failed for {well_coord}: {str(clustering_error)}")
+            elif "no negative droplets" in str(clustering_error).lower():
+                logger.debug(f"No negative droplets found in {well_coord}: {str(clustering_error)}")
+            else:
+                logger.debug(f"Clustering analysis failed for {well_coord}: {str(clustering_error)}")
+            
+            return error_result
         
         # Create the plot
         standard_plot_path = os.path.join(graphs_dir, f"{well_coord}.png")
@@ -136,6 +156,7 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         logger.error(error_msg)
         logger.debug(f"Error details: {str(e)}", exc_info=True)
         
+        # Don't print copy number warnings to console unless in verbose/debug mode
         if verbose:
             print(f"  Error processing {basename}: {_get_error_message(str(e), basename)}")
         
@@ -146,6 +167,7 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
             well_coord = None
             
         return create_error_result(well_coord, basename, str(e), graphs_dir, sample_names)
+
 
 def find_header_row(file_path):
     """
@@ -177,22 +199,24 @@ def find_header_row(file_path):
         raise FileProcessingError(error_msg, filename=os.path.basename(file_path)) from e
     return None
 
-def create_error_result(well_coord, filename, error_message, graphs_dir, sample_names=None):
+def create_error_result(well_coord, filename, error_message, graphs_dir, 
+                                     sample_names=None, total_droplets=0, usable_droplets=0, 
+                                     negative_droplets=0):
     """
-    Create an error result dictionary with unified plot creation.
-    
-    Uses the same plot creation logic as normal plots but passes error information
-    to create appropriate error visualization.
+    Create an error result dictionary with preserved droplet counts.
     
     Args:
-        well_coord: Well coordinate (may be None if extraction failed)
-        filename: Original filename that caused the error
-        error_message: Description of the error that occurred
+        well_coord: Well coordinate
+        filename: Original filename
+        error_message: Description of the error
         graphs_dir: Directory to save the error plot
         sample_names: Optional mapping for sample names
+        total_droplets: Actual total droplets from data
+        usable_droplets: Actual usable droplets (if available)
+        negative_droplets: Actual negative droplets (if available)
         
     Returns:
-        Dictionary with error result structure
+        Dictionary with error result structure including actual droplet counts
     """
     try:
         # Create plot path
@@ -228,6 +252,9 @@ def create_error_result(well_coord, filename, error_message, graphs_dir, sample_
         logger.warning(f"Failed to create error plot: {str(e)}")
         save_path = None
     
+    # Calculate positive droplets
+    positive_droplets = total_droplets - negative_droplets if total_droplets > 0 else 0
+    
     # Return standardized error result
     return {
         'well': well_coord,
@@ -239,9 +266,9 @@ def create_error_result(well_coord, filename, error_message, graphs_dir, sample_
         'counts': {},
         'graph_path': save_path,
         'error': _get_error_message(error_message, filename),
-        'total_droplets': 0,
-        'usable_droplets': 0,
-        'negative_droplets': 0
+        'total_droplets': total_droplets,    
+        'usable_droplets': usable_droplets,    
+        'negative_droplets': negative_droplets      
     }
 
 def process_directory(input_dir, output_dir=None, sample_names=None, verbose=False):
