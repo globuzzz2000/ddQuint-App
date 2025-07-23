@@ -52,10 +52,17 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         
         # Determine plot type and add content overlay
         if _is_error_result(clustering_results):
-            _add_error_overlay(ax, clustering_results, well_id, for_composite)
+            if df is not None and not df.empty:
+                # Show raw data points with error overlay
+                _add_raw_data_with_error(ax, df, clustering_results, well_id, for_composite)
+            else:
+                # No data available - just show error message
+                _add_error_overlay(ax, clustering_results, well_id, for_composite)
         elif _has_insufficient_data(df, clustering_results, config):
+            if df is not None and not df.empty:
+                # Show whatever data we have
+                _add_raw_data_content(ax, df, for_composite)
             # Skip "no data" overlay - just show empty plot with axes
-            pass
         else:
             _add_data_content(ax, df, clustering_results, well_id, for_composite, 
                             add_copy_numbers, sample_name, config)
@@ -163,6 +170,77 @@ def _validate_clustering_data(clustering_results):
             clustering_results['target_mapping'] is not None)
 
 
+def _add_raw_data_with_error(ax, df, clustering_results, well_id, for_composite):
+    """
+    Add raw data visualization with error overlay on top of pre-formatted axes.
+    Shows both raw data points and any available clustering results.
+    
+    Args:
+        ax: Matplotlib axes object (already formatted)
+        df: DataFrame with raw droplet data
+        clustering_results (dict): Clustering results containing error info
+        well_id (str): Well identifier
+        for_composite (bool): Whether this is for composite image
+    """
+    # Check if we have any clustering data available
+    df_filtered = clustering_results.get('df_filtered')
+    target_mapping = clustering_results.get('target_mapping')
+    config = Config.get_instance()
+    label_color_map = config.TARGET_COLORS
+    
+    if df_filtered is not None and not df_filtered.empty and target_mapping:
+        # We have partial clustering results - show colored clusters
+        logger.debug(f"Plotting {len(df_filtered)} clustered droplets for well {well_id} with error overlay")
+        
+        # Assign colors based on target labels
+        df_filtered_copy = df_filtered.copy()
+        df_filtered_copy['color'] = df_filtered_copy['TargetLabel'].map(label_color_map)
+        
+        # Plot clustered droplets with colors
+        scatter_size = 3 if for_composite else 6
+        ax.scatter(df_filtered_copy['Ch2Amplitude'], df_filtered_copy['Ch1Amplitude'],
+                  c=df_filtered_copy['color'], s=scatter_size, alpha=0.6)
+        
+        # Add legend for standalone plots if we have clusters
+        if not for_composite:
+            counts = clustering_results.get('counts', {})
+            _add_legend(ax, label_color_map, counts)
+    else:
+        # No clustering data - plot raw data in grey
+        scatter_size = 3 if for_composite else 6
+        ax.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'],
+                  c='grey', s=scatter_size, alpha=0.5, label='Raw Droplets')
+        
+        logger.debug(f"Plotted {len(df)} raw droplets for well {well_id} with error overlay")
+    
+    # Add error message overlay in upper portion
+    error_msg = clustering_results.get('error', 'Unknown Error')
+    display_msg = _get_error_message(error_msg)
+    
+    font_size = 12 if for_composite else 16
+    ax.text(0.5, 0.85, display_msg, 
+            horizontalalignment='center', verticalalignment='top',
+            transform=ax.transAxes, fontsize=font_size, color='red',
+            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.9))
+
+
+def _add_raw_data_content(ax, df, for_composite):
+    """
+    Add raw data visualization without clustering information.
+    
+    Args:
+        ax: Matplotlib axes object (already formatted)
+        df: DataFrame with raw droplet data
+        for_composite (bool): Whether this is for composite image
+    """
+    # Plot raw data points in grey
+    scatter_size = 3 if for_composite else 6
+    ax.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'],
+              c='grey', s=scatter_size, alpha=0.5, label='Raw Droplets')
+    
+    logger.debug(f"Plotted {len(df)} raw droplets without clustering")
+
+
 def _add_error_overlay(ax, clustering_results, well_id, for_composite):
     """
     Add error message overlay on top of pre-formatted axes.
@@ -178,9 +256,10 @@ def _add_error_overlay(ax, clustering_results, well_id, for_composite):
     display_msg = _get_error_message(error_msg)
     
     # Add error message overlay with appropriate styling
+    font_size = 12 if for_composite else 20
     ax.text(0.5, 0.5, display_msg, 
             horizontalalignment='center', verticalalignment='center',
-            transform=ax.transAxes, fontsize=20, color='red',
+            transform=ax.transAxes, fontsize=font_size, color='red',
             bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
 
 
@@ -233,19 +312,19 @@ def _add_data_content(ax, df, clustering_results, well_id, for_composite,
 
 def _add_well_buffer_zone_overlay(ax, for_composite):
     """
-    Add buffer zone overlay for well plots (bottom right corner).
+    Add buffer zone overlay for well plots (same position as error messages).
     
     Args:
         ax: Matplotlib axes object
         for_composite (bool): Whether this is for composite image
     """
-    if not for_composite:
-        ax.text(0.98, 0.02, "Buffer Zone", 
-                horizontalalignment='right', verticalalignment='bottom',
-                transform=ax.transAxes, fontsize=20, color='black',
-                bbox=dict(boxstyle="round,pad=0.2", facecolor='lightgrey', alpha=0.8))
-        
-        logger.debug("Added buffer zone overlay to well plot")
+    font_size = 12 if for_composite else 16
+    ax.text(0.5, 0.85, "Buffer Zone", 
+            horizontalalignment='center', verticalalignment='top',
+            transform=ax.transAxes, fontsize=font_size, color='black',
+            bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgrey', alpha=0.8))
+    
+    logger.debug("Added buffer zone overlay to well plot")
 
 
 def _add_copy_number_annotations(ax, df_filtered, copy_numbers, copy_number_states, 

@@ -10,6 +10,7 @@ extracts sample descriptions with proper error handling.
 
 import os
 import csv
+import time
 import logging
 
 from ..config import Config, FileProcessingError, TemplateError
@@ -73,7 +74,7 @@ def find_template_file(input_dir):
 
 def find_header_row(file_path):
     """
-    Find the row containing 'Well' column header.
+    Find the row containing 'Well' column header with robust file access handling.
     
     Args:
         file_path (str): Path to CSV file
@@ -82,31 +83,46 @@ def find_header_row(file_path):
         int: Row number (0-indexed) containing headers, or -1 if not found
         
     Raises:
-        FileProcessingError: If file cannot be read
+        FileProcessingError: If file cannot be read after retries
     """
     if not os.path.exists(file_path):
         error_msg = f"Template file does not exist: {file_path}"
         logger.error(error_msg)
         raise FileProcessingError(error_msg)
     
-    try:
-        with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
-            lines = csvfile.readlines()
+    max_retries = 3
+    retry_delay = 0.5
+    
+    for attempt in range(max_retries):
+        try:
+            with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+                lines = csvfile.readlines()
+                
+                for row_num, line in enumerate(lines):
+                    # Check if this line contains 'Well' column
+                    if 'Well,' in line:
+                        logger.debug(f"Found 'Well' header in row {row_num}")
+                        return row_num
+                        
+            logger.debug("'Well' header not found in template file")
+            return -1
             
-            for row_num, line in enumerate(lines):
-                # Check if this line contains 'Well' column
-                if 'Well,' in line:
-                    logger.debug(f"Found 'Well' header in row {row_num}")
-                    return row_num
-                    
-        logger.debug("'Well' header not found in template file")
-        return -1
-        
-    except Exception as e:
-        error_msg = f"Error reading template file {os.path.basename(file_path)}: {str(e)}"
-        logger.error(error_msg)
-        logger.debug(f"Error details: {str(e)}", exc_info=True)
-        raise FileProcessingError(error_msg) from e
+        except (PermissionError, OSError) as e:
+            if attempt < max_retries - 1:
+                logger.debug(f"Template file access failed on attempt {attempt + 1}, retrying in {retry_delay}s: {str(e)}")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+            else:
+                error_msg = f"Template file access failed after {max_retries} attempts: {os.path.basename(file_path)}"
+                logger.error(error_msg)
+                logger.debug(f"Final error: {str(e)}", exc_info=True)
+                raise FileProcessingError(error_msg) from e
+        except Exception as e:
+            error_msg = f"Error reading template file {os.path.basename(file_path)}: {str(e)}"
+            logger.error(error_msg)
+            logger.debug(f"Error details: {str(e)}", exc_info=True)
+            raise FileProcessingError(error_msg) from e
 
 
 def parse_template_file(template_path):
@@ -126,84 +142,98 @@ def parse_template_file(template_path):
     logger.debug(f"Parsing template file: {os.path.basename(template_path)}")
     
     well_to_name = {}
+    max_retries = 3
+    retry_delay = 0.5
     
-    try:
-        # First, find which row contains the headers
-        header_row = find_header_row(template_path)
-        
-        if header_row == -1:
-            error_msg = f"Could not find header row in template file: {os.path.basename(template_path)}"
-            logger.error(error_msg)
-            raise TemplateError(error_msg)
-        
-        logger.debug(f"Header row found at index: {header_row}")
-        
-        # Read the file, skipping to the header row
-        with open(template_path, 'r', newline='', encoding='utf-8') as csvfile:
-            # Skip rows before the header
-            for _ in range(header_row):
-                next(csvfile)
+    for attempt in range(max_retries):
+        try:
+            # First, find which row contains the headers
+            header_row = find_header_row(template_path)
             
-            # Create reader starting from header row
-            reader = csv.DictReader(csvfile)
-            
-            # Check for required columns
-            required_columns = ['Well', 'Sample description 1', 'Sample description 2', 
-                              'Sample description 3', 'Sample description 4']
-            
-            if not reader.fieldnames:
-                error_msg = f"No fieldnames found in template file: {os.path.basename(template_path)}"
+            if header_row == -1:
+                error_msg = f"Could not find header row in template file: {os.path.basename(template_path)}"
                 logger.error(error_msg)
                 raise TemplateError(error_msg)
             
-            missing_columns = []
-            for col in required_columns:
-                if col not in reader.fieldnames:
-                    missing_columns.append(col)
-                    logger.warning(f"Column '{col}' not found in template")
+            logger.debug(f"Header row found at index: {header_row}")
             
-            if missing_columns:
-                logger.warning(f"Missing columns: {missing_columns}")
-                logger.debug(f"Available columns: {reader.fieldnames}")
-            
-            # Process each row
-            for row_num, row in enumerate(reader, start=header_row + 2):
-                well_id = row.get('Well', '').strip()
+            # Read the file, skipping to the header row
+            with open(template_path, 'r', newline='', encoding='utf-8') as csvfile:
+                # Skip rows before the header
+                for _ in range(header_row):
+                    next(csvfile)
                 
-                # Skip empty wells
-                if not well_id:
-                    continue
+                # Create reader starting from header row
+                reader = csv.DictReader(csvfile)
                 
-                # Combine Sample description columns with " - " separator
-                sample_description_parts = []
-                for i in range(1, 5):
-                    part = row.get(f'Sample description {i}', '').strip()
-                    if part:  # Only add non-empty parts
-                        sample_description_parts.append(part)
+                # Check for required columns
+                required_columns = ['Well', 'Sample description 1', 'Sample description 2', 
+                                  'Sample description 3', 'Sample description 4']
                 
-                if sample_description_parts:
-                    sample_name = ' - '.join(sample_description_parts)
+                if not reader.fieldnames:
+                    error_msg = f"No fieldnames found in template file: {os.path.basename(template_path)}"
+                    logger.error(error_msg)
+                    raise TemplateError(error_msg)
+                
+                missing_columns = []
+                for col in required_columns:
+                    if col not in reader.fieldnames:
+                        missing_columns.append(col)
+                        logger.warning(f"Column '{col}' not found in template")
+                
+                if missing_columns:
+                    logger.warning(f"Missing columns: {missing_columns}")
+                    logger.debug(f"Available columns: {reader.fieldnames}")
+                
+                # Process each row
+                for row_num, row in enumerate(reader, start=header_row + 2):
+                    well_id = row.get('Well', '').strip()
                     
-                    # Check for duplicate well IDs with different names
-                    if well_id in well_to_name and well_to_name[well_id] != sample_name:
-                        logger.warning(f"Multiple descriptions for well {well_id}: "
-                                       f"'{well_to_name[well_id]}' vs '{sample_name}'")
+                    # Skip empty wells
+                    if not well_id:
+                        continue
+                    
+                    # Combine Sample description columns with " - " separator
+                    sample_description_parts = []
+                    for i in range(1, 5):
+                        part = row.get(f'Sample description {i}', '').strip()
+                        if part:  # Only add non-empty parts
+                            sample_description_parts.append(part)
+                    
+                    if sample_description_parts:
+                        sample_name = ' - '.join(sample_description_parts)
+                        
+                        # Check for duplicate well IDs with different names
+                        if well_id in well_to_name and well_to_name[well_id] != sample_name:
+                            logger.warning(f"Multiple descriptions for well {well_id}: "
+                                           f"'{well_to_name[well_id]}' vs '{sample_name}'")
+                        else:
+                            well_to_name[well_id] = sample_name
                     else:
-                        well_to_name[well_id] = sample_name
-                else:
-                    continue
-        
-        logger.debug(f"Finished parsing template. Found {len(well_to_name)} unique well-sample mappings")
-        return well_to_name
-        
-    except TemplateError:
-        # Re-raise template errors as-is
-        raise
-    except Exception as e:
-        error_msg = f"Error parsing template file {os.path.basename(template_path)}: {str(e)}"
-        logger.error(error_msg)
-        logger.debug(f"Error details: {str(e)}", exc_info=True)
-        raise TemplateError(error_msg) from e
+                        continue
+            
+            logger.debug(f"Finished parsing template. Found {len(well_to_name)} unique well-sample mappings")
+            return well_to_name
+            
+        except (TemplateError, FileProcessingError):
+            # Re-raise template and file processing errors as-is
+            raise
+        except (PermissionError, OSError) as e:
+            if attempt < max_retries - 1:
+                logger.debug(f"Template file access failed on attempt {attempt + 1}, retrying in {retry_delay}s: {str(e)}")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+            else:
+                error_msg = f"Template file access failed after {max_retries} attempts: {os.path.basename(template_path)}"
+                logger.error(error_msg)
+                logger.debug(f"Final error: {str(e)}", exc_info=True)
+                raise FileProcessingError(error_msg) from e
+        except Exception as e:
+            error_msg = f"Error parsing template file {os.path.basename(template_path)}: {str(e)}"
+            logger.error(error_msg)
+            logger.debug(f"Error details: {str(e)}", exc_info=True)
+            raise TemplateError(error_msg) from e
 
 
 def get_sample_names(input_dir):

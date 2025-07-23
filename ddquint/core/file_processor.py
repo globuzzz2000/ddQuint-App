@@ -90,19 +90,24 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         if len(df_clean) < min_points:
             error_msg = f"Insufficient data points in {basename}: {len(df_clean)}"
             logger.debug(error_msg)
-            return create_error_result(well_coord, basename, error_msg, graphs_dir, sample_names)
+            return create_error_result(well_coord, basename, error_msg, graphs_dir, sample_names, 
+                                     df_clean=df_clean, total_droplets=len(df_clean))
         
         # Analyze the droplets - this might fail at copy number step
         try:
             clustering_results = analyze_droplets(df_clean)
         except Exception as clustering_error:
-            # Clustering failed - try to preserve basic droplet metrics if possible
+            # Clustering failed - try to preserve any partial clustering data
             total_droplets = len(df_clean)
             
-            # Create error result with preserved droplet counts
+            # Check if we can extract any partial clustering results
+            partial_results = _extract_partial_clustering_results(clustering_error, df_clean)
+            
+            # Create error result with preserved droplet data and partial clustering
             error_result = create_error_result(
                 well_coord, basename, str(clustering_error), graphs_dir, 
-                sample_names, total_droplets=total_droplets
+                sample_names, df_clean=df_clean, total_droplets=total_droplets,
+                partial_clustering=partial_results
             )
             
             # Log the specific error type for debugging
@@ -199,11 +204,79 @@ def find_header_row(file_path):
         raise FileProcessingError(error_msg, filename=os.path.basename(file_path)) from e
     return None
 
+def _extract_partial_clustering_results(clustering_error, df_clean):
+    """
+    Try to extract partial clustering results even when full analysis fails.
+    
+    Args:
+        clustering_error: The exception that occurred during clustering
+        df_clean: Clean droplet data
+        
+    Returns:
+        Dictionary with any extractable clustering data
+    """
+    partial_results = {
+        'df_filtered': None,
+        'target_mapping': None,
+        'counts': {},
+        'copy_numbers': {},
+        'copy_number_states': {}
+    }
+    
+    try:
+        # Try basic clustering without copy number calculation
+        from ..core import analyze_droplets
+        from ..config import Config
+        import numpy as np
+        from sklearn.preprocessing import StandardScaler
+        from hdbscan import HDBSCAN
+        
+        config = Config.get_instance()
+        
+        # Attempt basic clustering
+        X = df_clean[['Ch1Amplitude', 'Ch2Amplitude']].values
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        hdbscan_params = config.get_hdbscan_params()
+        clusterer = HDBSCAN(**hdbscan_params)
+        clusters = clusterer.fit_predict(X_scaled)
+        
+        # If clustering succeeded, create basic results
+        df_copy = df_clean.copy()
+        df_copy['cluster'] = clusters
+        df_filtered = df_copy[df_copy['cluster'] != -1].copy()
+        
+        if not df_filtered.empty:
+            # Try target assignment
+            from ..core.clustering import _assign_targets_to_clusters
+            target_mapping = _assign_targets_to_clusters(df_filtered, config)
+            
+            # Add target labels
+            df_filtered.loc[:, 'TargetLabel'] = df_filtered['cluster'].map(target_mapping)
+            
+            # Calculate basic counts
+            ordered_labels = config.get_ordered_labels()
+            label_counts = {label: len(df_filtered[df_filtered['TargetLabel'] == label]) 
+                           for label in ordered_labels}
+            
+            partial_results['df_filtered'] = df_filtered
+            partial_results['target_mapping'] = target_mapping
+            partial_results['counts'] = label_counts
+            
+            logger.debug(f"Extracted partial clustering results: {len(df_filtered)} clustered droplets")
+        
+    except Exception as e:
+        logger.debug(f"Could not extract partial clustering results: {str(e)}")
+    
+    return partial_results
+
+
 def create_error_result(well_coord, filename, error_message, graphs_dir, 
                                      sample_names=None, total_droplets=0, usable_droplets=0, 
-                                     negative_droplets=0):
+                                     negative_droplets=0, df_clean=None, partial_clustering=None):
     """
-    Create an error result dictionary with preserved droplet counts.
+    Create an error result dictionary with preserved droplet counts, raw data, and partial clustering.
     
     Args:
         well_coord: Well coordinate
@@ -214,9 +287,11 @@ def create_error_result(well_coord, filename, error_message, graphs_dir,
         total_droplets: Actual total droplets from data
         usable_droplets: Actual usable droplets (if available)
         negative_droplets: Actual negative droplets (if available)
+        df_clean: Raw droplet data for visualization (if available)
+        partial_clustering: Partial clustering results (if available)
         
     Returns:
-        Dictionary with error result structure including actual droplet counts
+        Dictionary with error result structure including actual droplet counts and partial results
     """
     try:
         # Create plot path
@@ -225,7 +300,7 @@ def create_error_result(well_coord, filename, error_message, graphs_dir,
         else:
             save_path = os.path.join(graphs_dir, f"{os.path.splitext(filename)[0]}_error.png")
         
-        # Create clustering results with error information
+        # Create clustering results with error information and partial data
         error_clustering_results = {
             'error': error_message,
             'has_aneuploidy': False,
@@ -237,13 +312,23 @@ def create_error_result(well_coord, filename, error_message, graphs_dir,
             'target_mapping': None
         }
         
+        # Add partial clustering results if available
+        if partial_clustering:
+            error_clustering_results.update({
+                'df_filtered': partial_clustering.get('df_filtered'),
+                'target_mapping': partial_clustering.get('target_mapping'),
+                'counts': partial_clustering.get('counts', {}),
+                'copy_numbers': partial_clustering.get('copy_numbers', {}),
+                'copy_number_states': partial_clustering.get('copy_number_states', {})
+            })
+        
         # Get sample name if available
         template_name = None
         if sample_names and well_coord:
             template_name = sample_names.get(well_coord)
         
-        # Use the unified plot creation system
-        create_well_plot(None, error_clustering_results, well_coord or filename, 
+        # Use the unified plot creation system with raw data if available
+        create_well_plot(df_clean, error_clustering_results, well_coord or filename, 
                         save_path, for_composite=False, sample_name=template_name)
         
         logger.debug(f"Created error plot: {save_path}")
@@ -255,8 +340,8 @@ def create_error_result(well_coord, filename, error_message, graphs_dir,
     # Calculate positive droplets
     positive_droplets = total_droplets - negative_droplets if total_droplets > 0 else 0
     
-    # Return standardized error result
-    return {
+    # Create base result
+    result = {
         'well': well_coord,
         'filename': filename,
         'has_aneuploidy': False,
@@ -270,6 +355,18 @@ def create_error_result(well_coord, filename, error_message, graphs_dir,
         'usable_droplets': usable_droplets,    
         'negative_droplets': negative_droplets      
     }
+    
+    # Add partial clustering results if available
+    if partial_clustering:
+        result.update({
+            'counts': partial_clustering.get('counts', {}),
+            'copy_numbers': partial_clustering.get('copy_numbers', {}),
+            'copy_number_states': partial_clustering.get('copy_number_states', {}),
+            'df_filtered': partial_clustering.get('df_filtered'),
+            'target_mapping': partial_clustering.get('target_mapping')
+        })
+    
+    return result
 
 def process_directory(input_dir, output_dir=None, sample_names=None, verbose=False):
     """

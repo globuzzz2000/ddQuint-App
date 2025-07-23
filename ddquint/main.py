@@ -473,7 +473,7 @@ def main():
                     traceback.print_exc()
                 continue
         
-        logger.info("\n=== Analysis complete ===")
+        logger.info("=== Analysis complete ===")
         
     except KeyboardInterrupt:
         logger.info("\nProcess interrupted by user.")

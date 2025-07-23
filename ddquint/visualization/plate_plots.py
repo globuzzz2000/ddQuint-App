@@ -129,7 +129,7 @@ def _generate_well_images(results, output_path, temp_files):
 
 
 def _create_temp_well_plot(result, output_path, config, temp_files):
-    """Create temporary well plot for composite image (handles all well types)."""
+    """Create temporary well plot for composite image (handles all well types including errors with raw data)."""
     try:
         output_dir = os.path.dirname(output_path)
         graphs_dir = os.path.join(output_dir, config.GRAPHS_DIR_NAME)
@@ -138,14 +138,14 @@ def _create_temp_well_plot(result, output_path, config, temp_files):
         # Create temp file in the Graphs directory
         temp_path = os.path.join(graphs_dir, f"{result['well']}_temp.png")
         
-        # Use the already processed data from results - no need to reload CSV!
-        df_filtered = result.get('df_filtered')
+        # Get the raw data if available
+        df_raw = _get_raw_data_for_result(result, output_path)
         
         # Use existing clustering results
         clustering_results = _extract_clustering_results(result)
         
         # Create the plot using unified system (handles all types consistently)
-        create_well_plot(df_filtered, clustering_results, result['well'], 
+        create_well_plot(df_raw, clustering_results, result['well'], 
                          temp_path, for_composite=True, add_copy_numbers=True)
         
         # Track the temporary file
@@ -157,7 +157,91 @@ def _create_temp_well_plot(result, output_path, config, temp_files):
         return None
 
 
+def _get_raw_data_for_result(result, output_path):
+    """
+    Get raw data for a result, attempting to reload from CSV if not available.
+    
+    Args:
+        result: Result dictionary
+        output_path: Output path to help locate source files
+        
+    Returns:
+        DataFrame with raw data or None if not available
+    """
+    # First check if we have filtered data from successful processing
+    df_filtered = result.get('df_filtered')
+    if df_filtered is not None and not df_filtered.empty:
+        return df_filtered
+    
+    # For error cases, try to reload the raw data from the CSV file
+    filename = result.get('filename')
+    well_id = result.get('well')
+    
+    if filename and well_id:
+        try:
+            # Try to find the source CSV file
+            # Look in the parent directory of the output path
+            output_dir = os.path.dirname(output_path)
+            possible_paths = [
+                os.path.join(output_dir, filename),  # Same directory as output
+                os.path.join(os.path.dirname(output_dir), filename),  # Parent directory
+            ]
+            
+            for csv_path in possible_paths:
+                if os.path.exists(csv_path):
+                    logger.debug(f"Attempting to reload raw data from {csv_path}")
+                    df_raw = _load_csv_data(csv_path)
+                    if df_raw is not None and not df_raw.empty:
+                        logger.debug(f"Successfully loaded {len(df_raw)} raw droplets for {well_id}")
+                        return df_raw
+                    break
+            
+        except Exception as e:
+            logger.debug(f"Error reloading raw data for well {well_id}: {e}")
+    
+    return None
 
+
+def _load_csv_data(csv_path):
+    """
+    Load CSV data with header detection.
+    
+    Args:
+        csv_path: Path to CSV file
+        
+    Returns:
+        DataFrame with droplet data or None if failed
+    """
+    try:
+        # Find header row (same logic as in file_processor)
+        header_row = None
+        with open(csv_path, 'r', encoding='utf-8', errors='ignore') as fh:
+            for i, line in enumerate(fh):
+                if ('Ch1Amplitude' in line or 'Ch1 Amplitude' in line) and \
+                   ('Ch2Amplitude' in line or 'Ch2 Amplitude' in line):
+                    header_row = i
+                    break
+        
+        if header_row is None:
+            return None
+        
+        # Load the CSV data
+        df = pd.read_csv(csv_path, skiprows=header_row)
+        
+        # Check for required columns
+        required_cols = ['Ch1Amplitude', 'Ch2Amplitude']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            return None
+        
+        # Filter rows with NaN values
+        df_clean = df[required_cols].dropna()
+        return df_clean
+        
+    except Exception as e:
+        logger.debug(f"Error loading CSV data from {csv_path}: {e}")
+        return None
 
 
 def _extract_clustering_results(result):
@@ -258,10 +342,6 @@ def _populate_data_well(ax, well, result, config):
             title = sample_name if sample_name else well
             ax.set_title(title, fontsize=6, pad=2)
             
-            # Add buffer zone overlay for plate plots
-            if result.get('has_buffer_zone', False):
-                _add_plate_buffer_zone_overlay(ax)
-            
             # Apply colored borders based on copy number state
             _apply_well_border(ax, result, well)
             
@@ -278,7 +358,7 @@ def _populate_data_well(ax, well, result, config):
 
 def _add_plate_buffer_zone_overlay(ax):
     """
-    Add buffer zone overlay for plate plots only.
+    Add buffer zone overlay for plate plots only (center overlay for composite view).
     
     Args:
         ax: Matplotlib axes object

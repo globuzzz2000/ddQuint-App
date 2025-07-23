@@ -41,24 +41,29 @@ def create_list_report(results, output_path):
         logger.error(error_msg)
         raise ValueError(error_msg)
     
-    # Filter results by minimum usable droplets
+    # Filter results by minimum usable droplets for successful analysis
+    # but keep error/insufficient data results for visibility
     filtered_results = []
     excluded_count = 0
     
     for result in results:
         usable_droplets = result.get('usable_droplets', 0)
-        if usable_droplets >= config.MIN_USABLE_DROPLETS:
+        has_error = result.get('error') is not None
+        
+        # Include wells with sufficient droplets OR wells with errors/insufficient data
+        if usable_droplets >= config.MIN_USABLE_DROPLETS or has_error or usable_droplets > 0:
             filtered_results.append(result)
         else:
+            # Only exclude wells with absolutely no data
             excluded_count += 1
             well_id = result.get('well', 'Unknown')
-            logger.debug(f"Excluding well {well_id} from report: {usable_droplets} usable droplets < {config.MIN_USABLE_DROPLETS} minimum")
+            logger.debug(f"Excluding well {well_id} from report: no data available")
     
     if excluded_count > 0:
-        logger.debug(f"Excluded {excluded_count} wells from analysis report due to insufficient usable droplets (< {config.MIN_USABLE_DROPLETS})")
+        logger.debug(f"Excluded {excluded_count} wells from analysis report due to no data")
     
     if not filtered_results:
-        error_msg = f"No wells meet minimum usable droplets requirement ({config.MIN_USABLE_DROPLETS})"
+        error_msg = f"No wells with any data available for reporting"
         logger.warning(error_msg)
         # Still create an empty report rather than failing
         filtered_results = []
@@ -250,6 +255,7 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
         copy_number_states = result.get('copy_number_states', {})
         has_aneuploidy = result.get('has_aneuploidy', False)
         has_buffer_zone = result.get('has_buffer_zone', False)
+        has_error = result.get('error') is not None
         
         # Extract droplet metrics from clustering results
         total_droplets = result.get('total_droplets', 0)
@@ -259,12 +265,14 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
         # Calculate positive droplets: Overall - Negative
         positive_droplets = total_droplets - negative_droplets
         
-        # Row fill
+        # Determine row fill based on status
         row_fill = None
         if has_buffer_zone:
             row_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
         elif has_aneuploidy:
             row_fill = PatternFill(start_color="F2CEEF", end_color="F2CEEF", fill_type="solid")
+        elif has_error:
+            row_fill = PatternFill(start_color="FFE6E6", end_color="FFE6E6", fill_type="solid")  # Light red for errors
         
         if row_fill:
             well_cell.fill = row_fill
@@ -273,12 +281,12 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
         # Fill relative and absolute copy number data
         _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys, 
                              copy_numbers, counts, copy_number_states, row_fill, 
-                             has_buffer_zone, has_aneuploidy)
+                             has_buffer_zone, has_aneuploidy, has_error)
         
         # Populate droplet readout columns with calculated values
         droplet_values = [usable_droplets, positive_droplets, total_droplets]
         for i, val in enumerate(droplet_values):
-            cell = ws.cell(row=row_idx, column=droplet_start + i, value=val)
+            cell = ws.cell(row=row_idx, column=droplet_start + i, value=val if val > 0 else "")
             cell.alignment = Alignment(horizontal='center', vertical='center')
             if row_fill:
                 cell.fill = row_fill
@@ -286,7 +294,7 @@ def fill_well_data(ws, sorted_results, chromosome_keys, config):
 
 def _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys, 
                          copy_numbers, counts, copy_number_states, row_fill, 
-                         has_buffer_zone, has_aneuploidy):
+                         has_buffer_zone, has_aneuploidy, has_error):
     """
     Fill chromosome data with appropriate highlighting.
     
@@ -302,11 +310,13 @@ def _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys,
         row_fill: PatternFill for row-level highlighting
         has_buffer_zone (bool): Whether sample has buffer zone
         has_aneuploidy (bool): Whether sample has aneuploidy
+        has_error (bool): Whether sample has error
     """
     for i, chrom_key in enumerate(chromosome_keys):
         # Relative copy numbers
         rel_cell = ws.cell(row=row_idx, column=rel_start + i)
         rel_count = copy_numbers.get(chrom_key)
+        # Show copy numbers even for error cases if they exist (partial analysis)
         if rel_count is not None:
             rel_cell.value = round(rel_count, 2)
             rel_cell.number_format = '0.00'
@@ -317,7 +327,11 @@ def _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys,
         # Absolute copy numbers
         abs_cell = ws.cell(row=row_idx, column=abs_start + i)
         abs_count = counts.get(chrom_key, 0)
-        abs_cell.value = abs_count if abs_count > 0 else ""
+        # Show counts even for error cases if they exist (partial analysis)
+        if abs_count > 0:
+            abs_cell.value = abs_count
+        else:
+            abs_cell.value = ""
         abs_cell.alignment = Alignment(horizontal='center', vertical='center')
         
         # Apply highlighting
@@ -325,7 +339,7 @@ def _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys,
             # Buffer zone samples get uniform dark grey fill
             rel_cell.fill = row_fill
             abs_cell.fill = row_fill
-        elif has_aneuploidy:
+        elif has_aneuploidy and not has_error:
             chrom_state = copy_number_states.get(chrom_key, 'euploid')
             if chrom_state == 'aneuploidy':
                 # Individual chromosome aneuploidy highlighting
@@ -336,6 +350,10 @@ def _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys,
                 # Non-aneuploidy chromosome in aneuploidy sample
                 rel_cell.fill = row_fill
                 abs_cell.fill = row_fill
+        elif row_fill:
+            # Error cases or other row-level highlighting
+            rel_cell.fill = row_fill
+            abs_cell.fill = row_fill
 
 
 def apply_formatting(ws, num_results, chromosome_keys):
