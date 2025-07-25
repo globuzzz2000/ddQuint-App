@@ -71,7 +71,7 @@ class Config:
     #############################################################################
     #                           Clustering Settings
     #############################################################################
-    # HDBSCAN clustering parameters (from working version)
+    # HDBSCAN clustering parameters
     HDBSCAN_MIN_CLUSTER_SIZE = 4
     HDBSCAN_MIN_SAMPLES = 70
     HDBSCAN_EPSILON = 0.06

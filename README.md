@@ -140,6 +140,46 @@ ddquint --config my_config.json --dir /path/to/csv/files
 - **Expected Copy Numbers**: Adjust expected copy number (in caso of differential stability/accessibility)
 - **Buffer Zone Thresholds**: Configure copy number classification ranges
 
+## Poisson Correction
+
+### The Mixed-Target Problem
+
+In multiplex ddPCR assays, each droplet can contain DNA from multiple targets (e.g., 5 chromosomes). The detection system has a critical limitation:
+
+- **Can detect**: Droplets positive for only one target type (even if multiple copies)
+- **Can detect**: Empty droplets (no targets)
+- **Cannot detect**: Droplets containing multiple different target types
+
+This means droplets with mixed targets are **undetectable and uncountable**. Without proper Poisson correction, this leads to systematic underestimation of true concentrations and incorrect target ratios.
+
+For targets, each with true concentration **λᵢ** copies per droplet, target copy numbers follow **Poisson distributions**.
+
+## Key Probabilities
+
+### Empty Droplets
+$P(\text{empty}) = e^{-(\lambda_1 + \lambda_2 + \lambda_3 + \lambda_4 + \lambda_5)}$
+
+### Single-Target Droplets  
+Droplets containing only target *i* (but possibly multiple copies of *i*):
+
+$P(\text{only } i) = \left(1 - e^{-\lambda_i}\right) \cdot \prod_{j \neq i} e^{-\lambda_j}$
+
+Where:
+- $\left(1 - e^{-\lambda_i}\right)$ = probability of ≥1 copy of target *i*
+- $\prod_{j \neq i} e^{-\lambda_j}$ = probability of 0 copies of all other targets
+
+## The Solution
+
+### Taking the Ratio
+$\frac{P(\text{only } i)}{P(\text{empty})} = \frac{\left(1 - e^{-\lambda_i}\right) \cdot \prod_{j \neq i} e^{-\lambda_j}}{\prod_{j=1}^5 e^{-\lambda_j}}$
+
+### Simplification
+$\frac{P(\text{only } i)}{P(\text{empty})} = \frac{1 - e^{-\lambda_i}}{e^{-\lambda_i}} = e^{\lambda_i} - 1$
+
+$\lambda_i = \ln\left(1 + \frac{P(\text{only } i)}{P(\text{empty})}\right)$
+
+This allows direct calculation of true target concentrations from observed exclusive counts and empty droplets, accounting for all undetectable mixed-target droplets.
+
 
 ## Copy Number Classification and Buffer Zones
 
