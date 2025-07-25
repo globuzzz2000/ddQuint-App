@@ -70,12 +70,13 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         # Set labels and title
         _set_plot_labels_and_title(ax, well_id, sample_name, for_composite)
         
-        # Save figure
-        dpi = 200 if for_composite else 150
+        # Save figure with config-based DPI
+        plot_type = 'composite' if for_composite else 'individual'
+        dpi = config.get_plot_dpi(plot_type)
         plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         
-        logger.debug(f"Well plot saved to: {save_path}")
+        logger.debug(f"Well plot saved to: {save_path} (DPI: {dpi})")
         return save_path
         
     except Exception as e:
@@ -434,12 +435,12 @@ def create_placeholder_plot(well_id, save_path, for_composite=False):
         # Set labels and title (minimal for placeholders)
         _set_plot_labels_and_title(ax, well_id, None, for_composite)
         
-        # Save figure
-        dpi = 200 if for_composite else 150
+        # Save figure with config-based DPI
+        dpi = config.get_plot_dpi('placeholder')
         plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         
-        logger.debug(f"Placeholder plot saved to: {save_path}")
+        logger.debug(f"Placeholder plot saved to: {save_path} (DPI: {dpi})")
         return save_path
         
     except Exception as e:

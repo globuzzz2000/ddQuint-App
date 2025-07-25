@@ -125,6 +125,11 @@ class Config:
     INDIVIDUAL_FIGURE_SIZE = (6, 5)
     COMPOSITE_PLOT_SIZE = (5, 5)
     
+    # DPI settings for different plot types
+    INDIVIDUAL_PLOT_DPI = 300      # High resolution for standalone plots
+    COMPOSITE_PLOT_DPI = 200       # Medium resolution for composite images
+    PLACEHOLDER_PLOT_DPI = 150     # Lower resolution for placeholder plots
+    
     # Axis limits
     X_AXIS_MIN = 0
     X_AXIS_MAX = 3000
@@ -363,6 +368,39 @@ class Config:
             'deletion': deletion_range,
             'duplication': duplication_range
         }
+    
+    @classmethod
+    def get_plot_dpi(cls, plot_type: str = 'individual') -> int:
+        """
+        Get DPI setting for different plot types.
+        
+        Args:
+            plot_type: Type of plot ('individual', 'composite', or 'placeholder')
+            
+        Returns:
+            DPI value for the specified plot type
+            
+        Raises:
+            ConfigError: If unknown plot type is specified
+            
+        Example:
+            >>> config = Config.get_instance()
+            >>> dpi = config.get_plot_dpi('composite')
+            >>> dpi
+            200
+        """
+        dpi_mapping = {
+            'individual': cls.INDIVIDUAL_PLOT_DPI,
+            'composite': cls.COMPOSITE_PLOT_DPI,
+            'placeholder': cls.PLACEHOLDER_PLOT_DPI
+        }
+        
+        if plot_type not in dpi_mapping:
+            error_msg = f"Unknown plot type: {plot_type}. Valid types: {list(dpi_mapping.keys())}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg, config_key="plot_type")
+        
+        return dpi_mapping[plot_type]
     
     @classmethod
     def load_from_file(cls, filepath: str) -> bool:
