@@ -40,9 +40,6 @@ pip install -e .
 ```bash
 # Basic analysis
 ddquint --dir /path/to/csv/files
-
-# Test mode (preserves input files)
-ddquint --test --dir /path/to/csv/files
 ```
 
 ### Interactive Mode
@@ -226,6 +223,11 @@ Automatically searches for QX template files to map well positions to sample nam
 - Searches in parent directories (configurable depth)
 - Extracts sample names from "Sample description" columns
 
+Alternatively provide QX template file location for sample naming:
+
+```bash
+ddprimer --template /path/to/csv
+```
 
 ## Troubleshooting
 

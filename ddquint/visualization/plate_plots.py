@@ -168,12 +168,8 @@ def _get_raw_data_for_result(result, output_path):
     Returns:
         DataFrame with raw data or None if not available
     """
-    # First check if we have filtered data from successful processing
-    df_filtered = result.get('df_filtered')
-    if df_filtered is not None and not df_filtered.empty:
-        return df_filtered
-    
-    # For error cases, try to reload the raw data from the CSV file
+    # Always try to reload the ORIGINAL raw data from the CSV file for composite plots
+    # This ensures we get ALL droplets (clustered + unclustered) for visualization
     filename = result.get('filename')
     well_id = result.get('well')
     
@@ -198,6 +194,12 @@ def _get_raw_data_for_result(result, output_path):
             
         except Exception as e:
             logger.debug(f"Error reloading raw data for well {well_id}: {e}")
+    
+    # Fallback: If we can't reload from CSV, use filtered data (better than nothing)
+    df_filtered = result.get('df_filtered')
+    if df_filtered is not None and not df_filtered.empty:
+        logger.debug(f"Using filtered data as fallback for {well_id}")
+        return df_filtered
     
     return None
 

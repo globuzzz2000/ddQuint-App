@@ -271,7 +271,7 @@ def _add_data_content(ax, df, clustering_results, well_id, for_composite,
     
     Args:
         ax: Matplotlib axes object (already formatted)
-        df: DataFrame with droplet data
+        df: DataFrame with droplet data (original unfiltered data)
         clustering_results (dict): Results from clustering analysis
         well_id (str): Well identifier
         for_composite (bool): Whether this is for composite image
@@ -287,14 +287,30 @@ def _add_data_content(ax, df, clustering_results, well_id, for_composite,
     
     logger.debug(f"Plotting {len(df_filtered)} filtered droplets for well {well_id}")
     
-    # Assign colors based on target labels
+    # Get unclustered points (noise points with cluster = -1)
+    # We need to get the original clustering data to identify unclustered points
+    scatter_size = 5 if for_composite else 8
+    
+    # Find unclustered points by comparing original df with df_filtered
+    # Create a set of indices that are in df_filtered
+    clustered_indices = set(df_filtered.index)
+    unclustered_mask = ~df.index.isin(clustered_indices)
+    df_unclustered = df[unclustered_mask]
+    
+    # Plot unclustered points using "Unknown" color (same as unassigned clusters)
+    unknown_color = label_color_map.get('Unknown', '#c7c7c7')
+    if not df_unclustered.empty:
+        ax.scatter(df_unclustered['Ch2Amplitude'], df_unclustered['Ch1Amplitude'],
+                  c=unknown_color, s=scatter_size, alpha=0.6, label='Unclustered')
+    
+    # Plot clustered droplets with target colors
     df_filtered_copy = df_filtered.copy()
     df_filtered_copy['color'] = df_filtered_copy['TargetLabel'].map(label_color_map)
     
-    # Plot all droplets, colored by target
-    scatter_size = 5 if for_composite else 8
     ax.scatter(df_filtered_copy['Ch2Amplitude'], df_filtered_copy['Ch1Amplitude'],
               c=df_filtered_copy['color'], s=scatter_size, alpha=0.6)
+    
+    logger.debug(f"Plotted {len(df_filtered)} clustered droplets and {len(df_unclustered)} unclustered droplets for well {well_id}")
     
     # Add copy number annotations if requested
     if add_copy_numbers and copy_numbers:
@@ -308,7 +324,7 @@ def _add_data_content(ax, df, clustering_results, well_id, for_composite,
     
     # Add legend for standalone plots
     if not for_composite:
-        _add_legend(ax, label_color_map, counts)
+        _add_legend(ax, label_color_map, counts, has_unclustered=(not df_unclustered.empty))
 
 
 def _add_well_buffer_zone_overlay(ax, for_composite):
@@ -368,7 +384,8 @@ def _add_copy_number_annotations(ax, df_filtered, copy_numbers, copy_number_stat
                         bbox=dict(facecolor='white', alpha=0.7, pad=1, edgecolor='none'))
 
 
-def _add_legend(ax, label_color_map, counts):
+
+def _add_legend(ax, label_color_map, counts, has_unclustered=False):
     """Add legend for standalone plots."""
     # Define ordered labels for legend
     ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
@@ -386,6 +403,14 @@ def _add_legend(ax, label_color_map, counts):
         handle = mpl.lines.Line2D([], [], marker='o', linestyle='', markersize=10,
                                markerfacecolor=color, markeredgecolor='none', label=tgt)
         legend_handles.append(handle)
+    
+    # Add unclustered points to legend if they exist
+    if has_unclustered:
+        unknown_color = label_color_map.get('Unknown', '#c7c7c7')
+        unclustered_handle = mpl.lines.Line2D([], [], marker='o', linestyle='', markersize=10,
+                                            markerfacecolor=unknown_color, markeredgecolor='none', 
+                                            label='Unclustered')
+        legend_handles.append(unclustered_handle)
     
     # Add legend to right side of plot
     ax.legend(handles=legend_handles, title="Target",
