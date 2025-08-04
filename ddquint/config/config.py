@@ -53,15 +53,15 @@ class Config:
     # Format: { "target_name": [Ch1Amplitude, Ch2Amplitude] }
     EXPECTED_CENTROIDS = {
         "Negative": [1000, 900],
-        "Chrom1":   [1000, 2400],
+        "Chrom1":   [1000, 2300],
         "Chrom2":   [1800, 2200],
-        "Chrom3":   [2600, 1850],
-        "Chrom4":   [3200, 1400],
-        "Chrom5":   [3600, 800]
+        "Chrom3":   [2400, 1750],
+        "Chrom4":   [3100, 1300],
+        "Chrom5":   [3500, 900]
     }
     
     # Tolerance for matching clusters to targets
-    BASE_TARGET_TOLERANCE = 500
+    BASE_TARGET_TOLERANCE = 750
     
     # Scale factor limits for adaptive tolerance
     SCALE_FACTOR_MIN = 0.5
@@ -92,20 +92,20 @@ class Config:
     
     # Expected copy number values for each chromosome (baseline for calculations)
     EXPECTED_COPY_NUMBERS = {
-        "Chrom1": 0.9688,
-        "Chrom2": 1.0066,
-        "Chrom3": 1.0300,
-        "Chrom4": 0.9890,
-        "Chrom5": 1.0056
+        "Chrom1": 0.9716,
+        "Chrom2": 1.0052,
+        "Chrom3": 1.0278,
+        "Chrom4": 0.9912,
+        "Chrom5": 1.0035
     }
     
     # Standard deviation for each chromosome (empirically determined)
     EXPECTED_STANDARD_DEVIATION = {
-        "Chrom1": 0.0299,
-        "Chrom2": 0.0243,
-        "Chrom3": 0.0286,
-        "Chrom4": 0.0244,
-        "Chrom5": 0.0225
+        "Chrom1": 0.0312,
+        "Chrom2": 0.0241,
+        "Chrom3": 0.0290,
+        "Chrom4": 0.0242,
+        "Chrom5": 0.0230
     }
     
     # Tolerance multiplier for standard deviation-based classification

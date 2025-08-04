@@ -17,18 +17,19 @@ logger = logging.getLogger(__name__)
 def extract_well_coordinate(filename):
     """
     Extract well coordinate (like A01, E05) from a filename.
+    Only accepts coordinates in format like "_A05_Amplitude".
     
     Args:
         filename (str): Filename to extract well coordinate from
         
     Returns:
-        str: Well coordinate (e.g., 'A01') or None if not found
+        str: Well coordinate (e.g., 'A05') or None if not found
         
     Example:
-        >>> extract_well_coordinate("Sample_A01_data.csv")
-        'A01'
-        >>> extract_well_coordinate("B5_results.csv") 
-        'B05'
+        >>> extract_well_coordinate("JaW_E9_B2_LCO_20250709_160810_006_A05_Amplitude.csv")
+        'A05'
+        >>> extract_well_coordinate("JaW_E10_B2_LCO_20250709_160810_006_H12_Amplitude.csv")
+        'H12'
     """
     if not filename:
         logger.debug("Empty filename provided")
@@ -36,53 +37,21 @@ def extract_well_coordinate(filename):
         
     logger.debug(f"Extracting well coordinate from filename: {filename}")
     
-    # Look for explicitly marked well coordinates (like _A01_ or similar patterns)
-    explicit_pattern = r'_([A-H][0-9]{2})_'
-    explicit_matches = re.findall(explicit_pattern, filename)
-    if explicit_matches:
-        well_id = explicit_matches[0]
-        logger.debug(f"Found explicit well coordinate: {well_id}")
-        return well_id
+    # Only look for pattern like _A05_Amplitude
+    pattern = r'_([A-H][0-9]{1,2})_Amplitude'
+    matches = re.findall(pattern, filename)
     
-    # Try finding patterns with a letter followed by numbers
-    patterns = [
-        r'_([A-H][0-9]{2})',         # _A01
-        r'([A-H][0-9]{2})_',         # A01_
-        r'_([A-H][0-9]{1,2})[_\.]',  # _A1_ or _A1.
-        r'([A-H][0-9]{1,2})[_\.]'    # A1_ or A1.
-    ]
-    
-    for i, pattern in enumerate(patterns):
-        matches = re.findall(pattern, filename)
-        if matches:
-            match = matches[-1]  # Use the last match as it's more likely to be the actual well
-            
-            # Format to ensure we have A01 format (not A1)
-            formatted_well = format_well_id(match)
-            if formatted_well:
-                logger.debug(f"Found well coordinate pattern {i}: {match} -> formatted as {formatted_well}")
-                return formatted_well
-            
-            logger.debug(f"Found well coordinate pattern {i}: {match}")
-            return match
-    
-    # Final fallback - look for any well-like coordinate
-    general_pattern = r'([A-H][0-9]{1,2})'
-    general_matches = re.findall(general_pattern, filename)
-    
-    if general_matches:
-        match = general_matches[-1]
-        formatted_well = format_well_id(match)
-        if formatted_well:
-            logger.debug(f"Found general well coordinate: {match} -> formatted as {formatted_well}")
+    if matches:
+        well_id = matches[0]  # Take the first (should only be one)
+        formatted_well = format_well_id(well_id)
+        if formatted_well and is_valid_well(formatted_well):
+            logger.debug(f"Found well coordinate: {well_id} -> formatted as {formatted_well}")
             return formatted_well
-        
-        logger.debug(f"Found general well coordinate: {match}")
-        return match
+        else:
+            logger.debug(f"Found match {well_id} but it's not a valid well coordinate")
     
     logger.debug(f"No well coordinate found in filename: {filename}")
     return None
-
 
 def is_valid_well(well_id):
     """
