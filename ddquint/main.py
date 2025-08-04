@@ -26,6 +26,7 @@ warnings.filterwarnings("ignore", message=".*SettingWithCopyWarning.*")
 
 # Import configuration modules
 from .config import Config, display_config, generate_config_template, ddQuintError, ConfigError, FileProcessingError
+from .utils.parameter_editor import open_parameter_editor, load_parameters_if_exist
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ Examples:
   ddquint                           # Interactive analysis mode with GUI
   ddquint --dir /path/to/csv        # Process specific directory
   ddquint --batch                   # Process multiple directories with GUI selection
+  ddquint --parameters              # Open parameter editor GUI
   ddquint --QXtemplate              # Interactively create a plate template
   ddquint --QXtemplate list.xlsx    # Create template from a specific file
   ddquint --config                  # Display configuration
@@ -114,6 +116,11 @@ Examples:
         default=None,
         help="Create a plate template from a sample list (CSV/Excel). "
              "Optionally provide a path or use 'prompt' for a GUI selector."
+    )
+    parser.add_argument(
+        "--parameters",
+        action="store_true",
+        help="Open parameter editor GUI for EXPECTED_CENTROIDS and HDBSCAN settings"
     )
     
     return parser.parse_args()
@@ -400,7 +407,26 @@ def main():
         # Setup logging
         from .config import setup_logging
         log_file = setup_logging(debug=args.debug)
-        
+
+        # Load user parameters if they exist (before other config operations)
+        from .config import Config
+        load_parameters_if_exist(Config)
+
+        # Handle Parameters Editor Flag
+        if args.parameters:
+            logger.info("=== ddPCR Quintuplex - Parameter Editor ===")
+            try:
+                if open_parameter_editor(Config):
+                    logger.info("Parameters updated successfully")
+                else:
+                    logger.info("Parameter editing cancelled")
+            except Exception as e:
+                logger.error(f"Parameter editor failed: {e}")
+                if args.verbose or args.debug:
+                    traceback.print_exc()
+                sys.exit(1)
+            return
+
         # Handle Template Creator Flag
         if args.QXtemplate:
             logger.info("=== ddPCR Quintuplex - Template Creator ===")
@@ -487,7 +513,6 @@ def main():
         if args and (args.verbose or args.debug):
             traceback.print_exc()
         sys.exit(1)
-
 
 def _create_output_files(results, output_dir, sample_names, config):
     """Create all output files from processing results."""

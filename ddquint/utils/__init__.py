@@ -25,6 +25,15 @@ from .template_creator import (
     create_template_from_file
 )
 
+from .parameter_editor import (
+    open_parameter_editor,
+    load_parameters_if_exist,
+    apply_parameters_to_config,
+    parameters_exist,
+    get_parameters_file_path,
+    console_parameter_editor
+)
+
 __all__ = [
     # File I/O utilities
     'ensure_directory',
@@ -49,5 +58,13 @@ __all__ = [
     'find_header_row',
     'parse_template_file',
     'get_sample_names',
-    'create_template_from_file'
+    'create_template_from_file',
+
+    # Parameter editor
+    'open_parameter_editor',
+    'load_parameters_if_exist',
+    'apply_parameters_to_config',
+    'parameters_exist',
+    'get_parameters_file_path',
+    'console_parameter_editor'
 ]

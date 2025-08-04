@@ -611,3 +611,21 @@ class Config:
             'x': cls.X_GRID_INTERVAL,
             'y': cls.Y_GRID_INTERVAL
         }
+
+    @classmethod
+    def load_user_parameters(cls):
+        """
+        Load user parameters from the parameter editor if they exist.
+        
+        This method is called automatically during configuration setup
+        to apply any user-customized parameters.
+        """
+        try:
+            from .utils.parameter_editor import load_parameters_if_exist
+            return load_parameters_if_exist(cls)
+        except ImportError:
+            logger.debug("Parameter editor module not available")
+            return False
+        except Exception as e:
+            logger.debug(f"Could not load user parameters: {e}")
+            return False

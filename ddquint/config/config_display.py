@@ -133,12 +133,6 @@ def _get_setting_categories():
         Dictionary mapping category names to lists of setting keys
     """
     return {
-        "Pipeline Mode Options": [
-            "DEBUG_MODE"
-        ],
-        "Performance Settings": [
-            "NUM_PROCESSES", "BATCH_SIZE", "SHOW_PROGRESS"
-        ],
         "Clustering Settings": [
             "HDBSCAN_MIN_CLUSTER_SIZE", "HDBSCAN_MIN_SAMPLES", "HDBSCAN_EPSILON",
             "HDBSCAN_METRIC", "HDBSCAN_CLUSTER_SELECTION_METHOD", "MIN_POINTS_FOR_CLUSTERING"
