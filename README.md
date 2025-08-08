@@ -1,6 +1,6 @@
 # ddQuint: Digital Droplet PCR Quintuplex Analysis
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 ![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)
 
 A comprehensive pipeline for analyzing digital droplet PCR (ddPCR) data for aneuploidy detection.
@@ -116,6 +116,23 @@ Example configuration:
 }
 ```
 
+### Parameter Editor
+
+Use the parameter editor for configuring frequently modified settings (HDBSCAN Settings, Expected Centroids, ...):
+
+```bash
+# Launch parameter editor GUI
+ddquint --parameterss
+```
+
+**Parameter Priority Order:**
+1. User parameters file (highest priority)
+2. Config file specified with `--config`
+3. Default config.py values (lowest priority)
+
+The parameter editor automatically loads on startup and provides tooltips with detailed explanations and optimization tips for each setting.
+
+
 ### Configuration Management
 
 ```bash
@@ -129,13 +146,6 @@ ddquint --config template
 ddquint --config my_config.json --dir /path/to/csv/files
 ```
 
-
-### Key Configuration Parameters
-
-- **Clustering Parameters**: Control HDBSCAN clustering behavior
-- **Expected Centroids**: Define target positions for each chromosome
-- **Expected Copy Numbers**: Adjust expected copy number (in caso of differential stability/accessibility)
-- **Buffer Zone Thresholds**: Configure copy number classification ranges
 
 ## Poisson Correction
 
@@ -242,4 +252,4 @@ For more detailed output, run `ddprimer --debug` or check the logs in `~/.ddQuin
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License - see the LICENSE file for details.
