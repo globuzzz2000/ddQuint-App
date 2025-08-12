@@ -122,7 +122,7 @@ Use the parameter editor for configuring frequently modified settings (HDBSCAN S
 
 ```bash
 # Launch parameter editor GUI
-ddquint --parameterss
+ddquint --parameters
 ```
 
 **Parameter Priority Order:**
