@@ -1,6 +1,6 @@
 # ddQuint: Digital Droplet PCR Quintuplex Analysis
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)]
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 
 A comprehensive pipeline for analyzing digital droplet PCR (ddPCR) data for aneuploidy detection.
