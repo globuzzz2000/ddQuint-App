@@ -11,7 +11,8 @@ authors = [
     {name = "Jakob Wimmer", email = "globuds133@gmail.com"}
 ]
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -29,6 +30,7 @@ dependencies = [
     "scikit-learn>=0.24.0",
     "hdbscan>=0.8.27",
     "openpyxl>=3.0.5",
+    "Send2Trash>=1.8.2",
     "wxpython>=4.1.0",  # For GUI file selection
     "colorama>=0.4.4",  # For colored terminal output
     "tqdm>=4.60.0",     # For progress bars

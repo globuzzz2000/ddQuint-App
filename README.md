@@ -21,17 +21,17 @@ A comprehensive pipeline for analyzing digital droplet PCR (ddPCR) data for aneu
 
 ## Installation
 
+### Using conda
+
+```bash
+conda install -c bioconda ddquint
+```
+
 ### Using pip
 
 ```bash
-# Clone the repository
-git clone https://github.com/globuzzz2000/ddQuint
-cd ddQuint
-
-# Install the package with all dependencies
-pip install -e .
+pip install ddquint
 ```
-
 
 ## Quick Start
 
