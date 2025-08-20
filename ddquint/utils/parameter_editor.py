@@ -375,13 +375,9 @@ class ParameterEditorFrame(wx.Dialog):
         main_sizer.Add(self.notebook, 1, wx.EXPAND | wx.ALL, 5)
         
         button_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        load_btn = wx.Button(panel, label="Load from Config")
-        load_btn.Bind(wx.EVT_BUTTON, self.on_load_from_config)
-        button_sizer.Add(load_btn, 0, wx.ALL, 5)
-        
-        reset_btn = wx.Button(panel, label="Reset to Defaults")
-        reset_btn.Bind(wx.EVT_BUTTON, self.on_reset_defaults)
-        button_sizer.Add(reset_btn, 0, wx.ALL, 5)
+        reset_cfg_btn = wx.Button(panel, label="Reset to Config")
+        reset_cfg_btn.Bind(wx.EVT_BUTTON, self.on_load_from_config)
+        button_sizer.Add(reset_cfg_btn, 0, wx.ALL, 5)
         
         button_sizer.AddStretchSpacer()
         
@@ -738,7 +734,7 @@ class ParameterEditorFrame(wx.Dialog):
                 logger.debug(f"Loaded parameters from {PARAMETERS_FILE}")
                 
                 # Ensure all required parameters exist with defaults if missing
-                required_defaults = self._get_default_parameters()
+                required_defaults = self._get_factory_defaults()
                 for key, default_value in required_defaults.items():
                     if key not in params:
                         params[key] = default_value
@@ -749,12 +745,11 @@ class ParameterEditorFrame(wx.Dialog):
                 logger.warning(f"Error loading parameters file: {e}")
         
         # Return config defaults
-        return self._get_default_parameters()
+        return self._get_factory_defaults()
     
-    def _get_default_parameters(self):
-        """Get default parameters from config with fallbacks."""
-        # Hard-coded defaults that match your config.py
-        defaults = {
+    def _get_factory_defaults(self):
+        """Return hard-coded factory defaults (matches config.py)."""
+        return {
             'EXPECTED_CENTROIDS': {
                 "Negative": [1000, 900],
                 "Chrom1": [1000, 2300],
@@ -800,17 +795,20 @@ class ParameterEditorFrame(wx.Dialog):
             'INDIVIDUAL_PLOT_DPI': 300,
             'COMPOSITE_PLOT_DPI': 200,
         }
-        
-        # Override defaults with actual config values if they exist and different from defaults
-        for key, default_value in defaults.items():
-            config_value = self._get_config_attr(key, default_value)
-            if config_value != default_value:
-                defaults[key] = config_value
-                logger.debug(f"Config override {key}: {config_value}")
-            else:
-                logger.debug(f"Using default for {key}: {default_value}")
-        
+
+    def _get_config_snapshot(self):
+        """Get current parameters from the live config class."""
+        defaults = self._get_factory_defaults()
+        for key in defaults:
+            config_value = self._get_config_attr(key, defaults[key])
+            defaults[key] = config_value
         return defaults
+
+    def _get_config_file_snapshot(self):
+        """Get parameters from the original config.py file on disk."""
+        # Use the factory defaults as these represent the original config.py values
+        # This is simpler and more reliable than trying to re-import the module
+        return self._get_factory_defaults()
     
     def _populate_grid(self, grid, data):
         """Populate a grid with data dictionary."""
@@ -848,6 +846,7 @@ class ParameterEditorFrame(wx.Dialog):
         self.clustering_controls['epsilon'].SetValue(str(p.get('HDBSCAN_EPSILON', 0.06)))
         self.clustering_controls['metric'].SetStringSelection(p.get('HDBSCAN_METRIC', 'euclidean'))
         self.clustering_controls['selection_method'].SetStringSelection(p.get('HDBSCAN_CLUSTER_SELECTION_METHOD', 'eom'))
+        self.clustering_controls['min_points'].SetValue(p.get('MIN_POINTS_FOR_CLUSTERING', 50))
         
         # Load copy number settings
         self.copy_number_controls['min_droplets'].SetValue(p.get('MIN_USABLE_DROPLETS', 3000))
@@ -958,25 +957,25 @@ class ParameterEditorFrame(wx.Dialog):
         return params
     
     def on_load_from_config(self, event):
-        """Load values from current config."""
-        # Get fresh config values
-        self.parameters = self._get_default_parameters()
-        self.load_values()
-        wx.MessageBox("Parameters loaded from current configuration", "Info", wx.OK | wx.ICON_INFORMATION)
-    
-    def on_reset_defaults(self, event):
-        """Reset to default values."""
-        if wx.MessageBox("Reset all parameters to defaults?", "Confirm", wx.YES_NO | wx.ICON_QUESTION) == wx.YES:
-            # Reset to hard-coded defaults from config.py
-            self.parameters = self._get_default_parameters()
-            
-            # Clear grids first
-            self.centroids_grid.ClearGrid()
-            self.copy_numbers_grid.ClearGrid()
-            self.std_dev_grid.ClearGrid()
-            
+        """Reset values to what is defined in config.py on disk."""
+        try:
+            # Get factory defaults (original config.py values)
+            self.parameters = self._get_config_file_snapshot()
+
+            # Reload values into the GUI
             self.load_values()
-            wx.MessageBox("Parameters have been reset to their default values.", "Info", wx.OK | wx.ICON_INFORMATION)
+
+            # Force UI refresh so changes are visible immediately
+            self.Layout()
+            self.centroids_grid.ForceRefresh()
+            self.copy_numbers_grid.ForceRefresh()
+            self.std_dev_grid.ForceRefresh()
+            self.Refresh()
+
+            wx.MessageBox("Parameters reset to default configuration values", "Info", wx.OK | wx.ICON_INFORMATION)
+        except Exception as e:
+            logger.error(f"Reset to Config failed: {e}", exc_info=True)
+            wx.MessageBox(f"Reset to Config failed: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
     def on_save(self, event):
         """Save parameters and close."""
@@ -1173,7 +1172,7 @@ def apply_parameters_to_config(config_cls):
             else:
                 logger.warning(f"Unknown parameter key: {key}")
         
-        logger.info(f"Applied parameters from {PARAMETERS_FILE} (highest priority)")
+        logger.debug(f"Applied parameters from {PARAMETERS_FILE} (highest priority)")
         
     except Exception as e:
         logger.error(f"Error applying parameters: {e}")

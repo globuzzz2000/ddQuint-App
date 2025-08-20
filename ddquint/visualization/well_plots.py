@@ -199,8 +199,9 @@ def _add_raw_data_with_error(ax, df, clustering_results, well_id, for_composite)
         
         # Plot clustered droplets with colors
         scatter_size = 3 if for_composite else 6
+        colors = df_filtered_copy['color'].fillna(label_color_map.get('Unknown', '#c7c7c7')).astype(str).tolist()
         ax.scatter(df_filtered_copy['Ch2Amplitude'], df_filtered_copy['Ch1Amplitude'],
-                  c=df_filtered_copy['color'], s=scatter_size, alpha=0.6)
+                  c=colors, s=scatter_size, alpha=0.6)
         
         # Add legend for standalone plots if we have clusters
         if not for_composite:
@@ -307,8 +308,9 @@ def _add_data_content(ax, df, clustering_results, well_id, for_composite,
     df_filtered_copy = df_filtered.copy()
     df_filtered_copy['color'] = df_filtered_copy['TargetLabel'].map(label_color_map)
     
+    colors = df_filtered_copy['color'].fillna(label_color_map.get('Unknown', '#c7c7c7')).astype(str).tolist()
     ax.scatter(df_filtered_copy['Ch2Amplitude'], df_filtered_copy['Ch1Amplitude'],
-              c=df_filtered_copy['color'], s=scatter_size, alpha=0.6)
+              c=colors, s=scatter_size, alpha=0.6)
     
     logger.debug(f"Plotted {len(df_filtered)} clustered droplets and {len(df_unclustered)} unclustered droplets for well {well_id}")
     

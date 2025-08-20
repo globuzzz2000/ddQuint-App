@@ -468,6 +468,9 @@ def main():
         if args.config:
             if handle_config_command(args.config):
                 return  # Exit if configuration command was handled
+
+        # Build color map now that config and user parameters (and optional config file) are loaded
+        Config.finalize_colors()
         
         # Get input directories
         input_dirs = get_input_directories(args)

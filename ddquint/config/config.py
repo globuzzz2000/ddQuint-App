@@ -141,21 +141,15 @@ class Config:
     Y_GRID_INTERVAL = 1000
     
     # Color scheme for targets (up to 10 chromosomes)
-    TARGET_COLORS = {
-        "Negative": "#1f77b4",  # blue
-        "Chrom1":   "#f59a23",  # orange
-        "Chrom2":   "#7ec638",  # green
-        "Chrom3":   "#16d9ff",  # cyan
-        "Chrom4":   "#f65352",  # red
-        "Chrom5":   "#82218b",  # purple
-        "Chrom6":   "#8c564b",  # brown
-        "Chrom7":   "#e377c2",  # pink
-        "Chrom8":   "#7f7f7f",  # gray
-        "Chrom9":   "#bcbd22",  # olive
-        "Chrom10":  "#9edae5",  # light cyan
-        "Unknown":  "#c7c7c7"   # light gray
+    DEFAULT_COLOR_PALETTE = [
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+        "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+    ]
+    SPECIAL_COLOR_DEFAULTS = {
+        "Negative": "#1f77b4",
+        "Unknown":  "#c7c7c7",
     }
-    
+
     # Copy number state highlighting colors
     ANEUPLOIDY_FILL_COLOR = "#E6B8E6"  # Light purple (for definitive aneuploidies)
     ANEUPLOIDY_VALUE_FILL_COLOR = "#D070D0"  # Darker purple (for aneuploidy values)
@@ -629,3 +623,71 @@ class Config:
         except Exception as e:
             logger.debug(f"Could not load user parameters: {e}")
             return False
+
+    # Target colors
+    TARGET_COLORS: dict = {}
+
+    @classmethod
+    def _get_target_names(cls):
+        """
+        Return the current list of target names.
+        Tries EXPECTED_COPY_NUMBERS first, then EXPECTED_CENTROIDS.
+        Always includes special names present in cls.SPECIAL_COLOR_DEFAULTS.
+        """
+        names = []
+        if hasattr(cls, "EXPECTED_COPY_NUMBERS") and isinstance(cls.EXPECTED_COPY_NUMBERS, dict):
+            names = list(cls.EXPECTED_COPY_NUMBERS.keys())
+        elif hasattr(cls, "EXPECTED_CENTROIDS") and isinstance(cls.EXPECTED_CENTROIDS, dict):
+            names = list(cls.EXPECTED_CENTROIDS.keys())
+
+        # ensure specials are present
+        for s in getattr(cls, "SPECIAL_COLOR_DEFAULTS", {}).keys():
+            if s not in names:
+                names.append(s)
+
+        return names
+
+    @classmethod
+    def _reconcile_target_colors(cls):
+        """
+        Make sure TARGET_COLORS matches the current target names.
+        Preserves old colors where possible, assigns new ones as needed.
+        """
+        from itertools import cycle
+
+        old = dict(getattr(cls, "TARGET_COLORS", {}))
+        names = cls._get_target_names()
+        new = {}
+
+        # keep special defaults stable
+        for name, col in getattr(cls, "SPECIAL_COLOR_DEFAULTS", {}).items():
+            if name in names:
+                new[name] = old.get(name, col)
+
+        # assign colors to all other names
+        used = set(new.values())
+        base_palette = list(getattr(cls, "DEFAULT_COLOR_PALETTE", []))
+        palette = [c for c in base_palette if c not in used]
+        color_iter = cycle(base_palette if base_palette else ["#000000"])
+
+        def next_color():
+            if palette:
+                return palette.pop(0)
+            return next(color_iter)
+
+        for name in names:
+            if name in new:
+                continue
+            if name in old and old[name]:
+                new[name] = old[name]
+            else:
+                new[name] = next_color()
+
+        cls.TARGET_COLORS = new
+
+    @classmethod
+    def finalize_colors(cls):
+        """
+        Public method: call after editing targets (e.g., via parameter editor).
+        """
+        cls._reconcile_target_colors()
