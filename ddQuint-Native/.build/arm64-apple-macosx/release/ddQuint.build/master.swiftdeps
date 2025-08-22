@@ -1,0 +1,9 @@
+version: "Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)"
+options: "91b2ba9ebdebd15b6966d3515ae97c957eb27af16131b921bbb7fab77bff508e"
+build_start_time: [1755851834, 562063000]
+build_end_time: [1755851840, 863105000]
+inputs:
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/AppDelegate.swift": [1755728170, 626402979]
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/InteractiveApp.swift": [1755851816, 519179557]
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/SimpleApp.swift": [1755697148, 174270879]
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/main.swift": [1755696332, 255248314]

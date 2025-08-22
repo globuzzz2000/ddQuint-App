@@ -57,9 +57,10 @@ Documentation = "https://github.com/globuzzz2000/ddQuint#readme"
 
 [project.scripts]
 ddquint = "ddquint.main:main"
+ddquint-gui = "ddquint.gui:main"
 
 [tool.setuptools]
-packages = ["ddquint", "ddquint.core", "ddquint.utils", "ddquint.visualization", "ddquint.config"]
+packages = ["ddquint", "ddquint.core", "ddquint.utils", "ddquint.visualization", "ddquint.config", "ddquint.gui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

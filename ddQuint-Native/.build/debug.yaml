@@ -1,0 +1,81 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "PackageStructure": ["<PackageStructure>"]
+  "ddQuint-arm64-apple-macosx15.0-debug.exe": ["<ddQuint-arm64-apple-macosx15.0-debug.exe>"]
+  "ddQuint-arm64-apple-macosx15.0-debug.module": ["<ddQuint-arm64-apple-macosx15.0-debug.module>"]
+  "main": ["<ddQuint-arm64-apple-macosx15.0-debug.exe>","<ddQuint-arm64-apple-macosx15.0-debug.module>"]
+  "test": ["<ddQuint-arm64-apple-macosx15.0-debug.exe>","<ddQuint-arm64-apple-macosx15.0-debug.module>"]
+default: "main"
+nodes:
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint":
+    is-mutated: true
+commands:
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint-entitlement.plist":
+    tool: write-auxiliary-file
+    inputs: ["<entitlement-plist>","<com.apple.security.get-task-allow>"]
+    outputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint-entitlement.plist"]
+    description: "Write auxiliary file /Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint-entitlement.plist"
+
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/AnalysisManager.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/AppDelegate.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/ExportManager.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/InteractiveApp.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/SimpleApp.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/main.swift"]
+    outputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/sources"]
+    description: "Write auxiliary file /Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/sources"
+
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/AnalysisManager.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/AppDelegate.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/ExportManager.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/InteractiveApp.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/SimpleApp.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/main.swift.o"]
+    outputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.product/Objects.LinkFileList"
+
+  "/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"]
+    outputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+
+  "<ddQuint-arm64-apple-macosx15.0-debug.exe>":
+    tool: phony
+    inputs: ["<ddQuint-arm64-apple-macosx15.0-debug.exe-CodeSigning>"]
+    outputs: ["<ddQuint-arm64-apple-macosx15.0-debug.exe>"]
+
+  "<ddQuint-arm64-apple-macosx15.0-debug.module>":
+    tool: phony
+    inputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/AnalysisManager.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/AppDelegate.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/ExportManager.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/InteractiveApp.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/SimpleApp.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/main.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/Modules/ddQuint.swiftmodule"]
+    outputs: ["<ddQuint-arm64-apple-macosx15.0-debug.module>"]
+
+  "C.ddQuint-arm64-apple-macosx15.0-debug.exe":
+    tool: shell
+    inputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/AnalysisManager.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/AppDelegate.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/ExportManager.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/InteractiveApp.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/SimpleApp.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/main.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.product/Objects.LinkFileList"]
+    outputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint"]
+    description: "Linking ./.build/arm64-apple-macosx/debug/ddQuint"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug","-o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint","-module-name","ddQuint","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-alias","-Xlinker","_ddQuint_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx","-target","arm64-apple-macosx11.0","-Xlinker","-add_ast_path","-Xlinker","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/Modules/ddQuint.swiftmodule","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
+
+  "C.ddQuint-arm64-apple-macosx15.0-debug.exe-entitlements":
+    tool: shell
+    inputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint-entitlement.plist"]
+    outputs: ["<ddQuint-arm64-apple-macosx15.0-debug.exe-CodeSigning>"]
+    description: "Applying debug entitlements to ./.build/arm64-apple-macosx/debug/ddQuint"
+    args: ["codesign","--force","--sign","-","--entitlements","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint-entitlement.plist","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint"]
+
+  "C.ddQuint-arm64-apple-macosx15.0-debug.module":
+    tool: shell
+    inputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/AnalysisManager.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/AppDelegate.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/ExportManager.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/InteractiveApp.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/SimpleApp.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/main.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/sources"]
+    outputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/AnalysisManager.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/AppDelegate.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/ExportManager.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/InteractiveApp.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/SimpleApp.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/main.swift.o","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/Modules/ddQuint.swiftmodule"]
+    description: "Compiling Swift Module 'ddQuint' (6 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","ddQuint","-emit-dependencies","-emit-module","-emit-module-path","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/Modules/ddQuint.swiftmodule","-output-file-map","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/output-file-map.json","-incremental","-c","@/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ddQuint.build/sources","-I","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/Modules","-target","arm64-apple-macosx11.0","-enable-batch-mode","-index-store-path","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/index/store","-Onone","-enable-testing","-j8","-DSWIFT_PACKAGE","-DDEBUG","-module-cache-path","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/.build/arm64-apple-macosx/debug/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","ddQuint_main","-swift-version","5","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.5.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","ddquint_native"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Sources/","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Package.swift","/Users/jakob/Applications/Git/ddQuint/ddQuint-Native/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+

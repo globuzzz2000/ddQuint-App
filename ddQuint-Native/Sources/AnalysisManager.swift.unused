@@ -1,0 +1,358 @@
+import Foundation
+
+class AnalysisManager {
+    private var cachedResults: [[String: Any]] = []
+    private var cacheKey: String?
+    
+    // MARK: - Analysis Execution
+    
+    func runAnalysis(folderURL: URL, templateURL: URL?, progressCallback: @escaping (String) -> Void, completionCallback: @escaping (Result<[WellData], Error>) -> Void) {
+        guard let pythonPath = findPython(),
+              let ddquintPath = findDDQuint() else {
+            completionCallback(.failure(AnalysisError.pythonNotFound))
+            return
+        }
+        
+        let currentCacheKey = generateCacheKey(folderURL: folderURL, templateURL: templateURL)
+        if let existingKey = cacheKey, existingKey == currentCacheKey, !cachedResults.isEmpty {
+            // Use cached results
+            let wellData = convertCachedResultsToWellData()
+            completionCallback(.success(wellData))
+            return
+        }
+        
+        DispatchQueue.global().async { [weak self] in
+            self?.executeAnalysisProcess(folderURL: folderURL, templateURL: templateURL, pythonPath: pythonPath, ddquintPath: ddquintPath, progressCallback: progressCallback, completionCallback: completionCallback)
+        }
+    }
+    
+    private func executeAnalysisProcess(folderURL: URL, templateURL: URL?, pythonPath: String, ddquintPath: String, progressCallback: @escaping (String) -> Void, completionCallback: @escaping (Result<[WellData], Error>) -> Void) {
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: pythonPath)
+        
+        process.environment = (process.environment ?? ProcessInfo.processInfo.environment).merging([
+            "MPLBACKEND": "Agg",
+            "PYTHONDONTWRITEBYTECODE": "1"
+        ]) { _, new in new }
+        
+        let escapedFolderPath = folderURL.path.replacingOccurrences(of: "'", with: "\\'")
+        let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
+        let templateArg = templateURL?.path.replacingOccurrences(of: "'", with: "\\'") ?? ""
+        
+        process.arguments = [
+            "-c",
+            """
+            import sys
+            import json
+            import traceback
+            import os
+            
+            try:
+                sys.path.insert(0, '\(escapedDDQuintPath)')
+                
+                from ddquint.config import Config
+                from ddquint.utils.parameter_editor import load_parameters_if_exist
+                from ddquint.core import process_csv_file
+                from ddquint.utils import get_sample_names
+                
+                config = Config.get_instance()
+                load_parameters_if_exist(Config)
+                config.finalize_colors()
+                
+                # Get sample names
+                template_path = '\(templateArg)' if '\(templateArg)' else None
+                if template_path:
+                    from ddquint.utils.template_parser import parse_template_file
+                    sample_names = parse_template_file(template_path)
+                else:
+                    sample_names = get_sample_names('\(escapedFolderPath)')
+                
+                # Find CSV files
+                csv_files = []
+                for filename in os.listdir('\(escapedFolderPath)'):
+                    if filename.lower().endswith('.csv') and not filename.startswith('.'):
+                        csv_files.append(os.path.join('\(escapedFolderPath)', filename))
+                
+                print(f'TOTAL_FILES:{len(csv_files)}')
+                
+                results = []
+                processed_count = 0
+                
+                for csv_file in csv_files:
+                    filename = os.path.basename(csv_file)
+                    print(f'PROCESSING_FILE:{filename}')
+                    
+                    try:
+                        # Create graphs directory if it doesn't exist
+                        graphs_dir = os.path.join('\(escapedFolderPath)', 'Graphs')
+                        os.makedirs(graphs_dir, exist_ok=True)
+                        
+                        # Process individual file
+                        result = process_csv_file(csv_file, graphs_dir, sample_names, verbose=False)
+                        
+                        if result and isinstance(result, dict):
+                            results.append(result)
+                            processed_count += 1
+                            
+                            # Extract well data for progressive display
+                            well_id = result.get('well', '')
+                            sample_name = result.get('sample_name', '')
+                            total_droplets = result.get('total_droplets', 0)
+                            has_data = result.get('df_filtered') is not None
+                            
+                            well_info = {
+                                'well': well_id,
+                                'sample_name': sample_name,
+                                'droplet_count': total_droplets,
+                                'has_data': has_data
+                            }
+                            
+                            print(f'WELL_COMPLETED:{json.dumps(well_info)}')
+                            print(f'PROGRESS:{processed_count}/{len(csv_files)}')
+                            
+                    except Exception as e:
+                        print(f'Error processing {csv_file}: {str(e)}')
+                        continue
+                
+                print(f'ANALYSIS_COMPLETE: Processed {len(results)} files successfully')
+                
+                # Generate composite overview
+                if results:
+                    from ddquint.visualization import create_composite_image
+                    composite_path = os.path.join('\(escapedFolderPath)', 'composite_overview.png')
+                    try:
+                        create_composite_image(results, composite_path)
+                        print(f'COMPOSITE_READY:{composite_path}')
+                    except Exception as e:
+                        print(f'Error creating composite: {e}')
+                
+                # Output complete results for caching
+                complete_results = []
+                for result in results:
+                    # Create a copy without DataFrame objects
+                    cached_result = {}
+                    for key, value in result.items():
+                        if key not in ['df_filtered', 'df_original']:  # Skip DataFrames
+                            try:
+                                # Test if value is JSON serializable
+                                json.dumps(value)
+                                cached_result[key] = value
+                            except (TypeError, ValueError):
+                                continue
+                    complete_results.append(cached_result)
+                
+                print('COMPLETE_RESULTS:' + json.dumps(complete_results))
+                
+            except Exception as e:
+                print(f'PYTHON_ERROR: {e}')
+                traceback.print_exc()
+                sys.exit(1)
+            """
+        ]
+        
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        
+        var outputBuffer = ""
+        var errorBuffer = ""
+        var wellData: [WellData] = []
+        
+        let outputHandle = outputPipe.fileHandleForReading
+        let errorHandle = errorPipe.fileHandleForReading
+        
+        outputHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.count > 0 {
+                if let string = String(data: data, encoding: .utf8) {
+                    outputBuffer += string
+                    
+                    let lines = outputBuffer.components(separatedBy: .newlines)
+                    outputBuffer = lines.last ?? ""
+                    
+                    for line in lines.dropLast() {
+                        self.handleProgressLine(line: line, progressCallback: progressCallback, wellData: &wellData)
+                    }
+                }
+            }
+        }
+        
+        errorHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.count > 0 {
+                if let string = String(data: data, encoding: .utf8) {
+                    errorBuffer += string
+                }
+            }
+        }
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            outputHandle.readabilityHandler = nil
+            errorHandle.readabilityHandler = nil
+            
+            DispatchQueue.main.async { [weak self] in
+                if process.terminationStatus == 0 {
+                    // Process any remaining complete results
+                    if let resultsStart = outputBuffer.range(of: "COMPLETE_RESULTS:")?.upperBound {
+                        let resultsLine = outputBuffer[resultsStart...].components(separatedBy: .newlines)[0]
+                        let resultsJson = String(resultsLine).trimmingCharacters(in: .whitespacesAndNewlines)
+                        self?.cacheCompleteResults(resultsJson, folderURL: folderURL, templateURL: templateURL)
+                    }
+                    
+                    wellData.sort { $0.well < $1.well }
+                    completionCallback(.success(wellData))
+                } else {
+                    completionCallback(.failure(AnalysisError.processFailed(errorBuffer)))
+                }
+            }
+        } catch {
+            DispatchQueue.main.async {
+                completionCallback(.failure(error))
+            }
+        }
+    }
+    
+    private func handleProgressLine(line: String, progressCallback: @escaping (String) -> Void, wellData: inout [WellData]) {
+        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        DispatchQueue.main.async {
+            if trimmedLine.hasPrefix("TOTAL_FILES:") {
+                let totalFiles = String(trimmedLine.dropFirst("TOTAL_FILES:".count))
+                progressCallback("Found \(totalFiles) files to process")
+            }
+            else if trimmedLine.hasPrefix("PROCESSING_FILE:") {
+                progressCallback("Processing files...")
+            }
+            else if trimmedLine.hasPrefix("WELL_COMPLETED:") {
+                let jsonString = String(trimmedLine.dropFirst("WELL_COMPLETED:".count))
+                if let data = jsonString.data(using: .utf8),
+                   let wellInfo = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let well = wellInfo["well"] as? String {
+                    
+                    let wellDataItem = WellData(
+                        well: well,
+                        sampleName: wellInfo["sample_name"] as? String ?? "",
+                        dropletCount: wellInfo["droplet_count"] as? Int ?? 0,
+                        hasData: wellInfo["has_data"] as? Bool ?? false
+                    )
+                    
+                    wellData.append(wellDataItem)
+                }
+            }
+            else if trimmedLine.hasPrefix("PROGRESS:") {
+                let progressInfo = String(trimmedLine.dropFirst("PROGRESS:".count))
+                progressCallback("Progress: \(progressInfo) files processed")
+            }
+            else if trimmedLine.hasPrefix("ANALYSIS_COMPLETE:") {
+                progressCallback("Analysis complete - generating overview...")
+            }
+        }
+    }
+    
+    // MARK: - Caching
+    
+    private func generateCacheKey(folderURL: URL, templateURL: URL?) -> String {
+        let templatePath = templateURL?.path ?? "no_template"
+        return "\(folderURL.path)_\(templatePath)"
+    }
+    
+    private func cacheCompleteResults(_ resultsJson: String, folderURL: URL, templateURL: URL?) {
+        do {
+            let data = resultsJson.data(using: .utf8) ?? Data()
+            if let completeResults = try JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]] {
+                cacheKey = generateCacheKey(folderURL: folderURL, templateURL: templateURL)
+                cachedResults = completeResults
+                print("✅ Cached \(cachedResults.count) complete results for Excel export")
+            }
+        } catch {
+            print("⚠️ Failed to parse complete results: \(error)")
+        }
+    }
+    
+    private func convertCachedResultsToWellData() -> [WellData] {
+        return cachedResults.compactMap { dict in
+            guard let well = dict["well"] as? String else { return nil }
+            return WellData(
+                well: well,
+                sampleName: dict["sample_name"] as? String ?? "",
+                dropletCount: dict["total_droplets"] as? Int ?? 0,
+                hasData: dict["has_data"] as? Bool ?? false
+            )
+        }
+    }
+    
+    // MARK: - Public Cache Access
+    
+    func getCachedResults() -> [[String: Any]] {
+        return cachedResults
+    }
+    
+    func hasCachedResults(for folderURL: URL, templateURL: URL?) -> Bool {
+        let currentKey = generateCacheKey(folderURL: folderURL, templateURL: templateURL)
+        return cacheKey == currentKey && !cachedResults.isEmpty
+    }
+    
+    func updateCachedResult(wellName: String, resultJson: String) {
+        do {
+            let data = resultJson.data(using: .utf8) ?? Data()
+            if let updatedResult = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
+                if let index = cachedResults.firstIndex(where: { ($0["well"] as? String) == wellName }) {
+                    cachedResults[index] = updatedResult
+                    print("✅ Updated cached results for well \(wellName)")
+                } else {
+                    cachedResults.append(updatedResult)
+                    print("✅ Added new cached result for well \(wellName)")
+                }
+            }
+        } catch {
+            print("⚠️ Failed to parse updated result for well \(wellName): \(error)")
+        }
+    }
+    
+    // MARK: - Utilities
+    
+    private func findPython() -> String? {
+        let paths = [
+            "/usr/bin/python3",
+            "/usr/local/bin/python3",
+            "/opt/homebrew/bin/python3",
+            "/opt/local/bin/python3"
+        ]
+        
+        return paths.first { FileManager.default.fileExists(atPath: $0) }
+    }
+    
+    private func findDDQuint() -> String? {
+        // Look for ddQuint in the same directory as the app
+        if let executablePath = Bundle.main.executablePath {
+            let appDir = URL(fileURLWithPath: executablePath).deletingLastPathComponent().deletingLastPathComponent()
+            let ddquintPath = appDir.appendingPathComponent("ddquint").path
+            
+            if FileManager.default.fileExists(atPath: ddquintPath) {
+                return appDir.path
+            }
+        }
+        
+        // Fallback to current working directory
+        let currentDir = FileManager.default.currentDirectoryPath
+        let ddquintPath = URL(fileURLWithPath: currentDir).appendingPathComponent("ddquint").path
+        
+        if FileManager.default.fileExists(atPath: ddquintPath) {
+            return currentDir
+        }
+        
+        return nil
+    }
+}
+
+// MARK: - Supporting Types
+
+enum AnalysisError: Error {
+    case pythonNotFound
+    case processFailed(String)
+}
