@@ -1,60 +1,67 @@
-# Python bytecode
+# -----------------------------------------------------------------------------
+# macOS / Finder
+# -----------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+Thumbs.db
+
+# -----------------------------------------------------------------------------
+# Swift / Xcode / SwiftPM
+# -----------------------------------------------------------------------------
+# SwiftPM build artifacts
+.build/
+# Xcode derived data, archives, debug symbols
+DerivedData/
+*.xcarchive
+*.dSYM/
+# Old-style Xcode build dirs
+build/
+Build/
+
+# -----------------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------------
+# Byte-compiled / cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-
-# Distribution / packaging
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# Environments
-.env
-.venv
-env/
+# Virtual environments
+.venv/
 venv/
+env/
 ENV/
-env.bak/
-venv.bak/
+# Packaging / distribution
+dist/
+*.egg-info/
+.eggs/
+# PyInstaller / py2app artifacts (legacy experiments)
+*.spec
+*.app/Contents/Resources/*
+*.app/Contents/MacOS/*
+# Jupyter checkpoints
+.ipynb_checkpoints/
 
-# IDE specific files
-.idea/
-.vscode/
+# -----------------------------------------------------------------------------
+# App distribution artifacts
+# -----------------------------------------------------------------------------
+# Generated .dmg/.pkg bundles
+*.dmg
+*.pkg
+
+# -----------------------------------------------------------------------------
+# Logs / temp
+# -----------------------------------------------------------------------------
+*.log
+*.tmp
 *.swp
 *.swo
-.DS_Store
 
-# ddQuint specific
-*.csv
-*.xlsx
-Graphs/
-Raw Data/
-*.png
+# -----------------------------------------------------------------------------
+# Project-specific ignores
+# -----------------------------------------------------------------------------
+# Legacy / contrib outputs that shouldn’t be versioned unless curated
+contrib/legacy_swift/dist_legacy/
+contrib/legacy_cli/__pycache__/
+.claude
