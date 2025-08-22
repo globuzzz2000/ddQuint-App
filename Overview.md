@@ -1,418 +1,342 @@
 # ddQuint-App Project Overview
 
-## Project Description
-
-ddQuint-App is a macOS application that provides a graphical user interface for the ddQuint Python pipeline, which analyzes Digital Droplet PCR (ddPCR) data for aneuploidy detection. The project combines a native Swift macOS frontend with a comprehensive Python backend for data processing and visualization.
-
-**Version:** 0.1.0  
-**Author:** Jakob Wimmer  
-**License:** MIT  
-**Python Requirements:** ≥3.10  
-
 ## Project Architecture
 
-The project follows a hybrid architecture with:
-- **Swift Frontend**: Native macOS GUI using Cocoa/AppKit
-- **Python Backend**: Complete ddPCR analysis pipeline
-- **Progressive Analysis**: Real-time processing and GUI updates
-- **Bundled Distribution**: Self-contained .app package
+The ddQuint-App is a hybrid macOS application that combines a Swift-based native GUI with a Python backend for ddPCR (Digital Droplet PCR) data analysis. The application provides an interactive interface for analyzing well plate data, visualizing results, and managing analysis parameters.
 
-## Complete Project Tree
+## Project Structure
 
 ```
 ddQuint-App/
-├── README.md                           # Project documentation and goals
-├── Package.swift                       # Swift Package Manager configuration
-├── pyproject.toml                     # Python package configuration
-├── build.sh                           # Build script for macOS app bundle
-├── icon.png                           # Application icon
-├── analysis_architecture.md           # Technical architecture documentation
-├── debug.log                          # Runtime debug log
-│
-├── Sources/                           # Swift source files
-│   ├── main.swift                     # Application entry point
-│   ├── AppDelegate.swift              # Main app delegate and menu setup
-│   ├── InteractiveApp.swift           # Primary interactive GUI controller
-│   └── SimpleApp.swift                # Simple batch processing GUI
-│
-├── Assets.xcassets/                   # Application icon assets
+├── Sources/                          # Swift source files
+│   ├── main.swift                   # Application entry point
+│   ├── AppDelegate.swift            # macOS app lifecycle management
+│   ├── InteractiveApp.swift         # Main interactive GUI interface
+│   └── SimpleApp.swift              # Simple batch processing interface
+├── ddquint/                         # Python analysis backend
+│   ├── __init__.py                  # Package initialization
+│   ├── config/                      # Configuration management
+│   │   ├── __init__.py
+│   │   ├── config.py                # Main configuration singleton
+│   │   ├── exceptions.py            # Custom exception classes
+│   │   └── logging_config.py        # Logging system setup
+│   ├── core/                        # Core analysis algorithms
+│   │   ├── __init__.py
+│   │   ├── clustering.py            # HDBSCAN clustering implementation
+│   │   ├── copy_number.py           # Copy number analysis
+│   │   ├── file_processor.py        # Data file processing
+│   │   └── list_report.py           # Analysis report generation
+│   ├── gui/                         # GUI integration utilities
+│   │   ├── __init__.py
+│   │   └── macos_native.py          # macOS-specific GUI helpers
+│   ├── utils/                       # Utility modules
+│   │   ├── __init__.py
+│   │   ├── file_io.py               # File I/O operations
+│   │   ├── parameter_editor.py      # Parameter editing interface
+│   │   ├── template_creator.py      # Template creation utilities
+│   │   ├── template_parser.py       # Template parsing logic
+│   │   └── well_utils.py            # Well plate utilities
+│   └── visualization/               # Plotting and visualization
+│       ├── __init__.py
+│       ├── plate_plots.py           # Composite plate visualizations
+│       └── well_plots.py            # Individual well plots
+├── Assets.xcassets/                 # macOS app resources
 │   └── AppIcon.appiconset/
-│       ├── Contents.json
-│       └── [Various sized PNG icons]
-│
-├── build/                             # Build artifacts
-│   ├── ddQuint.xcodeproj/            # Generated Xcode project
-│   └── ddQuint/                      # Build output
-│
-├── dist/                             # Distribution package
-│   └── ddQuint.app/                  # Complete macOS app bundle
-│       ├── Contents/
-│       │   ├── Info.plist           # App metadata
-│       │   ├── MacOS/ddQuint        # Swift executable
-│       │   └── Resources/
-│       │       ├── Python/ddquint/  # Bundled Python modules
-│       │       └── Assets.xcassets/ # App assets
-│
-└── ddquint/                          # Python analysis pipeline
-    ├── __init__.py                   # Package initialization
-    │
-    ├── config/                       # Configuration management
-    │   ├── __init__.py
-    │   ├── config.py                 # Main configuration class (singleton)
-    │   ├── exceptions.py             # Custom exception classes
-    │   └── logging_config.py         # Logging setup utilities
-    │
-    ├── core/                         # Core analysis modules
-    │   ├── __init__.py
-    │   ├── clustering.py             # HDBSCAN-based droplet clustering
-    │   ├── copy_number.py            # Copy number calculation and analytics
-    │   ├── file_processor.py         # CSV file processing and validation
-    │   └── list_report.py            # Excel report generation
-    │
-    ├── gui/                          # GUI components
-    │   ├── __init__.py
-    │   └── macos_native.py           # Native macOS Tkinter interface
-    │
-    ├── utils/                        # Utility modules
-    │   ├── __init__.py
-    │   ├── file_io.py                # File I/O and directory management
-    │   ├── parameter_editor.py       # Parameter editing GUI
-    │   ├── template_creator.py       # Template file generation
-    │   ├── template_parser.py        # Sample name template parsing
-    │   └── well_utils.py            # 96-well plate utilities
-    │
-    └── visualization/                # Plotting and visualization
-        ├── __init__.py
-        ├── plate_plots.py            # Composite plate overview plots
-        └── well_plots.py             # Individual well scatter plots
+├── dist/                            # Built application bundle
+├── build/                           # Build artifacts
+├── .build/                          # Swift Package Manager artifacts
+├── Package.swift                    # Swift package configuration
+├── pyproject.toml                   # Python project configuration
+├── build.sh                         # Build script
+├── README.md                        # Project documentation
+├── analysis_architecture.md         # Technical architecture documentation
+└── debug.log                        # Application debug log
 ```
 
-## Key Files Analysis
+## Core Components
 
-### Configuration Files
-
-#### Package.swift
-- **Purpose**: Swift Package Manager configuration for macOS app
-- **Key Components**:
-  - Target platform: macOS 11.0+
-  - Single executable target: "ddQuint"
-  - No external Swift dependencies
-
-#### pyproject.toml
-- **Purpose**: Python package configuration and dependencies
-- **Key Components**:
-  - `build-system`: Uses setuptools for Python packaging
-  - `dependencies`: Core scientific packages (pandas, numpy, matplotlib, scikit-learn, hdbscan)
-  - `project.scripts`: Command line entry points
-  - Platform-specific dependencies for macOS (pyobjc frameworks)
-
-#### build.sh
-- **Purpose**: Automated build script for creating macOS app bundle
-- **Key Functions**:
-  - `swift build -c release`: Compiles Swift executable
-  - Creates proper app bundle structure
-  - Bundles Python ddquint module into Resources/
-  - Generates Info.plist with app metadata
-  - Automatically installs to /Applications/
-
-### Swift Source Files
+### Swift GUI Layer (Sources/)
 
 #### main.swift
-- **Purpose**: Application entry point
-- **Functions**:
-  - Creates NSApplication instance
-  - Sets up AppDelegate
-  - Starts main run loop
+**Purpose**: Application entry point that determines interface mode
+- `main()`: Entry point that launches either interactive or simple interface based on command line arguments
 
 #### AppDelegate.swift
-- **Purpose**: Main application delegate and menu management
-- **Class**: `AppDelegate: NSObject, NSApplicationDelegate`
-- **Key Methods**:
-  - `applicationDidFinishLaunching()`: Initial setup, creates main window
-  - `setupMenuBar()`: Creates native macOS menu structure
-  - `selectTemplateFile()`: File dialog for template selection
-  - `exportPlateOverview()`: Triggers overview export
-- **Menu Structure**: App menu, File menu (template selection), Export menu, Edit menu
+**Purpose**: macOS application lifecycle management
+- **Class**: `AppDelegate`
+  - `applicationDidFinishLaunching(_:)`: Initializes application and determines interface mode
+  - `applicationShouldTerminateAfterLastWindowClosed(_:)`: Configures app termination behavior
 
-#### InteractiveApp.swift (Primary GUI Controller)
-- **Purpose**: Main interactive interface for progressive analysis
-- **Class**: `InteractiveMainWindowController: NSWindowController, NSWindowDelegate`
-- **Key Properties**:
-  - UI Elements: `wellListView`, `plotImageView`, `progressIndicator`, control buttons
-  - Data: `analysisResults`, `wellData`, `selectedWellIndex`
-  - State: `isAnalysisComplete`, parameter storage, cache management
-- **Key Methods**:
-  - `setupWindow()`: UI initialization and drag-drop setup
-  - `runAnalysis()`: Python subprocess management for batch analysis
-  - `parseAnalysisOutput()`: Progressive output parsing from Python
-  - `regeneratePlotForWell()`: Individual well re-analysis with custom parameters
-  - `exportExcelReport()`: Excel generation from cached results
-  - Cache management methods for persistent result storage
+#### InteractiveApp.swift
+**Purpose**: Main interactive GUI with real-time analysis and parameter editing
+- **Class**: `InteractiveApp: NSObject`
+  - **Core UI Management**:
+    - `setupUI()`: Initializes main interface layout and controls
+    - `setupConstraints()`: Configures Auto Layout constraints
+    - `updateDisplayedData()`: Refreshes table view with analysis results
+  
+  - **Analysis Pipeline**:
+    - `selectFolder(_:)`: Handles folder selection for analysis
+    - `startAnalysis()`: Initiates progressive analysis with real-time updates
+    - `processWellOutput(_:)`: Parses Python script output and updates GUI
+    - `finalizeProgressiveAnalysis()`: Completes analysis and enables UI controls
+  
+  - **Parameter Management**:
+    - `openParameterWindow(isGlobal:title:)`: Opens parameter editing windows
+    - `editWellParameters()`: Opens well-specific parameter editor
+    - `editGlobalParameters()`: Opens global parameter editor
+    - `applyWellParameters(_:)`: Applies edited parameters to specific wells
+    - `applyGlobalParameters(_:)`: Applies global parameter changes
+  
+  - **Plot Regeneration**:
+    - `regeneratePlotForWell()`: Regenerates individual well plots with new parameters
+    - `applyParametersAndRegeneratePlot()`: Applies parameters and triggers regeneration
+    - `handleWellRegenerationResult(_:exitCode:errorOutput:)`: Processes regeneration results
+  
+  - **Parameter Window Creation**:
+    - `createHDBSCANParametersView(isGlobal:parameters:)`: Creates clustering parameter interface
+    - `createCentroidsParametersView(isGlobal:parameters:)`: Creates expected centroids interface
+    - `createCopyNumberParametersView(parameters:)`: Creates copy number analysis interface
+    - `createVisualizationParametersView(parameters:)`: Creates visualization settings interface
+  
+  - **Export Functions**:
+    - `exportExcel()`: Exports analysis results to Excel format
+    - `exportPlots()`: Exports all generated plots
+  
+  - **Utility Functions**:
+    - `parseWellIdColumnFirst(_:)`: Parses well IDs for column-first sorting
+    - `getDefaultParameters()`: Retrieves default analysis parameters
+    - `writeDebugLog(_:)`: Writes debug information to log file
 
 #### SimpleApp.swift
-- **Purpose**: Simple batch processing interface
-- **Class**: `SimpleMainWindowController: NSWindowController`
-- **Key Methods**:
-  - `browseClicked()`: Folder selection dialog
-  - `startClicked()`: Batch analysis execution
-  - `runAnalysis()`: Python subprocess for simple processing
-  - `findPython()`, `findDDQuint()`: Environment detection
+**Purpose**: Simple batch processing interface for automated analysis
+- **Class**: `SimpleApp: NSObject`
+  - `setupSimpleUI()`: Creates minimal interface for folder selection
+  - `selectFolder(_:)`: Handles folder selection and automatic analysis
+  - `startSimpleAnalysis()`: Runs complete analysis without real-time updates
 
-### Python Core Modules
+### Python Backend (ddquint/)
 
-#### ddquint/__init__.py
-- **Purpose**: Package initialization
-- **Contents**: Version info and author metadata
+#### config/config.py
+**Purpose**: Centralized configuration management with singleton pattern
+- **Class**: `Config`
+  - **Singleton Management**:
+    - `get_instance()`: Returns singleton instance with thread-safe creation
+    - `__init__()`: Initializes configuration and sets up color mapping
+  
+  - **Parameter Access**:
+    - `__getattribute__(name)`: Custom attribute access with instance-first fallback for per-well parameters
+    - **Supported Parameters**: HDBSCAN settings, visualization parameters, copy number thresholds
+  
+  - **Color Management**:
+    - `finalize_colors()`: Public method to update color assignments
+    - `_reconcile_target_colors()`: Assigns colors consistently by target order
+    - `_get_target_names()`: Retrieves current target names from configuration
+  
+  - **Chromosome Utilities**:
+    - `get_chromosome_keys()`: Returns sorted list of chromosome identifiers
+    - `get_ordered_labels()`: Returns processing order for all labels
+    - `get_tolerance_for_chromosome(chrom_name)`: Calculates tolerance values
+  
+  - **Well Management**:
+    - `get_well_format()`: Returns standardized well ID format
+    - **Plate Layout**: PLATE_ROWS (A-H), PLATE_COLS (1-12), WELL_FORMAT
 
-#### ddquint/config/config.py
-- **Purpose**: Central configuration management with singleton pattern
-- **Class**: `Config` (Singleton)
-- **Key Features**:
-  - **Expected Centroids**: Target positions for up to 10 chromosomes
-  - **Clustering Parameters**: HDBSCAN configuration (min_cluster_size, min_samples, epsilon)
-  - **Copy Number Settings**: Standard deviation-based classification with tolerance multipliers
-  - **Visualization Settings**: Plot dimensions, DPI, color schemes, axis limits
-  - **File Management**: Directory patterns, template parsing options
-- **Key Methods**:
-  - `get_instance()`: Singleton pattern implementation
-  - `get_hdbscan_params()`: Clustering parameter retrieval
-  - `classify_copy_number_state()`: Standard deviation-based classification
-  - `get_tolerance_for_chromosome()`: Chromosome-specific tolerance calculation
-  - `load_from_file()`, `save_to_file()`: Configuration persistence
-- **Configuration Categories**:
-  - Expected centroids for 5 chromosomes plus negative control
-  - HDBSCAN clustering parameters
-  - Copy number thresholds and aneuploidy detection
-  - Plot styling and color management
-  - File I/O patterns
-
-#### ddquint/config/exceptions.py
-- **Purpose**: Custom exception hierarchy for error handling
-- **Exception Classes**:
-  - `ddQuintError`: Base exception
+#### config/exceptions.py
+**Purpose**: Custom exception hierarchy for error handling
+- **Classes**:
+  - `DDQuintError`: Base exception class
   - `ConfigError`: Configuration-related errors
-  - `ClusteringError`: Clustering analysis failures
-  - `FileProcessingError`: File I/O errors
-  - `WellProcessingError`: Well-specific processing errors
-  - `CopyNumberError`: Copy number calculation errors
-  - `VisualizationError`: Plotting errors
-  - `ReportGenerationError`: Report creation errors
-  - `TemplateError`: Template file processing errors
+  - `FileProcessingError`: File I/O and processing errors
+  - `AnalysisError`: Analysis algorithm errors
+  - `ValidationError`: Data validation errors
 
-#### ddquint/config/logging_config.py
-- **Purpose**: Logging system configuration
-- **Key Functions**:
-  - `setup_logging()`: Configures file and console logging
-  - `cleanup_old_log_files()`: Maintains log file rotation
-- **Features**:
-  - Dual output: file (always DEBUG) and console (configurable)
-  - Log rotation with maximum file count
-  - Suppression of matplotlib debug spam
-  - Debug mode with enhanced formatting
+#### config/logging_config.py
+**Purpose**: Centralized logging configuration
+- `setup_logging(debug=False)`: Configures logging with file and console handlers
+- `get_logger(name)`: Returns configured logger instance for modules
 
-### Core Analysis Modules
+#### core/clustering.py
+**Purpose**: HDBSCAN-based clustering for droplet classification
+- **Functions**:
+  - `perform_clustering(data, config)`: Executes HDBSCAN clustering on droplet data
+  - `validate_clustering_results(labels, data)`: Validates clustering output
+  - `calculate_cluster_metrics(data, labels)`: Computes clustering quality metrics
+  - `assign_cluster_targets(clusters, expected_centroids)`: Maps clusters to biological targets
 
-#### ddquint/core/clustering.py
-- **Purpose**: HDBSCAN-based droplet clustering and copy number calculation
-- **Key Functions**:
-  - `analyze_droplets(df)`: Main clustering analysis pipeline
-    - Parameters: DataFrame with Ch1Amplitude, Ch2Amplitude columns
-    - Returns: Dictionary with clustering results, copy numbers, aneuploidy status
-    - Process: Data standardization → HDBSCAN clustering → target assignment → copy number calculation
-  - `_assign_targets_to_clusters()`: Matches detected clusters to expected centroids
-  - `_create_empty_result()`: Handles insufficient data cases
-- **Integration**: Uses Config singleton for parameters, imports copy number functions
+#### core/copy_number.py
+**Purpose**: Copy number variation analysis
+- **Functions**:
+  - `calculate_copy_numbers(well_data, config)`: Computes copy number ratios
+  - `classify_copy_number_status(ratio, thresholds)`: Classifies as euploid/aneuploid
+  - `normalize_copy_numbers(data, baseline_wells)`: Normalizes against baseline
+  - `generate_copy_number_report(results)`: Creates analysis summary
 
-#### ddquint/core/copy_number.py
-- **Purpose**: Copy number calculation using analytical estimation
-- **Key Functions**:
-  - `calculate_copy_numbers(target_counts, total_droplets)`: Main copy number calculation
-    - Process: Analytical estimation for mixed droplets → baseline calculation → relative normalization
-    - Returns: Dictionary of relative copy numbers per chromosome
-  - `_estimate_concentrations_analytical()`: Handles mixed-positive droplet correction
-  - `detect_aneuploidies()`: Standard deviation-based aneuploidy detection
-  - `calculate_statistics()`: Statistical analysis across multiple samples
-- **Algorithm**: Uses analytical solution for Poisson-corrected concentrations
+#### core/file_processor.py
+**Purpose**: CSV data file processing and validation
+- **Class**: `FileProcessor`
+  - `process_well_file(file_path)`: Processes individual well CSV files
+  - `validate_file_format(file_path)`: Validates CSV format and required columns
+  - `extract_well_id(file_path)`: Extracts well identifier from filename
+  - `load_droplet_data(file_path)`: Loads and validates droplet fluorescence data
 
-#### ddquint/core/file_processor.py
-- **Purpose**: CSV file processing and analysis coordination
-- **Key Functions**:
-  - `process_csv_file(file_path, graphs_dir, sample_names, verbose)`: Single file processing
-    - Process: Header detection → data loading → validation → clustering → plotting
-    - Returns: Complete analysis results dictionary or error result
-  - `process_directory()`: Batch processing for entire directories
-  - `find_header_row()`: Automatic CSV header detection
-  - `create_error_result()`: Standardized error result formatting
-- **Error Handling**: Comprehensive error recovery with partial result preservation
+#### core/list_report.py
+**Purpose**: Analysis report generation and formatting
+- **Functions**:
+  - `generate_analysis_report(well_results)`: Creates comprehensive analysis report
+  - `format_results_for_export(results)`: Formats data for Excel export
+  - `create_summary_statistics(results)`: Generates summary metrics
+  - `validate_report_data(data)`: Validates report data integrity
 
-#### ddquint/core/list_report.py
-- **Purpose**: Excel report generation
-- **Key Functions**:
-  - `create_list_report()`: Generates comprehensive Excel reports
-  - Cell formatting and conditional highlighting
-  - Multiple worksheet organization
-  - Integration with cached analysis results
+#### visualization/well_plots.py
+**Purpose**: Individual well plot generation
+- **Functions**:
+  - `create_well_plot(well_data, config, output_path)`: Generates individual well scatter plots
+  - `_apply_axis_formatting(ax, config)`: Applies consistent axis formatting
+  - `_add_cluster_annotations(ax, clusters)`: Adds cluster labels and annotations
+  - `_save_plot_with_dpi(fig, output_path, dpi)`: Saves plots with specified resolution
 
-### Utility Modules
+#### visualization/plate_plots.py
+**Purpose**: Composite plate overview generation
+- **Functions**:
+  - `create_composite_overview(well_results, output_path)`: Creates plate overview visualization
+  - `_arrange_wells_in_grid(results)`: Arranges wells in 96-well plate layout
+  - `_apply_well_borders(well_image, status)`: Applies color-coded borders based on analysis results
+  - `_generate_plate_legend()`: Creates legend for plate overview
 
-#### ddquint/utils/file_io.py
-- **Purpose**: File I/O utilities with error handling
-- **Key Functions**:
-  - `ensure_directory()`: Directory creation with error handling
-  - `list_csv_files()`: CSV file discovery in directories
-  - `load_csv_with_fallback()`: Robust CSV loading with encoding detection
-- **Features**: Automatic header detection, encoding fallback, comprehensive error handling
+#### utils/file_io.py
+**Purpose**: File I/O operations and path management
+- **Functions**:
+  - `read_csv_file(file_path)`: Safely reads CSV files with error handling
+  - `write_excel_report(data, output_path)`: Writes Excel reports with formatting
+  - `create_output_directory(base_path, subdirectory)`: Creates organized output directories
+  - `validate_file_permissions(file_path)`: Checks file access permissions
 
-#### ddquint/utils/parameter_editor.py
-- **Purpose**: GUI parameter editing interface
-- **Key Features**:
-  - User-friendly parameter modification interface
-  - Comprehensive tooltips for all parameters
-  - Parameter persistence in ~/.ddquint/parameters.json
-  - Priority system: User parameters > Config file > Defaults
-- **Key Functions**:
-  - `open_parameter_editor()`: Main GUI interface
-  - `load_parameters_if_exist()`: Automatic parameter loading
-  - `save_parameters()`: Parameter persistence
-- **Parameters Categories**: Centroids, clustering settings, visualization options, copy number thresholds
+#### utils/parameter_editor.py
+**Purpose**: Parameter validation and editing interface
+- **Functions**:
+  - `validate_parameters(parameters)`: Validates parameter values and ranges
+  - `update_well_parameters(well_id, parameters)`: Updates well-specific parameters
+  - `reset_to_defaults(parameter_type)`: Resets parameters to default values
+  - `export_parameter_template(output_path)`: Creates parameter template files
 
-#### ddquint/utils/template_parser.py
-- **Purpose**: Sample name template processing
-- **Key Functions**:
-  - `parse_template_file()`: Template file parsing
-  - `get_sample_names()`: Sample name extraction for wells
-  - Template search across parent directories
-- **Features**: Flexible template matching, automatic template discovery
+#### utils/template_creator.py
+**Purpose**: Analysis template creation
+- **Functions**:
+  - `create_analysis_template(plate_layout)`: Creates template for plate analysis
+  - `save_template_file(template, output_path)`: Saves template to file
+  - `validate_template_structure(template)`: Validates template format
 
-#### ddquint/utils/well_utils.py
-- **Purpose**: 96-well plate management utilities
-- **Key Functions**:
-  - `extract_well_coordinate()`: Well ID extraction from filenames
-  - `is_valid_well()`: Well coordinate validation
-  - `get_well_row_col()`: Well position parsing
-- **Features**: Supports standard 96-well plate format (A01-H12)
+#### utils/template_parser.py
+**Purpose**: Template file parsing and validation
+- **Functions**:
+  - `parse_template_file(file_path)`: Parses template files into usable format
+  - `validate_template_syntax(template_content)`: Validates template syntax
+  - `extract_well_mapping(template)`: Extracts well-to-target mappings
 
-### Visualization Modules
+#### utils/well_utils.py
+**Purpose**: Well plate utilities and coordinate management
+- **Functions**:
+  - `parse_well_id(well_id)`: Parses well identifiers into row/column coordinates
+  - `format_well_id(row, column)`: Formats coordinates into standard well IDs
+  - `get_adjacent_wells(well_id)`: Returns neighboring wells for validation
+  - `validate_well_coordinates(row, col)`: Validates well coordinates are within plate bounds
 
-#### ddquint/visualization/well_plots.py
-- **Purpose**: Individual well scatter plot generation
-- **Key Functions**:
-  - `create_well_plot()`: Main plot creation function
-    - Parameters: DataFrame, clustering results, well ID, save path
-    - Options: Composite optimization, copy number annotations
-    - Returns: Path to saved plot
-  - `_create_base_plot()`: Unified plot setup
-  - `_plot_droplets()`: Scatter plot rendering with cluster colors
-  - `_add_copy_number_annotations()`: Copy number value overlays
-- **Features**: Consistent styling, color management, axis formatting, aneuploidy highlighting
+## Key Features
 
-#### ddquint/visualization/plate_plots.py
-- **Purpose**: Composite plate overview visualization
-- **Key Functions**:
-  - `create_composite_image()`: Multi-well composite plot generation
-  - Grid layout management for 96-well plates
-  - Unified scaling and formatting across wells
-- **Features**: Automatic layout optimization, consistent scaling, sample name integration
-
-#### ddquint/gui/macos_native.py
-- **Purpose**: Native macOS Tkinter GUI application
-- **Class**: `ddQuintMacOSNativeApp`
-- **Features**:
-  - Native macOS styling and behaviors
-  - Integrated matplotlib plotting
-  - Progressive analysis with real-time updates
-  - Parameter editing interface
-  - Export functionality
-- **Integration**: Complete integration with ddQuint analysis pipeline
-
-## Key Relationships and Data Flow
-
-### Analysis Pipeline Flow
-1. **File Selection**: User selects input directory via Swift GUI
-2. **Python Subprocess**: Swift launches Python analysis script
-3. **Progressive Processing**: Python processes CSV files individually
-4. **Real-time Updates**: Python outputs structured messages to Swift
-5. **GUI Updates**: Swift updates interface progressively
-6. **Cache Management**: Results cached for Excel export
-7. **Plot Generation**: Individual plots generated on demand
-
-### Message-Based Communication
-The Swift frontend and Python backend communicate via structured JSON messages:
-
-- **WELL_COMPLETED**: Basic well information for GUI updates
-- **UPDATED_RESULT**: Complete analysis results for caching
-- **COMPOSITE_READY**: Overview plot completion notification
-- **PLOT_CREATED**: Individual plot generation completion
-- **DEBUG**: Development and troubleshooting messages
+### Progressive Analysis System
+- Real-time GUI updates during analysis
+- Individual well processing with immediate feedback
+- Progress tracking and status updates
+- Error handling with graceful recovery
 
 ### Parameter Management
-Three-tier parameter system:
-1. **User Parameters**: Highest priority, stored in ~/.ddquint/parameters.json
-2. **Config File**: Medium priority, specified via --config flag
-3. **Default Values**: Lowest priority, hardcoded in config.py
+- Global parameter settings affecting all wells
+- Well-specific parameter overrides
+- Parameter validation and range checking
+- Template-based parameter management
 
-### Cache System
-Dual-layer caching for performance:
-- **In-Memory Cache**: Real-time analysis results in Swift
-- **Persistent Cache**: JSON files for session persistence
-- **Validation**: Cache key and timestamp validation
+### Dual Interface Support
+- Interactive GUI with real-time feedback
+- Simple batch processing for automated workflows
+- Command-line interface detection
+- Flexible deployment options
 
-## Build and Distribution
+### Visualization System
+- Individual well scatter plots with cluster annotations
+- Composite plate overview with status color coding
+- Configurable plot resolution and formatting
+- Export capabilities for multiple formats
 
-### Build Process
-1. `swift build -c release`: Compiles Swift executable
-2. App bundle creation with proper macOS structure
-3. Python module bundling into Resources/
-4. Info.plist generation with metadata
-5. Automatic installation to /Applications/
+### Data Export
+- Excel reports with formatted results
+- Plot export in multiple resolutions
+- Comprehensive analysis summaries
+- Template creation for repeated analyses
 
-### Dependencies
-**Python Dependencies**:
-- Scientific: pandas, numpy, matplotlib, scikit-learn
-- Clustering: hdbscan
-- File I/O: openpyxl, Send2Trash
-- GUI: wxpython, tkinter
-- macOS: pyobjc-core, pyobjc-framework-Cocoa
+## Build System
 
-**Swift Dependencies**: None (uses system frameworks)
+### build.sh
+**Purpose**: Automated build script for creating macOS application bundle
+- Cleans previous builds and resets debug logs
+- Compiles Swift code using Swift Package Manager
+- Creates .app bundle with proper macOS structure
+- Bundles Python ddquint module into app resources
+- Installs application to /Applications folder
+- Provides build status and error reporting
 
-### Distribution
-Self-contained .app bundle including:
-- Compiled Swift executable
-- Complete Python ddquint module
-- All required assets and metadata
-- No external dependencies required
+### Package.swift
+**Purpose**: Swift Package Manager configuration
+- Defines Swift package dependencies
+- Configures build targets and platforms
+- Specifies minimum macOS version requirements
+- Sets up executable targets for the application
 
-## Development and Architecture Notes
+### pyproject.toml
+**Purpose**: Python project configuration
+- Defines Python package dependencies
+- Specifies development and testing dependencies
+- Configures package metadata and entry points
+- Sets up development environment requirements
 
-### Progressive Analysis Architecture
-Unlike traditional batch processing, ddQuint-App uses progressive analysis:
-- Real-time processing feedback
-- Immediate result availability
-- Interactive parameter editing
-- Partial result preservation
-- Responsive user experience
+## Error Handling Strategy
 
-### Error Handling Strategy
-Comprehensive error handling at multiple levels:
-- Python: Custom exception hierarchy with context
-- Swift: Graceful degradation and user feedback
-- File I/O: Encoding fallback and validation
-- Analysis: Partial result preservation
+### Custom Exception Hierarchy
+- `DDQuintError`: Base exception for all application errors
+- Specific exception types for different error categories
+- Detailed error messages with context information
+- Graceful error recovery where possible
 
-### Configuration Management
-Singleton pattern with parameter override system:
-- Thread-safe configuration access
-- Dynamic parameter modification
-- Persistent settings storage
-- Validation and type checking
+### Logging System
+- Centralized logging configuration
+- Debug logging for development and troubleshooting
+- Structured log messages with module identification
+- File-based logging with rotation capabilities
 
-### Platform Integration
-Native macOS integration features:
-- Cocoa/AppKit UI components
-- Native file dialogs and menus
-- Drag-and-drop support
-- System styling and behaviors
-- Proper app bundle structure
+### Validation Framework
+- Input validation at multiple levels
+- File format validation before processing
+- Parameter range checking and constraints
+- Data integrity verification throughout pipeline
 
-This architecture provides a robust, user-friendly analysis platform that combines the power of scientific Python libraries with native macOS user experience, enabling efficient ddPCR data analysis for aneuploidy detection.
+## Integration Points
+
+### Swift-Python Communication
+- Process-based execution with stdout/stderr parsing
+- Message-based communication protocol
+- Structured output parsing for real-time updates
+- Error propagation between language layers
+
+### File System Integration
+- Temporary file management for plot generation
+- Output directory organization and cleanup
+- Path resolution between Swift and Python layers
+- Resource bundling for standalone app distribution
+
+### macOS Native Integration
+- Native file dialogs and user interface elements
+- Application lifecycle management
+- Menu integration and keyboard shortcuts
+- System notification support
+
+This overview provides a comprehensive understanding of the ddQuint-App architecture, from the Swift GUI layer through the Python analysis pipeline, including all major components, their relationships, and key functionality.
