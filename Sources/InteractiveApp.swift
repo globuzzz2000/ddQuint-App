@@ -38,6 +38,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     // Cache for processed results
     private var cachedResults: [[String: Any]] = []
     private var cacheKey: String?
+    private var cacheTimestamp: Date?
     
     // Composite overview
     private var compositeImagePath: String?
@@ -64,6 +65,9 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         setupUI(in: contentView)
         setupConstraints(in: contentView)
+        
+        // Clear all cache files on app launch for fresh analysis
+        clearAllCacheFiles()
         
         // Show initial prompt to select folder
         showFolderSelectionPrompt()
@@ -399,14 +403,10 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         // Start corner spinner
         showCornerSpinner()
         
-        // Check if we can use cached results
-        let currentCacheKey = generateCacheKey(folderURL: folderURL)
-        if let existingKey = cacheKey, existingKey == currentCacheKey, !cachedResults.isEmpty {
-            print("Using cached results")
-            hideCornerSpinner()
-            usesCachedResults()
-            return
-        }
+        // Always run fresh analysis - clear any existing cache for this folder
+        let cacheFile = getCacheFilePath(folderURL: folderURL)
+        try? FileManager.default.removeItem(at: cacheFile)
+        print("🗑️ Cleared cache file for fresh analysis: \(cacheFile.lastPathComponent)")
         
         guard let pythonPath = findPython(),
               let ddquintPath = findDDQuint() else {
@@ -441,9 +441,21 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                 import sys
                 import json
                 import traceback
+                import logging
                 
                 try:
                     sys.path.insert(0, '\(escapedDDQuintPath)')
+                    
+                    # Initialize logging to capture debug output
+                    from ddquint.config.logging_config import setup_logging
+                    log_file = setup_logging(debug=True)
+                    print(f'Logging initialized: {log_file}')
+                    
+                    # Also add a handler that prints to stdout so we see logs in debug.log
+                    stdout_handler = logging.StreamHandler(sys.stdout)
+                    stdout_handler.setLevel(logging.DEBUG)
+                    stdout_handler.setFormatter(logging.Formatter('DDQUINT_LOG: %(name)s - %(levelname)s - %(message)s'))
+                    logging.getLogger().addHandler(stdout_handler)
                     
                     # Initialize config properly (like main.py does)
                     from ddquint.config import Config
@@ -500,7 +512,44 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     from ddquint.core import process_directory  # For final composite generation
                     
                     csv_files = glob.glob(os.path.join('\(escapedFolderPath)', '*.csv'))
-                    csv_files.sort()  # Sort alphabetically for consistent processing order
+                    
+                    # Sort files by well ID in column-first order (A01, B01, C01, A02, B02, ...)
+                    # Use EXACTLY the same logic as list_report.py parse_well_id_column_first
+                    def parse_well_id_from_filename(filename):
+                        import re
+                        basename = os.path.basename(filename)
+                        # Extract well ID pattern (e.g., A01, B12) from filename
+                        match = re.search(r'[A-H][0-9]{2}', basename)
+                        if match:
+                            well_id = match.group()
+                            # EXACTLY like list_report.py parse_well_id_column_first
+                            row_part = ''
+                            col_part = ''
+                            
+                            for char in well_id:
+                                if char.isalpha():
+                                    row_part += char
+                                elif char.isdigit():
+                                    col_part += char
+                            
+                            # Convert row letters to number (A=1, B=2, etc.)
+                            if row_part:
+                                row_number = 0
+                                for i, char in enumerate(reversed(row_part.upper())):
+                                    row_number += (ord(char) - ord('A') + 1) * (26 ** i)
+                            else:
+                                row_number = 999
+                            
+                            # Convert column to integer
+                            try:
+                                col_number = int(col_part) if col_part else 0
+                            except ValueError:
+                                col_number = 999
+                            
+                            return (col_number, row_number)  # Column first, then row
+                        return (999, 999)  # Put unrecognized files at end
+                    
+                    csv_files.sort(key=parse_well_id_from_filename)
                     print(f'TOTAL_FILES:{len(csv_files)}')
                     
                     results = []
@@ -511,8 +560,10 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                         print(f'PROCESSING_FILE:{filename}')
                         
                         try:
-                            # Create graphs directory if it doesn't exist
-                            graphs_dir = os.path.join('\(escapedFolderPath)', 'Graphs')
+                            # Use temporary directory for plots (don't save to input folder)
+                            import tempfile
+                            temp_base = tempfile.gettempdir()
+                            graphs_dir = os.path.join(temp_base, 'ddquint_analysis_plots')
                             os.makedirs(graphs_dir, exist_ok=True)
                             
                             # Process individual file with proper error handling
@@ -589,10 +640,10 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     
                     print(f'ANALYSIS_COMPLETE: Processed {len(results)} files successfully')
                     
-                    # Generate composite overview plot 
+                    # Generate composite overview plot in temporary directory
                     if results:
                         from ddquint.visualization import create_composite_image
-                        composite_path = os.path.join('\(escapedFolderPath)', 'composite_overview.png')
+                        composite_path = os.path.join(temp_base, 'ddquint_composite_overview.png')
                         try:
                             create_composite_image(results, composite_path)
                             print(f'COMPOSITE_READY:{composite_path}')
@@ -634,11 +685,20 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                         complete_results.append(cached_result)
                     
                     # Output complete results for Excel export
+                    print(f'DEBUG: About to output {len(complete_results)} complete results')
                     print('COMPLETE_RESULTS:' + json.dumps(complete_results))
+                    print('DEBUG: Complete results output completed')
                     
                 except Exception as e:
                     print(f'PYTHON_ERROR: {e}')
                     traceback.print_exc()
+                    # Still try to output whatever results we have
+                    if 'results' in locals():
+                        try:
+                            simple_results = [{'well': r.get('well', 'unknown'), 'sample_name': r.get('sample_name', 'unknown')} for r in results]
+                            print('COMPLETE_RESULTS:' + json.dumps(simple_results))
+                        except:
+                            print('COMPLETE_RESULTS:[]')
                     sys.exit(1)
                 """
             ]
@@ -780,6 +840,24 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             let compositePath = String(trimmedLine.dropFirst("COMPOSITE_READY:".count))
             handleCompositeReady(path: compositePath)
         }
+        else if trimmedLine.hasPrefix("COMPLETE_RESULTS:") {
+            let resultsJson = String(trimmedLine.dropFirst("COMPLETE_RESULTS:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            print("🎯 FOUND COMPLETE_RESULTS in output parser: \(resultsJson.prefix(100))...")
+            cacheCompleteResults(resultsJson)
+        }
+        else if trimmedLine.hasPrefix("UPDATED_RESULT:") {
+            let resultJson = String(trimmedLine.dropFirst("UPDATED_RESULT:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let resultData = resultJson.data(using: .utf8),
+               let result = try? JSONSerialization.jsonObject(with: resultData) as? [String: Any],
+               let wellName = result["well"] as? String {
+                print("🎯 FOUND UPDATED_RESULT in output parser for well: \(wellName)")
+                updateCachedResultForWell(wellName: wellName, resultJson: resultJson)
+            }
+        }
+        else if trimmedLine.hasPrefix("DEBUG:") {
+            // Log debug messages from Python
+            print("🐍 Python: \(trimmedLine)")
+        }
     }
     
     private func processAnalysisResults(output: String, error: String, exitCode: Int32) {
@@ -824,8 +902,13 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     }
     
     private func generateCacheKey(folderURL: URL) -> String {
-        let templatePath = templateFileURL?.path ?? "no_template"
-        return "\(folderURL.path)_\(templatePath)"
+        // Simplified cache key - just use folder path for now to avoid template issues
+        let folderName = folderURL.lastPathComponent
+        let cacheKey = "ddquint_\(folderName)_\(folderURL.path.hash)"
+        print("🔑 Generated cache key: \(cacheKey)")
+        print("   folder: \(folderURL.path)")
+        print("   folderName: \(folderName)")
+        return cacheKey
     }
     
     private func cacheCompleteResults(_ resultsJson: String) {
@@ -836,7 +919,11 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                 if let folderURL = selectedFolderURL {
                     cacheKey = generateCacheKey(folderURL: folderURL)
                     cachedResults = completeResults
+                    cacheTimestamp = Date()
                     print("✅ Cached \(cachedResults.count) complete analysis results for Excel export")
+                    
+                    // Persist cache to disk
+                    persistCacheToFile(folderURL: folderURL)
                 }
             } else {
                 print("⚠️ Could not parse complete results as array")
@@ -925,47 +1012,9 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         statusLabel.stringValue = "Overview plot ready"
     }
     
-    private func finalizeProgressiveAnalysis(exitCode: Int32) {
-        // Hide progress indicator
-        progressIndicator.stopAnimation(nil)
-        progressIndicator.isHidden = true
-        
-        if exitCode == 0 {
-            // Sort wells by well ID for consistent display
-            wellData.sort { $0.well < $1.well }
-            wellListView.reloadData()
-            
-            // Cache the results
-            if let folderURL = selectedFolderURL {
-                cacheKey = generateCacheKey(folderURL: folderURL)
-                // Convert wellData to the format expected by cachedResults
-                cachedResults = wellData.map { well in
-                    return [
-                        "well": well.well,
-                        "sample_name": well.sampleName,
-                        "total_droplets": well.dropletCount,
-                        "has_data": well.hasData
-                    ]
-                }
-            }
-            
-            statusLabel.stringValue = "Analysis complete - \(wellData.count) wells processed"
-            isAnalysisComplete = true
-            
-            // Enable all buttons now that analysis is complete
-            if !wellData.isEmpty {
-                exportExcelButton.isEnabled = true
-                exportPlotsButton.isEnabled = true
-                globalParamsButton.isEnabled = true
-            }
-            
-        } else {
-            statusLabel.stringValue = "Analysis failed"
-            showError("Analysis process failed with exit code \(exitCode)")
-        }
-    }
     
     private func usesCachedResults() {
+        print("DEBUG: usesCachedResults() called with \(cachedResults.count) cached entries")
         // Convert cached results back to well data
         wellData = cachedResults.compactMap { dict in
             guard let well = dict["well"] as? String else { return nil }
@@ -984,6 +1033,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     }
     
     private func parseWellsData(_ jsonString: String) {
+        print("DEBUG: parseWellsData() called")
         do {
             let data = jsonString.data(using: .utf8) ?? Data()
             if let wellsArray = try JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]] {
@@ -1012,16 +1062,23 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     }
     
     private func updateUIAfterAnalysis() {
+        print("DEBUG: updateUIAfterAnalysis() called with \(wellData.count) wells")
         isAnalysisComplete = true
         
         // Hide progress indicator
         progressIndicator.stopAnimation(nil)
         progressIndicator.isHidden = true
         
-        // Sort wells by name (A01, A02, etc.)
+        // Sort wells by well ID in column-first order (A01, B01, C01, A02, B02, ...)
+        writeDebugLog("DEBUG WELL SORTING: Before sort - wells: \(wellData.map { $0.well })")
         wellData.sort { well1, well2 in
-            return well1.well.localizedStandardCompare(well2.well) == .orderedAscending
+            let (col1, row1) = parseWellIdColumnFirst(well1.well)
+            let (col2, row2) = parseWellIdColumnFirst(well2.well)
+            let result = col1 < col2 || (col1 == col2 && row1 < row2)
+            writeDebugLog("DEBUG WELL SORTING: \(well1.well) (\(col1),\(row1)) vs \(well2.well) (\(col2),\(row2)) = \(result)")
+            return result
         }
+        writeDebugLog("DEBUG WELL SORTING: After sort - wells: \(wellData.map { $0.well })")
         
         statusLabel.stringValue = "Analysis complete - \(wellData.count) wells processed"
         
@@ -1124,11 +1181,11 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     import shutil
                     
                     # Look for existing plot file from the main analysis
-                    # The main analysis should have created plots in Graphs/ directory
+                    # The main analysis creates plots in temporary directory
+                    import tempfile
+                    temp_base = tempfile.gettempdir()
                     possible_graphs_dirs = [
-                        os.path.join('\(escapedFolderPath)', 'Graphs'),
-                        os.path.join('\(escapedFolderPath)', 'graphs'),
-                        '\(escapedFolderPath)'  # Fallback: check in main folder
+                        os.path.join(temp_base, 'ddquint_analysis_plots')
                     ]
                     
                     existing_plot = None
@@ -1235,7 +1292,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         }
         
         // Load parameters FIRST, before creating UI
-        let savedParams: [String: Any]
+        var savedParams: [String: Any]
         if isGlobal {
             savedParams = loadGlobalParameters()
         } else {
@@ -1249,13 +1306,18 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                 print("   wellId: \(wellId)")
                 print("   wellParametersMap has \(wellParametersMap.count) entries: \(Array(wellParametersMap.keys).sorted())")
                 
+                // Always start with global parameters as base
+                savedParams = loadGlobalParameters()
+                print("📄 Loaded \(savedParams.count) global parameters as base: \(savedParams.keys.sorted())")
+                
+                // Overlay well-specific modifications if they exist
                 if let savedWellParams = wellParametersMap[wellId], !savedWellParams.isEmpty {
-                    savedParams = savedWellParams
-                    print("✅ Loading saved well-specific parameters for well \(wellId): \(savedParams.keys.sorted())")
+                    for (key, value) in savedWellParams {
+                        savedParams[key] = value
+                    }
+                    print("✅ Applied \(savedWellParams.count) well-specific parameter overrides for well \(wellId): \(savedWellParams.keys.sorted())")
                 } else {
-                    // Fallback to global parameters from parameters.json for well editing
-                    savedParams = loadGlobalParameters()
-                    print("📄 No well-specific parameters for well \(wellId), using global parameters from file: \(savedParams.keys.sorted())")
+                    print("📄 No well-specific parameter overrides for well \(wellId)")
                 }
             } else {
                 savedParams = [:]
@@ -1545,6 +1607,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             targetField.isSelectable = true
             targetField.isBordered = true
             targetField.bezelStyle = .roundedBezel
+            targetField.backgroundColor = NSColor.textBackgroundColor
             
             view.addSubview(targetLabel)
             view.addSubview(targetField)
@@ -1611,7 +1674,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         let scrollView = NSScrollView()
         let view = NSView()
         
-        var yPos: CGFloat = 480
+        var yPos: CGFloat = 440
         let fieldHeight: CGFloat = 24
         let spacing: CGFloat = 30
         
@@ -1816,7 +1879,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         let scrollView = NSScrollView()
         let view = NSView()
         
-        var yPos: CGFloat = 420
+        var yPos: CGFloat = 380
         let fieldHeight: CGFloat = 24
         let spacing: CGFloat = 30
         
@@ -2566,8 +2629,7 @@ print(json.dumps(defaults))
         showProcessingIndicator("Re-processing all wells with new parameters...")
         
         // Clear cache to force re-analysis with new parameters
-        cacheKey = nil
-        cachedResults.removeAll()
+        invalidateCache()
         
         // Clear current data and restart analysis
         wellData.removeAll()
@@ -2785,6 +2847,25 @@ print(json.dumps(defaults))
                 DispatchQueue.main.async { [weak self] in
                     self?.handleCompositeReady(path: compositePath)
                 }
+            } else if line.hasPrefix("COMPLETE_RESULTS:") {
+                let resultsJson = String(line.dropFirst("COMPLETE_RESULTS:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                print("🎯 FOUND COMPLETE_RESULTS in progressive output: \(resultsJson.prefix(100))...")
+                DispatchQueue.main.async { [weak self] in
+                    self?.cacheCompleteResults(resultsJson)
+                }
+            } else if line.hasPrefix("UPDATED_RESULT:") {
+                let resultJson = String(line.dropFirst("UPDATED_RESULT:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let resultData = resultJson.data(using: .utf8),
+                   let result = try? JSONSerialization.jsonObject(with: resultData) as? [String: Any],
+                   let wellName = result["well"] as? String {
+                    print("🎯 FOUND UPDATED_RESULT in partial output for well: \(wellName)")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.updateCachedResultForWell(wellName: wellName, resultJson: resultJson)
+                    }
+                }
+            } else if line.hasPrefix("DEBUG:") {
+                // Log debug messages from Python
+                print("🐍 Python: \(line)")
             }
         }
     }
@@ -2826,7 +2907,154 @@ print(json.dumps(defaults))
         }
     }
     
+    // MARK: - Cache Management
+    
+    private func getCacheFilePath(folderURL: URL) -> URL {
+        return folderURL.appendingPathComponent("ddQuint_results_cache.json")
+    }
+    
+    private func persistCacheToFile(folderURL: URL) {
+        guard !cachedResults.isEmpty else { return }
+        
+        let cacheFile = getCacheFilePath(folderURL: folderURL)
+        
+        let cacheData: [String: Any] = [
+            "results": cachedResults,
+            "cacheKey": cacheKey ?? "",
+            "timestamp": cacheTimestamp?.timeIntervalSince1970 ?? 0,
+            "version": "1.0"
+        ]
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: cacheData, options: [.prettyPrinted])
+            try jsonData.write(to: cacheFile)
+            print("💾 Persisted cache to: \(cacheFile.path)")
+        } catch {
+            print("⚠️ Failed to persist cache: \(error)")
+        }
+    }
+    
+    private func loadCacheFromFile(folderURL: URL) -> Bool {
+        let cacheFile = getCacheFilePath(folderURL: folderURL)
+        
+        guard FileManager.default.fileExists(atPath: cacheFile.path) else {
+            print("📂 No cache file found at: \(cacheFile.path)")
+            return false
+        }
+        
+        do {
+            let jsonData = try Data(contentsOf: cacheFile)
+            let cacheData = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+            
+            guard let cacheData = cacheData,
+                  let results = cacheData["results"] as? [[String: Any]],
+                  let storedCacheKey = cacheData["cacheKey"] as? String,
+                  let timestamp = cacheData["timestamp"] as? TimeInterval else {
+                print("⚠️ Invalid cache file format")
+                return false
+            }
+            
+            // Check if cache is still valid (less than 24 hours old)
+            let cacheAge = Date().timeIntervalSince1970 - timestamp
+            let maxCacheAge: TimeInterval = 24 * 60 * 60 // 24 hours
+            
+            if cacheAge > maxCacheAge {
+                print("⏰ Cache is too old (\(Int(cacheAge/3600)) hours), ignoring")
+                return false
+            }
+            
+            // Validate cache key matches current context
+            let currentCacheKey = generateCacheKey(folderURL: folderURL)
+            if storedCacheKey != currentCacheKey {
+                print("🔑 Cache key mismatch, ignoring cache")
+                return false
+            }
+            
+            // Load cache
+            cachedResults = results
+            cacheKey = storedCacheKey
+            cacheTimestamp = Date(timeIntervalSince1970: timestamp)
+            
+            print("✅ Loaded \(cachedResults.count) results from cache (age: \(Int(cacheAge/60)) minutes)")
+            return true
+            
+        } catch {
+            print("⚠️ Failed to load cache: \(error)")
+            return false
+        }
+    }
+    
+    private func invalidateCache() {
+        cacheKey = nil
+        cachedResults.removeAll()
+        cacheTimestamp = nil
+        
+        // Clean up cache file if it exists for selected folder
+        if let folderURL = selectedFolderURL {
+            let cacheFile = getCacheFilePath(folderURL: folderURL)
+            try? FileManager.default.removeItem(at: cacheFile)
+            print("🗑️ Invalidated and removed cache file for selected folder")
+        }
+    }
+    
+    private func clearAllCacheFiles() {
+        // Clear in-memory cache
+        cacheKey = nil
+        cachedResults.removeAll()
+        cacheTimestamp = nil
+        
+        print("🗑️ Cache cleared on app launch (in-memory)")
+        
+        // Note: We don't need to scan file system for cache files since they're created 
+        // per-folder and will be handled when folders are selected
+    }
+
     // MARK: - Helper Methods
+    
+    private func parseWellIdColumnFirst(_ wellId: String) -> (Int, Int) {
+        // Parse well ID to support column-first sorting (A01, B01, C01, A02, B02, ...)
+        // Returns (column_number, row_number) tuple - EXACTLY like list_report.py
+        
+        if wellId.isEmpty {
+            return (999, 999)  // Put empty well IDs at the end
+        }
+        
+        // Extract letter(s) for row and number(s) for column
+        var rowPart = ""
+        var colPart = ""
+        
+        for char in wellId {
+            if char.isLetter {
+                rowPart += String(char)
+            } else if char.isNumber {
+                colPart += String(char)
+            }
+        }
+        
+        // Convert row letters to number (A=1, B=2, etc.) - EXACTLY like Python
+        var rowNumber: Int
+        if !rowPart.isEmpty {
+            rowNumber = 0
+            for (i, char) in rowPart.uppercased().reversed().enumerated() {
+                rowNumber += (Int(char.asciiValue! - Character("A").asciiValue!) + 1) * Int(pow(26.0, Double(i)))
+            }
+        } else {
+            rowNumber = 999  // Put malformed wells at the end
+        }
+        
+        // Convert column to integer
+        let colNumber: Int
+        if !colPart.isEmpty, let parsed = Int(colPart) {
+            colNumber = parsed
+        } else {
+            colNumber = colPart.isEmpty ? 0 : 999
+        }
+        
+        // Return (column, row) for column-first sorting - EXACTLY like Python
+        let result = (colNumber, rowNumber)
+        print("DEBUG PARSE: '\(wellId)' -> row_part:'\(rowPart)' col_part:'\(colPart)' -> (\(colNumber), \(rowNumber))")
+        return result
+    }
     
     private func findPython() -> String? {
         let paths = [
@@ -2859,7 +3087,7 @@ print(json.dumps(defaults))
         let timestamp = formatter.string(from: Date())
         let logMessage = "[\(timestamp)] \(message)\n"
         
-        let logPath = "/Users/jakob/Applications/Git/ddQuint/swift_debug.log"
+        let logPath = "/Users/jakob/Applications/Git/ddQuint-App/debug.log"
         let logURL = URL(fileURLWithPath: logPath)
         
         if let data = logMessage.data(using: .utf8) {
@@ -2929,8 +3157,7 @@ print(json.dumps(defaults))
         
         // Clear ALL caches to force complete re-analysis
         // NOTE: We keep wellParametersMap intact to preserve well-specific parameter customizations
-        cacheKey = nil
-        cachedResults.removeAll()
+        invalidateCache()
         compositeImagePath = nil
         
         // Clear existing data and restart analysis
@@ -2956,6 +3183,10 @@ print(json.dumps(defaults))
         writeDebugLog("🔧 REGEN_START: Starting regeneration for well \(wellName)")
         writeDebugLog("🔧 REGEN_START: CSV file: \(csvFile.path)")
         
+        // Clear the existing plot image to prevent file locking issues
+        plotImageView.image = nil
+        writeDebugLog("🔧 REGEN_START: Cleared existing plot image")
+        
         guard let pythonPath = findPython(),
               let ddquintPath = findDDQuint() else {
             writeDebugLog("❌ REGEN_ERROR: Python or ddQuint not found")
@@ -2969,7 +3200,13 @@ print(json.dumps(defaults))
         
         // Save well-specific parameters to a temporary file for Python to use
         let wellParams = wellParametersMap[wellName] ?? [:]
+        writeDebugLog("🔧 REGEN_PARAMS: Well \(wellName) has \(wellParams.count) custom parameters")
+        writeDebugLog("🔧 REGEN_PARAMS: Parameter keys: \(Array(wellParams.keys).sorted())")
+        for (key, value) in wellParams {
+            writeDebugLog("🔧 REGEN_PARAMS: \(key) = \(value)")
+        }
         let tempParamsFile = saveWellParametersToTempFile(wellParams, wellName: wellName)
+        writeDebugLog("🔧 REGEN_PARAMS: Temp params file: \(tempParamsFile ?? "none")")
         
         DispatchQueue.global().async { [weak self] in
             let process = Process()
@@ -2981,169 +3218,136 @@ print(json.dumps(defaults))
                 "PYTHONDONTWRITEBYTECODE": "1"
             ]) { _, new in new }
             
-            let tempDir = NSTemporaryDirectory()
-            let outputDir = "\(tempDir)ddquint_plots"
-            
             let escapedCSVPath = csvFile.path.replacingOccurrences(of: "'", with: "\\'")
-            let escapedOutputDir = outputDir.replacingOccurrences(of: "'", with: "\\'")
             let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
-            let escapedParamsFile = tempParamsFile?.replacingOccurrences(of: "'", with: "\\'")
+            let escapedParamFile = tempParamsFile?.replacingOccurrences(of: "'", with: "\\'") ?? ""
             
+            // Use inline Python approach (like main analysis and plot generation)
             process.arguments = [
                 "-c",
                 """
-                import sys
-                import os
-                import tempfile
-                import json
+                import sys, os, tempfile, json, logging
                 sys.path.insert(0, '\(escapedDDQuintPath)')
                 
                 try:
-                    # Use exactly the same import pattern as the main analysis
-                    sys.path.insert(0, '\(escapedDDQuintPath)')
-                    print('REGEN_DEBUG: Python path set')
+                    # Initialize logging to capture debug output
+                    from ddquint.config.logging_config import setup_logging
+                    log_file = setup_logging(debug=True)
+                    print(f'Logging initialized: {log_file}')
                     
-                    # Initialize config properly (like main.py does)
+                    # Also add a handler that prints to stdout so we see logs in debug.log
+                    import logging
+                    stdout_handler = logging.StreamHandler(sys.stdout)
+                    stdout_handler.setLevel(logging.DEBUG)
+                    stdout_handler.setFormatter(logging.Formatter('DDQUINT_LOG: %(name)s - %(levelname)s - %(message)s'))
+                    logging.getLogger().addHandler(stdout_handler)
+                    
                     from ddquint.config import Config
-                    print('REGEN_DEBUG: Config imported')
                     from ddquint.utils.parameter_editor import load_parameters_if_exist
-                    print('REGEN_DEBUG: parameter_editor imported')
-                    
-                    # Load user parameters if they exist
-                    config = Config.get_instance()
-                    print('REGEN_DEBUG: Config instance created')
-                    load_parameters_if_exist(Config)
-                    print('REGEN_DEBUG: Parameters loaded')
-                    
-                    # Load well-specific parameters if available
-                    well_params_file = '\(escapedParamsFile ?? "")'
-                    if well_params_file and os.path.exists(well_params_file):
-                        with open(well_params_file, 'r') as f:
-                            well_params = json.load(f)
-                        
-                        # Apply well-specific parameters to config
-                        for key, value in well_params.items():
-                            if hasattr(config, key):
-                                setattr(config, key, value)
-                                print(f'Applied well parameter: {key} = {value}')
-                    
-                    config.finalize_colors()
-                    
-                    # Import ddQuint core modules for actual reprocessing
                     from ddquint.core.file_processor import process_csv_file
                     from ddquint.utils import get_sample_names
                     
-                    # Create output directory
-                    os.makedirs('\(escapedOutputDir)', exist_ok=True)
+                    # Initialize config
+                    config = Config.get_instance()
+                    load_parameters_if_exist(Config)
                     
-                    # Get sample names from the folder
+                    # Load well-specific parameters if available
+                    print(f'Parameter file path: {repr("\(escapedParamFile)")}')
+                    print(f'Parameter file exists: {os.path.exists("\(escapedParamFile)") if "\(escapedParamFile)" else False}')
+                    
+                    if '\(escapedParamFile)' and os.path.exists('\(escapedParamFile)'):
+                        with open('\(escapedParamFile)', 'r') as f:
+                            custom_params = json.load(f)
+                        
+                        print(f'Loaded {len(custom_params)} custom parameters: {list(custom_params.keys())}')
+                        
+                        # Apply custom parameters to config
+                        print(f'Config instance id: {id(config)}')
+                        applied_count = 0
+                        for key, value in custom_params.items():
+                            if hasattr(config, key):
+                                old_value = getattr(config, key)
+                                setattr(config, key, value)
+                                print(f'Applied parameter: {key} = {value} (was {old_value})')
+                                # Verify the attribute was set
+                                verify_value = getattr(config, key)
+                                print(f'Verification: {key} is now {verify_value}')
+                                applied_count += 1
+                            else:
+                                print(f'Warning: Config has no attribute {key}')
+                        
+                        print(f'Successfully applied {applied_count} out of {len(custom_params)} parameters')
+                    else:
+                        print('No custom parameters file found or file does not exist')
+                    
+                    config.finalize_colors()
+                    
+                    # Use same temp directory as main analysis
+                    temp_base = tempfile.gettempdir()
+                    graphs_dir = os.path.join(temp_base, 'ddquint_analysis_plots')
+                    os.makedirs(graphs_dir, exist_ok=True)
+                    
+                    # Get sample names
                     folder_path = os.path.dirname('\(escapedCSVPath)')
                     sample_names = get_sample_names(folder_path)
                     
-                    # Process the single CSV file with updated parameters
-                    print(f'REGEN_DEBUG: Processing CSV file: \(escapedCSVPath)')
-                    print(f'REGEN_DEBUG: Output directory: \(escapedOutputDir)')
-                    print(f'REGEN_DEBUG: Sample names: {sample_names}')
+                    # Process the CSV file (this will regenerate the plot)
+                    result = process_csv_file('\(escapedCSVPath)', graphs_dir, sample_names, verbose=True)
                     
-                    result = process_csv_file('\(escapedCSVPath)', '\(escapedOutputDir)', sample_names, verbose=True)
-                    print(f'REGEN_DEBUG: process_csv_file returned: {type(result)}')
-                    
-                    if result:
-                        # Debug: List all files in output directory first
-                        import os
-                        if os.path.exists('\(escapedOutputDir)'):
-                            files = os.listdir('\(escapedOutputDir)')
-                            print(f'Files created in output dir: {files}')
+                    # Check if plot was created
+                    plot_path = os.path.join(graphs_dir, '\(wellName).png')
+                    print(f'Looking for plot at: {plot_path}')
+                    print(f'Plot exists: {os.path.exists(plot_path)}')
+                    if os.path.exists(plot_path):
+                        # Copy to /tmp/ location like working plot generation does
+                        import shutil
+                        temp_plot_path = '/tmp/ddquint_plot_\(wellName).png'
                         
-                        # Look for the generated plot - try multiple possible names
-                        possible_plot_names = [
-                            '\(wellName).png',
-                            os.path.basename('\(escapedCSVPath)').replace('.csv', '.png'),
-                            os.path.basename('\(escapedCSVPath)').replace('_Amplitude.csv', '.png')
-                        ]
+                        # Remove existing temp file if it exists
+                        if os.path.exists(temp_plot_path):
+                            os.remove(temp_plot_path)
+                            print(f'Removed existing temp file: {temp_plot_path}')
                         
-                        plot_file = None
-                        for name in possible_plot_names:
-                            candidate = os.path.join('\(escapedOutputDir)', name)
-                            if os.path.exists(candidate):
-                                plot_file = candidate
-                                print(f'Found plot file: {candidate}')
-                                break
+                        shutil.copy2(plot_path, temp_plot_path)
+                        print(f'Copied plot to: {temp_plot_path}')
+                        print(f'Temp file exists: {os.path.exists(temp_plot_path)}')
+                        print(f'Temp file size: {os.path.getsize(temp_plot_path) if os.path.exists(temp_plot_path) else "N/A"}')
+                        print(f'PLOT_CREATED:{temp_plot_path}')
                         
-                        if plot_file:
-                            # Ensure file is fully written by checking size and waiting if needed
-                            import time
-                            for i in range(5):  # Wait up to 5 seconds
-                                if os.path.exists(plot_file) and os.path.getsize(plot_file) > 0:
-                                    break
-                                time.sleep(1)
-                            
-                            # Copy plot to the original Graphs directory for persistence
-                            import shutil
-                            original_graphs_dir = os.path.join(folder_path, 'Graphs')
-                            os.makedirs(original_graphs_dir, exist_ok=True)
-                            persistent_plot_path = os.path.join(original_graphs_dir, f'\(wellName).png')
-                            shutil.copy2(plot_file, persistent_plot_path)
-                            
-                            print(f'PLOT_CREATED:{persistent_plot_path}')
-                            # Convert result to JSON-serializable format
+                        # Output complete analysis results for cache update
+                        if result and isinstance(result, dict):
+                            # Create serializable result
                             serializable_result = {
                                 'well': '\(wellName)',
                                 'status': 'regenerated',
-                                'plot_path': plot_file
+                                'plot_path': plot_path
                             }
-                            # Add analysis results with proper serialization for complex objects
-                            print(f'REGEN_DEBUG: Adding result data: {list(result.keys()) if isinstance(result, dict) else "not dict"}')
-                            if isinstance(result, dict):
-                                for key, value in result.items():
-                                    if isinstance(value, (str, int, float, bool, list)):
-                                        serializable_result[key] = value
-                                        print(f'REGEN_DEBUG: Added {key}: {type(value)}')
-                                    elif isinstance(value, dict):
-                                        # Handle dictionary values (like copy_numbers, counts)
-                                        try:
-                                            # Convert all dict values to serializable format, handling numpy types
-                                            serializable_dict = {}
-                                            for k, v in value.items():
-                                                # Convert numpy types and ensure keys are strings
-                                                str_key = str(k)  # Convert any numpy keys to string
-                                                if isinstance(v, (str, int, float, bool)):
-                                                    serializable_dict[str_key] = v
-                                                elif hasattr(v, 'item'):  # numpy types have .item() method
-                                                    serializable_dict[str_key] = v.item()
-                                                else:
-                                                    serializable_dict[str_key] = str(v)
-                                            serializable_result[key] = serializable_dict
-                                            print(f'REGEN_DEBUG: Added dict {key}: {len(serializable_dict)} items')
-                                        except Exception as e:
-                                            print(f'REGEN_DEBUG: Skipped {key}: {e}')
-                                    else:
-                                        print(f'REGEN_DEBUG: Skipped {key}: {type(value)} not serializable')
-                            print(f'REGEN_DEBUG: About to output UPDATED_RESULT')
+                            
+                            # Add all analysis data
+                            for key, value in result.items():
+                                if key in ['df_filtered', 'df_original']:
+                                    continue  # Skip DataFrames
+                                try:
+                                    json.dumps(value)  # Test serialization
+                                    serializable_result[key] = value
+                                except (TypeError, ValueError):
+                                    if isinstance(value, (tuple, set)):
+                                        serializable_result[key] = list(value)
+                                    # Skip other non-serializable values
+                            
+                            # Ensure sample name exists
+                            if 'sample_name' not in serializable_result:
+                                if '\(wellName)' in sample_names:
+                                    serializable_result['sample_name'] = sample_names['\(wellName)']
+                                else:
+                                    serializable_result['sample_name'] = '\(wellName)'
+                            
                             print(f'UPDATED_RESULT:{json.dumps(serializable_result)}')
                         else:
-                            # Try to find any PNG files in the output directory
-                            import glob
-                            plots = glob.glob(os.path.join('\(escapedOutputDir)', '*.png'))
-                            if plots:
-                                print(f'PLOT_CREATED:{plots[0]}')
-                                serializable_result = {
-                                    'well': '\(wellName)',
-                                    'status': 'regenerated',
-                                    'plot_path': plots[0]
-                                }
-                                print(f'UPDATED_RESULT:{json.dumps(serializable_result)}')
-                            else:
-                                print('NO_PLOT_GENERATED')
-                                print(f'ERROR: No plot file found in \(escapedOutputDir)')
-                                # List what files actually exist
-                                import os
-                                if os.path.exists('\(escapedOutputDir)'):
-                                    files = os.listdir('\(escapedOutputDir)')
-                                    print(f'Files in output dir: {files}')
+                            print('UPDATED_RESULT:{"well": "\(wellName)", "status": "regenerated", "plot_path": "' + plot_path + '"}')
                     else:
-                        print('PROCESSING_FAILED')
-                        print('ERROR: process_csv_file returned None')
+                        print('Plot not found for \(wellName)')
+                        print('REGENERATION_FAILED')
                         
                 except Exception as e:
                     print(f'ERROR: {str(e)}')
@@ -3151,6 +3355,8 @@ print(json.dumps(defaults))
                     traceback.print_exc()
                 """
             ]
+            
+            self?.writeDebugLog("🔧 REGEN: Using inline Python approach")
             
             let outputPipe = Pipe()
             process.standardOutput = outputPipe
@@ -3170,10 +3376,8 @@ print(json.dumps(defaults))
                     self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains PLOT_CREATED: \(output.contains("PLOT_CREATED"))")
                     self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains UPDATED_RESULT: \(output.contains("UPDATED_RESULT"))")
                     self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains ERROR: \(output.contains("ERROR"))")
-                    // Add a small delay to ensure file is fully written
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.handleWellRegenerationResult(output: output, wellName: wellName)
-                    }
+                    // Process immediately since we're using the same approach as working functions
+                    self?.handleWellRegenerationResult(output: output, wellName: wellName)
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
@@ -3204,23 +3408,38 @@ print(json.dumps(defaults))
         }
         
         if let plotStart = output.range(of: "PLOT_CREATED:")?.upperBound {
-            let plotPath = String(output[plotStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawPlotPath = String(output[plotStart...])
+            let plotPath = rawPlotPath.trimmingCharacters(in: .whitespacesAndNewlines)
             
-            writeDebugLog("Attempting to load plot from: \(plotPath)")
-            writeDebugLog("File exists: \(FileManager.default.fileExists(atPath: plotPath))")
+            writeDebugLog("Raw plot path from output: '\(rawPlotPath)'")
+            writeDebugLog("Trimmed plot path: '\(plotPath)'")
+            writeDebugLog("Plot path length: \(plotPath.count)")
+            writeDebugLog("Plot path contains newline: \(plotPath.contains("\\n"))")
             
-            if FileManager.default.fileExists(atPath: plotPath) {
-                if let image = NSImage(contentsOfFile: plotPath) {
-                    writeDebugLog("Successfully loaded image from: \(plotPath)")
+            // Extract just the first line in case there are multiple lines
+            let firstLineOnly = plotPath.components(separatedBy: .newlines).first ?? plotPath
+            writeDebugLog("First line only: '\(firstLineOnly)'")
+            
+            writeDebugLog("Attempting to load plot from: \(firstLineOnly)")
+            writeDebugLog("File exists: \(FileManager.default.fileExists(atPath: firstLineOnly))")
+            
+            if FileManager.default.fileExists(atPath: firstLineOnly) {
+                if let image = NSImage(contentsOfFile: firstLineOnly) {
+                    writeDebugLog("Successfully loaded image from: \(firstLineOnly)")
                     plotImageView.image = image
                     configureZoomForImage(image)
                     statusLabel.stringValue = "Plot regenerated for \(wellName) with new parameters"
+                    
+                    // Refresh the well list to show any visual changes from regeneration
+                    if let wellIndex = wellData.firstIndex(where: { $0.well == wellName }) {
+                        wellListView.reloadData(forRowIndexes: IndexSet(integer: wellIndex), columnIndexes: IndexSet(integer: 0))
+                    }
                 } else {
-                    writeDebugLog("Failed to create NSImage from existing file: \(plotPath)")
+                    writeDebugLog("Failed to create NSImage from existing file: \(firstLineOnly)")
                     statusLabel.stringValue = "Failed to load regenerated plot for \(wellName) - image creation failed"
                 }
             } else {
-                writeDebugLog("Plot file does not exist at: \(plotPath)")
+                writeDebugLog("Plot file does not exist at: \(firstLineOnly)")
                 statusLabel.stringValue = "Failed to load regenerated plot for \(wellName) - file not found"
             }
         } else if output.contains("NO_PLOT_GENERATED") {
@@ -3247,6 +3466,12 @@ print(json.dumps(defaults))
                     cachedResults.append(updatedResult)
                     print("✅ Added new cached result for well \(wellName)")
                 }
+                
+                // Persist updated cache to file
+                if let folderURL = selectedFolderURL {
+                    cacheTimestamp = Date()
+                    persistCacheToFile(folderURL: folderURL)
+                }
             }
         } catch {
             print("⚠️ Failed to parse updated result for well \(wellName): \(error)")
@@ -3258,7 +3483,19 @@ print(json.dumps(defaults))
     private func exportExcelFile(to saveURL: URL, sourceFolder: URL) {
         statusLabel.stringValue = "Exporting Excel file..."
         
-        // Always use cached results for fast export (now that they get updated when parameters change)
+        // Try loading from cache file if not in memory
+        print("🔍 EXCEL_DEBUG: Checking cache before export")
+        print("   cachedResults.isEmpty: \(cachedResults.isEmpty)")
+        print("   current cacheKey: \(cacheKey ?? "nil")")
+        
+        if cachedResults.isEmpty || cacheKey != generateCacheKey(folderURL: sourceFolder) {
+            print("🔍 EXCEL_DEBUG: Attempting to load cache from file")
+            let loaded = loadCacheFromFile(folderURL: sourceFolder)
+            print("   cache load result: \(loaded)")
+        } else {
+            print("🔍 EXCEL_DEBUG: Using existing in-memory cache")
+        }
+        
         let currentCacheKey = generateCacheKey(folderURL: sourceFolder)
         
         writeDebugLog("🔍 EXCEL_DEBUG: currentCacheKey = \(currentCacheKey)")
@@ -3266,136 +3503,17 @@ print(json.dumps(defaults))
         writeDebugLog("🔍 EXCEL_DEBUG: cachedResults.count = \(cachedResults.count)")
         writeDebugLog("🔍 EXCEL_DEBUG: cachedResults sample = \(cachedResults.first?.keys.sorted() ?? [])")
         
+        // Always use cached results for Excel export - no fallback to full analysis
         if let existingKey = cacheKey, existingKey == currentCacheKey, !cachedResults.isEmpty {
-            // Check if cached results contain full analysis data
-            if let firstResult = cachedResults.first, firstResult["copy_numbers"] != nil {
-                writeDebugLog("✅ EXCEL_DEBUG: Using cached results with complete data")
-                statusLabel.stringValue = "Exporting Excel file from cached results..."
-                exportExcelFromCachedResults(to: saveURL, sourceFolder: sourceFolder)
-                return
-            } else {
-                writeDebugLog("⚠️ EXCEL_DEBUG: Cached results missing copy_numbers - falling back to full analysis")
-            }
-        } else {
-            writeDebugLog("⚠️ EXCEL_DEBUG: Cache check failed - falling back to full analysis")
-        }
-        
-        // Fallback to full analysis if no cached data available
-        guard let pythonPath = findPython(),
-              let ddquintPath = findDDQuint() else {
-            showError("Python or ddQuint not found")
+            writeDebugLog("✅ EXCEL_DEBUG: Using cached results for Excel export")
+            statusLabel.stringValue = "Exporting Excel file from cached results..."
+            exportExcelFromCachedResults(to: saveURL, sourceFolder: sourceFolder)
             return
         }
         
-        DispatchQueue.global().async { [weak self] in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: pythonPath)
-            
-            // Hide matplotlib windows from dock
-            process.environment = (process.environment ?? ProcessInfo.processInfo.environment).merging([
-                "MPLBACKEND": "Agg",
-                "PYTHONDONTWRITEBYTECODE": "1",
-                "TQDM_DISABLE": "1"
-            ]) { _, new in new }
-            
-            let escapedSourcePath = sourceFolder.path.replacingOccurrences(of: "'", with: "\\'")
-            let escapedSavePath = saveURL.path.replacingOccurrences(of: "'", with: "\\'")
-            let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
-            
-            process.arguments = [
-                "-c",
-                """
-                import sys
-                import traceback
-                import os
-                
-                try:
-                    sys.path.insert(0, '\(escapedDDQuintPath)')
-                    
-                    # Initialize config properly
-                    from ddquint.config import Config
-                    from ddquint.utils.parameter_editor import load_parameters_if_exist
-                    
-                    config = Config.get_instance()
-                    load_parameters_if_exist(Config)
-                    config.finalize_colors()
-                    
-                    # Import modules
-                    from ddquint.core import process_directory, create_list_report
-                    from ddquint.utils import get_sample_names
-                    
-                    # Get sample names and run analysis
-                    # Temporarily increase template search levels to find templates in iCloud
-                    config.TEMPLATE_SEARCH_PARENT_LEVELS = 5  # Go up 5 levels to find common parent
-                    sample_names = get_sample_names('\(escapedSourcePath)')
-                    
-                    # Also try without 'Kopie' suffix if directory name contains it and no samples found
-                    if not sample_names:
-                        dir_name = os.path.basename('\(escapedSourcePath)')
-                        if 'Kopie' in dir_name:
-                            alt_dir_name = dir_name.replace(' Kopie', '').replace('Kopie', '')
-                            # Try manual template search with alternative name
-                            from ddquint.utils.template_parser import find_template_file
-                            import tempfile
-                            temp_dir = tempfile.mkdtemp()
-                            alt_temp_path = os.path.join(temp_dir, alt_dir_name)
-                            os.makedirs(alt_temp_path, exist_ok=True)
-                            try:
-                                alt_template = find_template_file(alt_temp_path)
-                                if alt_template:
-                                    from ddquint.utils.template_parser import parse_template_file
-                                    sample_names = parse_template_file(alt_template)
-                            except Exception as e:
-                                pass  # Silent fallback
-                            finally:
-                                import shutil
-                                shutil.rmtree(temp_dir, ignore_errors=True)
-                    
-                    results = process_directory('\(escapedSourcePath)', None, sample_names, verbose=False)
-                    
-                    # Add sample names to results (like main.py)
-                    for result in results:
-                        well_id = result.get('well')
-                        if well_id and well_id in sample_names:
-                            result['sample_name'] = sample_names[well_id]
-                    
-                    # Export to Excel
-                    create_list_report(results, '\(escapedSavePath)')
-                    print('EXCEL_EXPORT_SUCCESS')
-                    
-                except Exception as e:
-                    print(f'EXPORT_ERROR: {e}')
-                    traceback.print_exc()
-                    sys.exit(1)
-                """
-            ]
-            
-            let outputPipe = Pipe()
-            process.standardOutput = outputPipe
-            
-            do {
-                try process.run()
-                process.waitUntilExit()
-                
-                let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: outputData, encoding: .utf8) ?? ""
-                
-                DispatchQueue.main.async {
-                    if output.contains("EXCEL_EXPORT_SUCCESS") {
-                        self?.statusLabel.stringValue = "Excel export completed successfully"
-                        NSWorkspace.shared.activateFileViewerSelecting([saveURL])
-                    } else {
-                        self?.statusLabel.stringValue = "Excel export failed"
-                        self?.showError("Failed to export Excel file")
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self?.statusLabel.stringValue = "Excel export failed"
-                    self?.showError("Failed to run Excel export: \(error)")
-                }
-            }
-        }
+        // If no cache is available, prompt user to run analysis first
+        showError("No analysis results found. Please run analysis on this folder first before exporting.")
+        statusLabel.stringValue = "Excel export cancelled - no cached results available"
     }
     
     private func exportExcelFromCachedResults(to saveURL: URL, sourceFolder: URL) {
@@ -3408,17 +3526,16 @@ print(json.dumps(defaults))
         DispatchQueue.global().async { [weak self] in
             guard let self = self else { return }
             
-            // Convert cachedResults to JSON string
+            // Save cachedResults to temporary JSON file
             do {
-                let jsonData = try JSONSerialization.data(withJSONObject: self.cachedResults, options: [])
-                guard let jsonString = String(data: jsonData, encoding: .utf8) else {
-                    DispatchQueue.main.async {
-                        self.showError("Failed to serialize cached results")
-                    }
-                    return
-                }
+                let jsonData = try JSONSerialization.data(withJSONObject: self.cachedResults, options: [.prettyPrinted])
+                let tempDir = FileManager.default.temporaryDirectory
+                let tempJsonFile = tempDir.appendingPathComponent("ddquint_cached_results_\(UUID().uuidString).json")
                 
-                self.executeExcelExportWithJSON(jsonString: jsonString, saveURL: saveURL, ddquintPath: ddquintPath, pythonPath: pythonPath)
+                try jsonData.write(to: tempJsonFile)
+                print("💾 Saved cached results to temp file: \(tempJsonFile.path)")
+                
+                self.executeExcelExportWithTempFile(tempJsonFile: tempJsonFile, saveURL: saveURL, ddquintPath: ddquintPath, pythonPath: pythonPath)
                 
             } catch {
                 DispatchQueue.main.async {
@@ -3429,7 +3546,7 @@ print(json.dumps(defaults))
         }
     }
     
-    private func executeExcelExportWithJSON(jsonString: String, saveURL: URL, ddquintPath: String, pythonPath: String) {
+    private func executeExcelExportWithTempFile(tempJsonFile: URL, saveURL: URL, ddquintPath: String, pythonPath: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
         
@@ -3440,7 +3557,7 @@ print(json.dumps(defaults))
         
         let escapedSavePath = saveURL.path.replacingOccurrences(of: "'", with: "\\'")
         let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
-        let escapedJsonString = jsonString.replacingOccurrences(of: "'", with: "\\'")
+        let escapedTempJsonPath = tempJsonFile.path.replacingOccurrences(of: "'", with: "\\'")
         
         process.arguments = [
             "-c",
@@ -3448,6 +3565,7 @@ print(json.dumps(defaults))
             import sys
             import json
             import traceback
+            import os
             
             try:
                 sys.path.insert(0, '\(escapedDDQuintPath)')
@@ -3463,12 +3581,18 @@ print(json.dumps(defaults))
                 # Import create_list_report
                 from ddquint.core import create_list_report
                 
-                # Parse the cached results
-                results = json.loads('\(escapedJsonString)')
+                # Load cached results from temp file
+                with open('\(escapedTempJsonPath)', 'r') as f:
+                    results = json.load(f)
+                
+                print(f'DEBUG: Loaded {len(results)} cached results for Excel export')
                 
                 # Export to Excel using cached results
                 create_list_report(results, '\(escapedSavePath)')
                 print('EXCEL_EXPORT_SUCCESS_CACHED')
+                
+                # Clean up temp file
+                os.remove('\(escapedTempJsonPath)')
                 
             except Exception as e:
                 print(f'EXPORT_ERROR: {e}')
@@ -3478,7 +3602,9 @@ print(json.dumps(defaults))
         ]
         
         let outputPipe = Pipe()
+        let errorPipe = Pipe()
         process.standardOutput = outputPipe
+        process.standardError = errorPipe
         
         do {
             try process.run()
@@ -3487,8 +3613,15 @@ print(json.dumps(defaults))
             let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: outputData, encoding: .utf8) ?? ""
             
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+            
             DispatchQueue.main.async { [weak self] in
-                if output.contains("EXCEL_EXPORT_SUCCESS_CACHED") {
+                self?.writeDebugLog("🔍 EXCEL_CACHED_OUTPUT: \(output)")
+                self?.writeDebugLog("🔍 EXCEL_CACHED_ERROR: \(errorOutput)")
+                self?.writeDebugLog("🔍 EXCEL_CACHED_EXIT_CODE: \(process.terminationStatus)")
+                
+                if output.contains("EXCEL_EXPORT_SUCCESS") || output.contains("EXCEL_EXPORT_SUCCESS_CACHED") {
                     self?.statusLabel.stringValue = "Excel export completed successfully"
                     NSWorkspace.shared.activateFileViewerSelecting([saveURL])
                 } else {
@@ -3634,16 +3767,18 @@ print(json.dumps(defaults))
                     from ddquint.visualization import create_well_plot, create_composite_image
                     import os
                     
-                    # Simply copy existing plots from Graphs directory (no need to regenerate)
+                    # Simply copy existing plots from temp directory (no need to regenerate)
                     import os
                     import shutil
                     import glob
+                    import tempfile
                     
-                    # Look for existing plots in the Graphs directory
-                    graphs_dir = os.path.join('\(escapedSourcePath)', 'Graphs')
+                    # Look for existing plots in the temp directory
+                    temp_base = tempfile.gettempdir()
+                    graphs_dir = os.path.join(temp_base, 'ddquint_analysis_plots')
                     
                     if not os.path.exists(graphs_dir):
-                        print('No Graphs directory found. Please run analysis first.')
+                        print('No plots found in temp directory. Please run analysis first.')
                         sys.exit(1)
                     
                     # Find all PNG files in the Graphs directory
@@ -3783,32 +3918,18 @@ print(json.dumps(defaults))
                     import os
                     import shutil
                     
-                    # Look for existing composite overview
-                    existing_composite = os.path.join('\(escapedSourcePath)', 'composite_overview.png')
+                    # Look for existing composite overview in temp directory
+                    import tempfile
+                    temp_base = tempfile.gettempdir()
+                    existing_composite = os.path.join(temp_base, 'ddquint_composite_overview.png')
                     
                     if os.path.exists(existing_composite):
                         # Copy the existing composite plot
                         shutil.copy2(existing_composite, '\(escapedSavePath)')
                         print('OVERVIEW_EXPORT_SUCCESS')
                     else:
-                        # Fallback: Check for other composite plot names
-                        composite_files = [
-                            os.path.join('\(escapedSourcePath)', 'Graph_Overview.png'),
-                            os.path.join('\(escapedSourcePath)', 'Graphs', 'Overview.png'),
-                            os.path.join('\(escapedSourcePath)', 'composite_plot.png')
-                        ]
-                        
-                        copied = False
-                        for composite_file in composite_files:
-                            if os.path.exists(composite_file):
-                                shutil.copy2(composite_file, '\(escapedSavePath)')
-                                print('OVERVIEW_EXPORT_SUCCESS')
-                                copied = True
-                                break
-                        
-                        if not copied:
-                            print('No existing composite plot found. Please run analysis first.')
-                            sys.exit(1)
+                        print('No composite plot found in temp directory. Please run analysis first.')
+                        sys.exit(1)
                     
                 except Exception as e:
                     print(f'EXPORT_ERROR: {e}')

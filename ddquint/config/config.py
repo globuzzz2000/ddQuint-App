@@ -181,7 +181,42 @@ class Config:
     
     def __init__(self):
         """Initialize Config instance with default values."""
+        logger.info("DEBUG: Config.__init__() called")
         self.finalize_colors()
+    
+    def __getattribute__(self, name):
+        """
+        Override attribute access to implement instance-first fallback for per-well parameters.
+        
+        For parameter attributes, check instance attributes first, then fall back to class attributes.
+        This allows per-well parameter customization while maintaining backwards compatibility.
+        """
+        # List of parameters that should use instance-first fallback
+        PARAMETER_ATTRS = {
+            'HDBSCAN_MIN_CLUSTER_SIZE', 'HDBSCAN_MIN_SAMPLES', 'HDBSCAN_EPSILON',
+            'HDBSCAN_METRIC', 'HDBSCAN_CLUSTER_SELECTION_METHOD', 'MIN_POINTS_FOR_CLUSTERING',
+            'INDIVIDUAL_PLOT_DPI', 'COMPOSITE_PLOT_DPI', 'PLACEHOLDER_PLOT_DPI',
+            'X_AXIS_MIN', 'X_AXIS_MAX', 'Y_AXIS_MIN', 'Y_AXIS_MAX',
+            'X_GRID_INTERVAL', 'Y_GRID_INTERVAL',
+            'COMPOSITE_FIGURE_SIZE', 'INDIVIDUAL_FIGURE_SIZE', 'COMPOSITE_PLOT_SIZE',
+            'BASE_TARGET_TOLERANCE', 'SCALE_FACTOR_MIN', 'SCALE_FACTOR_MAX'
+        }
+        
+        # For parameter attributes, try instance first, then class
+        if name in PARAMETER_ATTRS:
+            try:
+                # Check if instance has this attribute set
+                value = object.__getattribute__(self, name)
+                logger.info(f"DEBUG __getattribute__: {name} = {value} (from instance)")
+                return value
+            except AttributeError:
+                # Fall back to class attribute
+                value = getattr(self.__class__, name)
+                logger.info(f"DEBUG __getattribute__: {name} = {value} (from class)")
+                return value
+        
+        # For all other attributes, use normal access
+        return object.__getattribute__(self, name)
     
     @classmethod
     def get_instance(cls) -> 'Config':
@@ -383,10 +418,11 @@ class Config:
             >>> dpi
             200
         """
+        instance = cls.get_instance()
         dpi_mapping = {
-            'individual': cls.INDIVIDUAL_PLOT_DPI,
-            'composite': cls.COMPOSITE_PLOT_DPI,
-            'placeholder': cls.PLACEHOLDER_PLOT_DPI
+            'individual': getattr(instance, 'INDIVIDUAL_PLOT_DPI', cls.INDIVIDUAL_PLOT_DPI),
+            'composite': getattr(instance, 'COMPOSITE_PLOT_DPI', cls.COMPOSITE_PLOT_DPI),
+            'placeholder': getattr(instance, 'PLACEHOLDER_PLOT_DPI', cls.PLACEHOLDER_PLOT_DPI)
         }
         
         if plot_type not in dpi_mapping:
@@ -537,14 +573,21 @@ class Config:
         Returns:
             Dictionary of HDBSCAN parameters ready for clustering
         """
-        return {
-            'min_cluster_size': cls.HDBSCAN_MIN_CLUSTER_SIZE,
-            'min_samples': cls.HDBSCAN_MIN_SAMPLES,
-            'cluster_selection_epsilon': cls.HDBSCAN_EPSILON,
-            'metric': cls.HDBSCAN_METRIC,
-            'cluster_selection_method': cls.HDBSCAN_CLUSTER_SELECTION_METHOD,
+        instance = cls.get_instance()
+        logger.info(f"DEBUG get_hdbscan_params: instance id = {id(instance)}")
+        logger.info(f"DEBUG get_hdbscan_params: instance HDBSCAN_MIN_CLUSTER_SIZE = {getattr(instance, 'HDBSCAN_MIN_CLUSTER_SIZE', 'NOT_SET')}")
+        logger.info(f"DEBUG get_hdbscan_params: class HDBSCAN_MIN_CLUSTER_SIZE = {cls.HDBSCAN_MIN_CLUSTER_SIZE}")
+        
+        result = {
+            'min_cluster_size': getattr(instance, 'HDBSCAN_MIN_CLUSTER_SIZE', cls.HDBSCAN_MIN_CLUSTER_SIZE),
+            'min_samples': getattr(instance, 'HDBSCAN_MIN_SAMPLES', cls.HDBSCAN_MIN_SAMPLES),
+            'cluster_selection_epsilon': getattr(instance, 'HDBSCAN_EPSILON', cls.HDBSCAN_EPSILON),
+            'metric': getattr(instance, 'HDBSCAN_METRIC', cls.HDBSCAN_METRIC),
+            'cluster_selection_method': getattr(instance, 'HDBSCAN_CLUSTER_SELECTION_METHOD', cls.HDBSCAN_CLUSTER_SELECTION_METHOD),
             'core_dist_n_jobs': 1  # Use single core for reproducibility
         }
+        logger.info(f"DEBUG get_hdbscan_params: returning {result}")
+        return result
     
     @classmethod
     def get_target_tolerance(cls, scale_factor: float = 1.0) -> Dict[str, float]:
@@ -575,10 +618,11 @@ class Config:
         Returns:
             Figure size as (width, height) tuple
         """
+        instance = cls.get_instance()
         if for_composite:
-            return cls.COMPOSITE_PLOT_SIZE
+            return getattr(instance, 'COMPOSITE_PLOT_SIZE', cls.COMPOSITE_PLOT_SIZE)
         else:
-            return cls.INDIVIDUAL_FIGURE_SIZE
+            return getattr(instance, 'INDIVIDUAL_FIGURE_SIZE', cls.INDIVIDUAL_FIGURE_SIZE)
     
     @classmethod
     def get_axis_limits(cls) -> Dict[str, tuple]:
@@ -588,10 +632,16 @@ class Config:
         Returns:
             Dictionary of axis limits for x and y axes
         """
-        return {
-            'x': (cls.X_AXIS_MIN, cls.X_AXIS_MAX),
-            'y': (cls.Y_AXIS_MIN, cls.Y_AXIS_MAX)
+        instance = cls.get_instance()
+        result = {
+            'x': (getattr(instance, 'X_AXIS_MIN', cls.X_AXIS_MIN), 
+                  getattr(instance, 'X_AXIS_MAX', cls.X_AXIS_MAX)),
+            'y': (getattr(instance, 'Y_AXIS_MIN', cls.Y_AXIS_MIN), 
+                  getattr(instance, 'Y_AXIS_MAX', cls.Y_AXIS_MAX))
         }
+        logger.info(f"DEBUG get_axis_limits: instance X_AXIS_MAX = {getattr(instance, 'X_AXIS_MAX', 'NOT_SET')}, class X_AXIS_MAX = {cls.X_AXIS_MAX}")
+        logger.info(f"DEBUG get_axis_limits: returning {result}")
+        return result
     
     @classmethod
     def get_grid_intervals(cls) -> Dict[str, int]:
@@ -601,9 +651,10 @@ class Config:
         Returns:
             Dictionary of grid intervals for x and y axes
         """
+        instance = cls.get_instance()
         return {
-            'x': cls.X_GRID_INTERVAL,
-            'y': cls.Y_GRID_INTERVAL
+            'x': getattr(instance, 'X_GRID_INTERVAL', cls.X_GRID_INTERVAL),
+            'y': getattr(instance, 'Y_GRID_INTERVAL', cls.Y_GRID_INTERVAL)
         }
 
     @classmethod
@@ -650,39 +701,44 @@ class Config:
     @classmethod
     def _reconcile_target_colors(cls):
         """
-        Make sure TARGET_COLORS matches the current target names.
-        Preserves old colors where possible, assigns new ones as needed.
+        Assign colors consistently by order: Negative first, then Chrom1, Chrom2, etc.
+        Colors are assigned from DEFAULT_COLOR_PALETTE in order.
         """
-        from itertools import cycle
-
-        old = dict(getattr(cls, "TARGET_COLORS", {}))
         names = cls._get_target_names()
         new = {}
-
-        # keep special defaults stable
-        for name, col in getattr(cls, "SPECIAL_COLOR_DEFAULTS", {}).items():
-            if name in names:
-                new[name] = old.get(name, col)
-
-        # assign colors to all other names
-        used = set(new.values())
-        base_palette = list(getattr(cls, "DEFAULT_COLOR_PALETTE", []))
-        palette = [c for c in base_palette if c not in used]
-        color_iter = cycle(base_palette if base_palette else ["#000000"])
-
-        def next_color():
-            if palette:
-                return palette.pop(0)
-            return next(color_iter)
-
-        for name in names:
-            if name in new:
-                continue
-            if name in old and old[name]:
-                new[name] = old[name]
+        
+        # Sort names to ensure consistent order: Negative first, then Chrom1, Chrom2, etc.
+        def sort_key(name):
+            if name == "Negative":
+                return (0, name)
+            elif name.startswith("Chrom") and name[5:].isdigit():
+                return (1, int(name[5:]))
+            elif name == "Unknown":
+                return (999, name)  # Unknown always last
             else:
-                new[name] = next_color()
+                return (500, name)  # Other names in the middle
+        
+        sorted_names = sorted(names, key=sort_key)
+        
+        # Debug color assignment
+        print(f"DEBUG COLOR ASSIGNMENT:")
+        print(f"  Original names: {names}")
+        print(f"  Sorted names: {sorted_names}")
+        
+        # Assign colors from palette in order
+        base_palette = list(getattr(cls, "DEFAULT_COLOR_PALETTE", []))
+        logger.info(f"  Base palette: {base_palette}")
+        
+        for i, name in enumerate(sorted_names):
+            if i < len(base_palette):
+                new[name] = base_palette[i]
+                logger.info(f"  {name} = {base_palette[i]} (position {i})")
+            else:
+                # Fallback if we run out of colors
+                new[name] = base_palette[i % len(base_palette)] if base_palette else "#000000"
+                logger.info(f"  {name} = {new[name]} (fallback)")
 
+        logger.info(f"  Final TARGET_COLORS: {new}")
         cls.TARGET_COLORS = new
 
     @classmethod
@@ -690,4 +746,5 @@ class Config:
         """
         Public method: call after editing targets (e.g., via parameter editor).
         """
+        logger.info("DEBUG: finalize_colors() called")
         cls._reconcile_target_colors()

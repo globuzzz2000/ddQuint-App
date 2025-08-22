@@ -15,6 +15,10 @@ echo "🧹 Cleaning previous builds..."
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
+# Reset debug log
+echo "🗑️ Resetting debug log..."
+> "$PROJECT_DIR/debug.log"
+
 # Build the executable
 echo "🔨 Building Swift executable..."
 cd "$PROJECT_DIR"
@@ -31,13 +35,23 @@ if [ $? -eq 0 ]; then
     
     mkdir -p "$APP_PATH/Contents/MacOS"
     mkdir -p "$APP_PATH/Contents/Resources"
+    mkdir -p "$APP_PATH/Contents/Resources/Python"
     
     # Copy the executable
     cp ".build/release/ddQuint" "$APP_PATH/Contents/MacOS/ddQuint"
     
+    # Copy Python ddquint module
+    echo "📦 Bundling Python ddquint module..."
+    cp -r "ddquint" "$APP_PATH/Contents/Resources/Python/"
+    
     # Copy icon if it exists
     if [ -f "icon.png" ]; then
         cp "icon.png" "$APP_PATH/Contents/Resources/AppIcon.png"
+    fi
+    
+    # Copy Assets.xcassets if it exists
+    if [ -d "Assets.xcassets" ]; then
+        cp -r "Assets.xcassets" "$APP_PATH/Contents/Resources/"
     fi
     
     # Create Info.plist
@@ -73,12 +87,25 @@ if [ $? -eq 0 ]; then
 EOF
 
     echo "📦 App created at: $APP_PATH"
-    echo ""
-    echo "To install the app:"
-    echo "  cp -r '$APP_PATH' /Applications/"
-    echo ""
-    echo "To test the app:"
-    echo "  open '$APP_PATH'"
+    
+    # Automatically install to Applications
+    echo "🚀 Installing app to Applications folder..."
+    if [ -d "/Applications/ddQuint.app" ]; then
+        echo "🗑️ Removing existing app..."
+        rm -rf "/Applications/ddQuint.app"
+    fi
+    
+    cp -r "$APP_PATH" /Applications/
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ App successfully installed to /Applications/ddQuint.app"
+        echo ""
+        echo "🎉 You can now launch ddQuint from Applications or run:"
+        echo "  open /Applications/ddQuint.app"
+    else
+        echo "❌ Failed to install to Applications. Manual installation:"
+        echo "  cp -r '$APP_PATH' /Applications/"
+    fi
 else
     echo "❌ Build failed!"
     exit 1

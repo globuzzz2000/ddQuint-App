@@ -124,8 +124,14 @@ def _apply_axis_formatting(ax, config, border_color='#B0B0B0'):
         config: Configuration instance
         border_color: Color for plot borders (default grey)
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"DEBUG _apply_axis_formatting: called with config type {type(config)}")
+    logger.info(f"DEBUG _apply_axis_formatting: config has X_AXIS_MAX = {getattr(config, 'X_AXIS_MAX', 'NOT_SET')}")
+    
     # Set axis limits from config
     axis_limits = config.get_axis_limits()
+    logger.info(f"DEBUG _apply_axis_formatting: got axis_limits = {axis_limits}")
     ax.set_xlim(axis_limits['x'])
     ax.set_ylim(axis_limits['y'])
     
