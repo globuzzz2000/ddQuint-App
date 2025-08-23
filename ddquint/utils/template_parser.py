@@ -125,7 +125,7 @@ def find_header_row(file_path):
             raise FileProcessingError(error_msg) from e
 
 
-def parse_template_file(template_path):
+def parse_template_file(template_path, description_count=None):
     """
     Parse the CSV template file to extract sample names from Well and Sample description columns.
     
@@ -142,6 +142,18 @@ def parse_template_file(template_path):
     logger.debug(f"Parsing template file: {os.path.basename(template_path)}")
     
     well_to_name = {}
+    # Determine how many Sample description columns to use (1-4)
+    if description_count is not None:
+        desc_count = int(description_count)
+    else:
+        # Read from environment variable if provided, default to 4
+        try:
+            from os import environ
+            desc_count = int(environ.get('DDQ_TEMPLATE_DESC_COUNT', '4'))
+        except Exception:
+            desc_count = 4
+    if desc_count < 1 or desc_count > 4:
+        desc_count = 4
     max_retries = 3
     retry_delay = 0.5
     
@@ -195,7 +207,7 @@ def parse_template_file(template_path):
                     
                     # Combine Sample description columns with " - " separator
                     sample_description_parts = []
-                    for i in range(1, 5):
+                    for i in range(1, desc_count + 1):
                         part = row.get(f'Sample description {i}', '').strip()
                         if part:  # Only add non-empty parts
                             sample_description_parts.append(part)
@@ -257,7 +269,13 @@ def get_sample_names(input_dir):
         raise FileProcessingError(error_msg)
     
     try:
-        template_path = find_template_file(input_dir)
+        # Allow explicit override via environment variable
+        from os import environ
+        forced_template = environ.get('DDQ_TEMPLATE_PATH')
+        if forced_template and os.path.exists(forced_template):
+            template_path = forced_template
+        else:
+            template_path = find_template_file(input_dir)
         
         if template_path:
             logger.debug(f"Template file found: {os.path.basename(template_path)}")

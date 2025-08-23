@@ -142,7 +142,7 @@ class Config:
     
     # Color scheme for targets (up to 10 chromosomes)
     DEFAULT_COLOR_PALETTE = [
-        "#1f77b4", "#f59a23", "#7ec638", "#16d9ff", "#f65352",
+        "#f59a23", "#7ec638", "#16d9ff", "#f65352",
         "#82218b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
     ]
     SPECIAL_COLOR_DEFAULTS = {
@@ -720,23 +720,39 @@ class Config:
         
         sorted_names = sorted(names, key=sort_key)
         
-        # Debug color assignment
-        print(f"DEBUG COLOR ASSIGNMENT:")
-        print(f"  Original names: {names}")
-        print(f"  Sorted names: {sorted_names}")
-        
-        # Assign colors from palette in order
+        # Assign colors with special cases for 'Negative' and 'Unknown'
         base_palette = list(getattr(cls, "DEFAULT_COLOR_PALETTE", []))
         logger.info(f"  Base palette: {base_palette}")
         
-        for i, name in enumerate(sorted_names):
-            if i < len(base_palette):
-                new[name] = base_palette[i]
-                logger.info(f"  {name} = {base_palette[i]} (position {i})")
-            else:
-                # Fallback if we run out of colors
-                new[name] = base_palette[i % len(base_palette)] if base_palette else "#000000"
-                logger.info(f"  {name} = {new[name]} (fallback)")
+        # Start palette index at 0 for Chrom labels; we do NOT consume palette entries for specials
+        palette_idx = 0
+        
+        # First, assign chrom colors in order
+        for name in sorted_names:
+            if name.startswith("Chrom") and name[5:].isdigit():
+                color = base_palette[palette_idx % len(base_palette)] if base_palette else "#000000"
+                new[name] = color
+                logger.info(f"  {name} = {color} (palette index {palette_idx})")
+                palette_idx += 1
+        
+        # Assign any other non-special names (excluding Negative/Unknown) using remaining palette
+        for name in sorted_names:
+            if name not in new and name not in ("Negative", "Unknown"):
+                color = base_palette[palette_idx % len(base_palette)] if base_palette else "#000000"
+                new[name] = color
+                logger.info(f"  {name} = {color} (other, palette index {palette_idx})")
+                palette_idx += 1
+        
+        # Finally, assign specials using configured defaults (do not consume palette)
+        specials = getattr(cls, "SPECIAL_COLOR_DEFAULTS", {})
+        if "Negative" in sorted_names:
+            neg_color = specials.get("Negative", base_palette[0] if base_palette else "#000000")
+            new["Negative"] = neg_color
+            logger.info(f"  Negative = {neg_color} (special)")
+        if "Unknown" in sorted_names:
+            unk_color = specials.get("Unknown", "#c7c7c7")
+            new["Unknown"] = unk_color
+            logger.info(f"  Unknown = {unk_color} (special)")
 
         logger.info(f"  Final TARGET_COLORS: {new}")
         cls.TARGET_COLORS = new

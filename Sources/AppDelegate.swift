@@ -48,30 +48,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
         
-        // File menu
+        // File menu (data and documents)
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
-        fileMenu.addItem(NSMenuItem(title: "Select Template File...", action: #selector(selectTemplateFile), keyEquivalent: "t"))
+        // Open new input folder
+        let openFolderItem = NSMenuItem(title: "Open Folder...", action: #selector(openFolder), keyEquivalent: "o")
+        fileMenu.addItem(openFolderItem)
         fileMenu.addItem(NSMenuItem.separator())
         fileMenu.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
         fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
         
-        // Export menu
+        // Template menu (naming and templates)
+        let templateMenuItem = NSMenuItem()
+        let templateMenu = NSMenu(title: "Template")
+        templateMenu.addItem(NSMenuItem(title: "Select Template File...", action: #selector(selectTemplateFile), keyEquivalent: "t"))
+        // Sample Description Fields submenu
+        let templateOptionsItem = NSMenuItem(title: "Sample Description Fields", action: nil, keyEquivalent: "")
+        let templateOptionsMenu = NSMenu(title: "Sample Description Fields")
+        for count in 1...4 {
+            let item = NSMenuItem(title: "Use \(count)", action: #selector(setSampleDescriptionCount(_:)), keyEquivalent: "")
+            item.tag = count
+            item.state = (count == (mainWindowController?.getTemplateDescriptionCount() ?? 4)) ? .on : .off
+            templateOptionsMenu.addItem(item)
+        }
+        templateOptionsItem.submenu = templateOptionsMenu
+        templateMenu.addItem(templateOptionsItem)
+        templateMenu.addItem(NSMenuItem.separator())
+        templateMenu.addItem(NSMenuItem(title: "Template Creator...", action: #selector(openTemplateDesigner), keyEquivalent: "n"))
+        templateMenuItem.submenu = templateMenu
+        mainMenu.addItem(templateMenuItem)
+
+        // Export menu (images and parameter bundles)
         let exportMenuItem = NSMenuItem()
         let exportMenu = NSMenu(title: "Export")
         exportMenu.addItem(NSMenuItem(title: "Export Plate Overview...", action: #selector(exportPlateOverview), keyEquivalent: "e"))
+        exportMenu.addItem(NSMenuItem.separator())
+        exportMenu.addItem(NSMenuItem(title: "Export Parameters...", action: #selector(exportParametersBundle), keyEquivalent: ""))
+        exportMenu.addItem(NSMenuItem(title: "Load Parameters...", action: #selector(importParametersBundle), keyEquivalent: ""))
         exportMenuItem.submenu = exportMenu
         mainMenu.addItem(exportMenuItem)
-        
-        // Edit menu  
-        let editMenuItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenuItem.submenu = editMenu
-        mainMenu.addItem(editMenuItem)
         
         NSApp.mainMenu = mainMenu
     }
@@ -88,10 +104,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let response = openPanel.runModal()
         if response == .OK, let url = openPanel.url {
             mainWindowController?.setTemplateFile(url)
+            mainWindowController?.applyTemplateChangeAndReanalyze()
         }
+    }
+
+    @objc private func openFolder() {
+        // Forward to the main window controller to prompt and analyze
+        mainWindowController?.openInputFolder()
+    }
+
+    @objc private func setSampleDescriptionCount(_ sender: NSMenuItem) {
+        let selectedCount = sender.tag
+        guard (1...4).contains(selectedCount) else { return }
+        
+        // Update checkmarks within the submenu
+        if let submenu = sender.menu {
+            for item in submenu.items { item.state = .off }
+            sender.state = .on
+        }
+        
+        // Apply to main controller and trigger reanalysis if a folder is selected
+        mainWindowController?.setTemplateDescriptionCount(selectedCount)
+        mainWindowController?.applyTemplateChangeAndReanalyze()
     }
     
     @objc private func exportPlateOverview() {
         mainWindowController?.exportPlateOverview()
+    }
+
+    @objc private func exportParametersBundle() {
+        mainWindowController?.exportParametersBundle()
+    }
+
+    @objc private func importParametersBundle() {
+        mainWindowController?.importParametersBundle()
+    }
+
+    @objc private func openTemplateDesigner() {
+        mainWindowController?.openTemplateDesigner()
     }
 }

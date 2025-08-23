@@ -25,12 +25,14 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     private var isAnalysisComplete = false
     
     // Editor references
-    private var currentGlobalEditor: GlobalParameterEditorWindow?
-    private var currentWellEditor: WellParameterEditorWindow?
     private var currentGlobalWindow: NSWindow?
     private var currentWellWindow: NSWindow?
+    private var currentParamTabView: NSTabView?
     private var processingIndicatorWindow: NSWindow?
     private var templateFileURL: URL?
+    private var templateDescriptionCount: Int = 4
+    private let userDefaultsDescCountKey = "DDQ.SampleDescriptionCount"
+    private var templateDesigner: TemplateCreatorWindowController?
     
     // Parameter storage - well parameters stored per well ID, reset on app close
     private var wellParametersMap: [String: [String: Any]] = [:]
@@ -56,10 +58,19 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     }
     
     private func setupWindow() {
-        window?.title = "ddQuint - Interactive Analysis"
+        window?.title = "ddQuint"
         window?.center()
         window?.minSize = NSSize(width: 800, height: 600)
         window?.delegate = self
+
+        // Load persisted template description count (1-4)
+        let savedCount = UserDefaults.standard.integer(forKey: userDefaultsDescCountKey)
+        if (1...4).contains(savedCount) {
+            templateDescriptionCount = savedCount
+            writeDebugLog("🧩 Loaded persisted Sample Description Fields: \(savedCount)")
+        } else {
+            writeDebugLog("🧩 No persisted Sample Description Fields found; using default: \(templateDescriptionCount)")
+        }
         
         guard let contentView = window?.contentView else { return }
         
@@ -418,13 +429,17 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: pythonPath)
             
-            // Hide matplotlib windows from dock
-            process.environment = (process.environment ?? ProcessInfo.processInfo.environment).merging([
+            // Hide matplotlib windows from dock and pass template settings
+            var env = (process.environment ?? ProcessInfo.processInfo.environment).merging([
                 "MPLBACKEND": "Agg",
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONUNBUFFERED": "1",  // Enable real-time output
                 "TQDM_DISABLE": "1"  // Disable tqdm progress bars for GUI
             ]) { _, new in new }
+            // Inject template parser settings
+            env["DDQ_TEMPLATE_DESC_COUNT"] = String(self?.templateDescriptionCount ?? 4)
+            if let tpl = self?.templateFileURL?.path { env["DDQ_TEMPLATE_PATH"] = tpl }
+            process.environment = env
             
             // Set up pipes for output monitoring (revert to original approach)
             let outputPipe = Pipe()
@@ -434,6 +449,18 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             
             let escapedFolderPath = folderURL.path.replacingOccurrences(of: "'", with: "\\'")
             let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
+            let templateCount = self?.templateDescriptionCount ?? 4
+            let escapedTemplatePath = self?.templateFileURL?.path.replacingOccurrences(of: "'", with: "\\'") ?? ""
+
+            // Serialize well-specific parameters for batch application
+            let wellParamsJSON: String = {
+                do {
+                    let data = try JSONSerialization.data(withJSONObject: self?.wellParametersMap ?? [:], options: [])
+                    return String(data: data, encoding: .utf8) ?? "{}"
+                } catch {
+                    return "{}"
+                }
+            }()
             
             process.arguments = [
                 "-c",
@@ -468,13 +495,38 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     
                     # Import analysis modules
                     from ddquint.core import process_directory
-                    from ddquint.utils import get_sample_names
+                    from ddquint.utils.template_parser import get_sample_names as _gs
+                    from ddquint.utils.template_parser import parse_template_file as _ptf
+                    from ddquint.utils.template_parser import find_template_file as _ftf
                     import os
                     
-                    # Get sample names using automatic detection (like main.py)
-                    # Temporarily increase template search levels to find templates in iCloud
+                    # Debug: show template env settings
+                    import os
+                    print('DEBUG:TEMPLATE_ENV', os.environ.get('DDQ_TEMPLATE_DESC_COUNT'), os.environ.get('DDQ_TEMPLATE_PATH'))
+                    
+                    # Get sample names with explicit options first (template path + description count)
+                    # Fallback to search logic if no explicit template path is provided
                     config.TEMPLATE_SEARCH_PARENT_LEVELS = 5  # Go up 5 levels to find common parent
-                    sample_names = get_sample_names('\(escapedFolderPath)')
+                    sample_names = {}
+                    template_path = '\(escapedTemplatePath)'
+                    if template_path:
+                        try:
+                            sample_names = _ptf(template_path, description_count=\(templateCount))
+                        except Exception as e:
+                            print(f'DEBUG:TEMPLATE_PARSE_ERROR {e}')
+                            sample_names = {}
+                    if not sample_names:
+                        try:
+                            # Search for a template file then parse with desired description count
+                            found = _ftf('\(escapedFolderPath)')
+                            if found:
+                                sample_names = _ptf(found, description_count=\(templateCount))
+                            else:
+                                sample_names = {}
+                        except Exception as e:
+                            print(f'DEBUG:TEMPLATE_FALLBACK_ERROR {e}')
+                            sample_names = {}
+                    print(f'Sample names found: {len(sample_names) if sample_names else 0} entries')
                     print(f'Sample names found: {len(sample_names) if sample_names else 0} entries')
                     if sample_names:
                         sample_entries = list(sample_names.items())[:3]
@@ -514,46 +566,42 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     csv_files = glob.glob(os.path.join('\(escapedFolderPath)', '*.csv'))
                     
                     # Sort files by well ID in column-first order (A01, B01, C01, A02, B02, ...)
-                    # Use EXACTLY the same logic as list_report.py parse_well_id_column_first
+                    # Robust parser with clear separators to avoid false positives (e.g., 'HeLa2').
                     def parse_well_id_from_filename(filename):
-                        import re
+                        import re, os
                         basename = os.path.basename(filename)
-                        # Extract well ID pattern (e.g., A01, B12) from filename
-                        match = re.search(r'[A-H][0-9]{2}', basename)
-                        if match:
-                            well_id = match.group()
-                            # EXACTLY like list_report.py parse_well_id_column_first
-                            row_part = ''
-                            col_part = ''
-                            
-                            for char in well_id:
-                                if char.isalpha():
-                                    row_part += char
-                                elif char.isdigit():
-                                    col_part += char
-                            
-                            # Convert row letters to number (A=1, B=2, etc.)
-                            if row_part:
-                                row_number = 0
-                                for i, char in enumerate(reversed(row_part.upper())):
-                                    row_number += (ord(char) - ord('A') + 1) * (26 ** i)
-                            else:
-                                row_number = 999
-                            
-                            # Convert column to integer
-                            try:
-                                col_number = int(col_part) if col_part else 0
-                            except ValueError:
-                                col_number = 999
-                            
-                            return (col_number, row_number)  # Column first, then row
-                        return (999, 999)  # Put unrecognized files at end
+                        name_no_ext = os.path.splitext(basename)[0]
+                        # Accept A1/A01..A12 for rows A-H (case-insensitive), with non-alnum or boundary separators
+                        pattern = re.compile(r'(?<![A-Za-z0-9])([A-Ha-h])0?([1-9]|1[0-2])(?![A-Za-z0-9])')
+                        matches = list(pattern.finditer(name_no_ext))
+                        if not matches:
+                            return (999, 999)
+                        # Use the last (right-most) well token in the filename
+                        m = matches[-1]
+                        row_letter = m.group(1).upper()
+                        col_number = int(m.group(2))
+                        row_number = ord(row_letter) - ord('A') + 1
+                        return (col_number, row_number)
                     
                     csv_files.sort(key=parse_well_id_from_filename)
                     print(f'TOTAL_FILES:{len(csv_files)}')
+                    try:
+                        import json
+                        debug_preview = [{'name': os.path.basename(f), 'key': parse_well_id_from_filename(f)} for f in csv_files[:16]]
+                        print('DEBUG:SORT_PREVIEW:' + json.dumps(debug_preview))
+                    except Exception as _e:
+                        print('DEBUG:SORT_PREVIEW_FAILED')
                     
                     results = []
                     processed_count = 0
+                    # Parse well-specific overrides (if any)
+                    WELL_PARAMS = json.loads('''\(wellParamsJSON)''') if '''\(wellParamsJSON)''' else {}
+                    PARAM_KEYS = [
+                        'HDBSCAN_MIN_CLUSTER_SIZE','HDBSCAN_MIN_SAMPLES','HDBSCAN_EPSILON','HDBSCAN_METRIC','HDBSCAN_CLUSTER_SELECTION_METHOD','MIN_POINTS_FOR_CLUSTERING',
+                        'INDIVIDUAL_PLOT_DPI','COMPOSITE_PLOT_DPI','PLACEHOLDER_PLOT_DPI',
+                        'X_AXIS_MIN','X_AXIS_MAX','Y_AXIS_MIN','Y_AXIS_MAX','X_GRID_INTERVAL','Y_GRID_INTERVAL',
+                        'BASE_TARGET_TOLERANCE','SCALE_FACTOR_MIN','SCALE_FACTOR_MAX','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','TOLERANCE_MULTIPLIER'
+                    ]
                     
                     for csv_file in csv_files:
                         filename = os.path.basename(csv_file)
@@ -566,6 +614,36 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                             graphs_dir = os.path.join(temp_base, 'ddquint_analysis_plots')
                             os.makedirs(graphs_dir, exist_ok=True)
                             
+                            # Apply per-well overrides if present (reset instance overrides first)
+                            try:
+                                # Compute well_id from filename
+                                import re
+                                name_no_ext = os.path.splitext(filename)[0]
+                                pattern = re.compile(r'(?<![A-Za-z0-9])([A-Ha-h])0?([1-9]|1[0-2])(?![A-Za-z0-9])')
+                                m = list(pattern.finditer(name_no_ext))
+                                well_id = None
+                                if m:
+                                    row_letter = m[-1].group(1).upper()
+                                    col_number = int(m[-1].group(2))
+                                    well_id = f"{row_letter}{col_number:02d}"
+                                # Reset any instance-set overrides to fallback to class/global defaults
+                                for k in PARAM_KEYS:
+                                    if hasattr(config, k) and k in getattr(config, '__dict__', {}):
+                                        delattr(config, k)
+                                # Apply overrides for this well
+                                if well_id and well_id in WELL_PARAMS:
+                                    overrides = WELL_PARAMS.get(well_id, {})
+                                    applied = 0
+                                    for k, v in overrides.items():
+                                        try:
+                                            setattr(config, k, v)
+                                            applied += 1
+                                        except Exception:
+                                            pass
+                                    print(f"Applied {applied} per-well overrides for {well_id}")
+                            except Exception as _e:
+                                print(f"Per-well override error: {_e}")
+
                             # Process individual file with proper error handling
                             result = process_csv_file(csv_file, graphs_dir, sample_names, verbose=False)
                             
@@ -796,32 +874,8 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             do {
                 if let data = jsonString.data(using: .utf8),
                    let wellInfo = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    
-                    let well = wellInfo["well"] as? String ?? ""
-                    let sampleName = wellInfo["sample_name"] as? String ?? ""
-                    let dropletCount = wellInfo["droplet_count"] as? Int ?? 0
-                    let hasData = wellInfo["has_data"] as? Bool ?? false
-                    
-                    print("📊 Progressive: Adding well \(well) with \(dropletCount) droplets")
-                    
-                    let wellData = WellData(
-                        well: well,
-                        sampleName: sampleName,
-                        dropletCount: dropletCount,
-                        hasData: hasData
-                    )
-                    
-                    // Add to well data array and update UI progressively
-                    self.wellData.append(wellData)
-                    self.wellListView.reloadData()
-                    
-                    // Enable buttons as soon as we have data
-                    if self.wellData.count == 1 {
-                        editWellButton.isEnabled = true
-                        exportExcelButton.isEnabled = true
-                        exportPlotsButton.isEnabled = true
-                    }
-                    
+                    // Reuse common handler to append, sort, and preserve selection
+                    self.addWellProgressively(wellInfo: wellInfo)
                     print("📊 Total wells loaded: \(self.wellData.count)")
                 }
             } catch {
@@ -857,6 +911,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         else if trimmedLine.hasPrefix("DEBUG:") {
             // Log debug messages from Python
             print("🐍 Python: \(trimmedLine)")
+            writeDebugLog("🐍 \(trimmedLine)")
         }
     }
     
@@ -933,38 +988,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
     
-    private func handleProgressiveOutput(_ output: String) {
-        // Parse progressive output for WELL_READY and PROGRESS messages
-        let lines = output.components(separatedBy: .newlines)
-        
-        for line in lines {
-            if line.hasPrefix("WELL_READY:") {
-                let jsonStr = String(line.dropFirst("WELL_READY:".count))
-                if let data = jsonStr.data(using: .utf8),
-                   let wellInfo = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    addWellProgressively(wellInfo: wellInfo)
-                }
-            } else if line.hasPrefix("PROGRESS:") {
-                let progressStr = String(line.dropFirst("PROGRESS:".count))
-                let components = progressStr.components(separatedBy: ":")
-                if components.count == 2,
-                   let current = Int(components[0]),
-                   let total = Int(components[1]) {
-                    updateProgress(current: current, total: total)
-                }
-            } else if line.hasPrefix("COMPOSITE_READY:") {
-                let compositePath = String(line.dropFirst("COMPOSITE_READY:".count))
-                handleCompositeReady(path: compositePath)
-            } else if line.hasPrefix("UPDATED_RESULT:") {
-                let resultJson = String(line.dropFirst("UPDATED_RESULT:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                if let resultData = resultJson.data(using: .utf8),
-                   let result = try? JSONSerialization.jsonObject(with: resultData) as? [String: Any],
-                   let wellName = result["well"] as? String {
-                    updateCachedResultForWell(wellName: wellName, resultJson: resultJson)
-                }
-            }
-        }
-    }
+    
     
     private func addWellProgressively(wellInfo: [String: Any]) {
         guard let well = wellInfo["well"] as? String,
@@ -973,6 +997,19 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         let sampleName = wellInfo["sample_name"] as? String ?? ""
         
+        // Avoid duplicate entries if both progressive handlers emit the same well
+        if wellData.contains(where: { $0.well == well }) {
+            // Update sample name/droplet count/hasData if changed, then refresh list preserving selection
+            if let idx = wellData.firstIndex(where: { $0.well == well }) {
+                wellData[idx] = WellData(well: well,
+                                         sampleName: sampleName,
+                                         dropletCount: dropletCount,
+                                         hasData: hasData)
+                reloadWellListPreservingSelection()
+            }
+            return
+        }
+
         let wellEntry = WellData(
             well: well,
             sampleName: sampleName,
@@ -980,11 +1017,11 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             hasData: hasData
         )
         
-        // Add to well data and update UI
+        // Add to well data, keep column-first ordering, and preserve selection
         wellData.append(wellEntry)
-        wellListView.reloadData()
+        reloadWellListPreservingSelection()
         
-        // Enable export buttons if this is the first well with data
+        // Enable export/global buttons when the first well with data appears
         if hasData && exportExcelButton.isEnabled == false {
             exportExcelButton.isEnabled = true
             exportPlotsButton.isEnabled = true
@@ -992,6 +1029,43 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         }
         
         statusLabel.stringValue = "Processed \(wellData.count) wells..."
+    }
+
+    // Reload table while preserving current selection and column-first order
+    private func reloadWellListPreservingSelection() {
+        // Capture current selection
+        let selectedRow = wellListView.selectedRow
+        var selectedWellId: String? = nil
+        var selectedIsOverview = false
+        if selectedRow >= 0 {
+            if compositeImagePath != nil && selectedRow == 0 {
+                selectedIsOverview = true
+            } else {
+                var dataIndex = selectedRow
+                if compositeImagePath != nil { dataIndex -= 1 }
+                if dataIndex >= 0 && dataIndex < wellData.count {
+                    selectedWellId = wellData[dataIndex].well
+                }
+            }
+        }
+        
+        // Sort wells by column-first
+        wellData.sort { a, b in
+            let (c1, r1) = parseWellIdColumnFirst(a.well)
+            let (c2, r2) = parseWellIdColumnFirst(b.well)
+            return c1 < c2 || (c1 == c2 && r1 < r2)
+        }
+        
+        // Reload table
+        wellListView.reloadData()
+        
+        // Restore selection
+        if selectedIsOverview, compositeImagePath != nil {
+            wellListView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        } else if let id = selectedWellId, let idx = wellData.firstIndex(where: { $0.well == id }) {
+            let tableRow = (compositeImagePath != nil) ? idx + 1 : idx
+            wellListView.selectRowIndexes(IndexSet(integer: tableRow), byExtendingSelection: false)
+        }
     }
     
     private func updateProgress(current: Int, total: Int) {
@@ -1006,60 +1080,14 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     private func handleCompositeReady(path: String) {
         compositeImagePath = path
         
-        // Refresh the well list to show the Overview item now that composite is ready
-        wellListView.reloadData()
+        // Refresh the well list (adds Overview row) while preserving current selection
+        reloadWellListPreservingSelection()
         
         statusLabel.stringValue = "Overview plot ready"
     }
     
     
-    private func usesCachedResults() {
-        print("DEBUG: usesCachedResults() called with \(cachedResults.count) cached entries")
-        // Convert cached results back to well data
-        wellData = cachedResults.compactMap { dict in
-            guard let well = dict["well"] as? String else { return nil }
-            
-            return WellData(
-                well: well,
-                sampleName: dict["sample_name"] as? String ?? "",
-                dropletCount: dict["droplet_count"] as? Int ?? 0,
-                hasData: dict["has_data"] as? Bool ?? false
-            )
-        }
-        
-        DispatchQueue.main.async { [weak self] in
-            self?.updateUIAfterAnalysis()
-        }
-    }
     
-    private func parseWellsData(_ jsonString: String) {
-        print("DEBUG: parseWellsData() called")
-        do {
-            let data = jsonString.data(using: .utf8) ?? Data()
-            if let wellsArray = try JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]] {
-                
-                wellData = wellsArray.compactMap { dict in
-                    guard let well = dict["well"] as? String else { return nil }
-                    
-                    return WellData(
-                        well: well,
-                        sampleName: dict["sample_name"] as? String ?? "",
-                        dropletCount: dict["droplet_count"] as? Int ?? 0,
-                        hasData: dict["has_data"] as? Bool ?? false
-                    )
-                }
-                
-                // Cache the raw results
-                cachedResults = wellsArray
-                
-                DispatchQueue.main.async { [weak self] in
-                    self?.updateUIAfterAnalysis()
-                }
-            }
-        } catch {
-            showError("Failed to parse analysis results: \(error)")
-        }
-    }
     
     private func updateUIAfterAnalysis() {
         print("DEBUG: updateUIAfterAnalysis() called with \(wellData.count) wells")
@@ -1161,10 +1189,14 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             process.executableURL = URL(fileURLWithPath: pythonPath)
             
             // Hide matplotlib windows from dock
-            process.environment = (process.environment ?? ProcessInfo.processInfo.environment).merging([
+            var env = (process.environment ?? ProcessInfo.processInfo.environment).merging([
                 "MPLBACKEND": "Agg",
                 "PYTHONDONTWRITEBYTECODE": "1"
             ]) { _, new in new }
+            // Pass template settings to Python
+            env["DDQ_TEMPLATE_DESC_COUNT"] = String(self?.templateDescriptionCount ?? 4)
+            if let tpl = self?.templateFileURL?.path { env["DDQ_TEMPLATE_PATH"] = tpl }
+            process.environment = env
             
             let escapedFolderPath = folderURL.path.replacingOccurrences(of: "'", with: "\\'")
             let tempPlotPath = "/tmp/ddquint_plot_\(well).png"
@@ -1178,6 +1210,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                 try:
                     import os
                     import glob
+                    print('DEBUG:TEMPLATE_ENV', os.environ.get('DDQ_TEMPLATE_DESC_COUNT'), os.environ.get('DDQ_TEMPLATE_PATH'))
                     import shutil
                     
                     # Look for existing plot file from the main analysis
@@ -1351,6 +1384,8 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         tabView.translatesAutoresizingMaskIntoConstraints = false
         tabView.tabViewType = .topTabsBezelBorder
         contentView.addSubview(tabView)
+        // Keep a reference so we can extract values from all tabs, not just the visible one
+        currentParamTabView = tabView
         
         // Tab 1: HDBSCAN Settings
         let hdbscanTab = NSTabViewItem(identifier: "hdbscan")
@@ -1379,6 +1414,14 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         let visualizationView = createVisualizationParametersView(parameters: savedParams)
         visualizationTab.view = visualizationView
         tabView.addTabViewItem(visualizationTab)
+
+        // Ensure scroll views start at the top for better UX
+        DispatchQueue.main.async { [weak self] in
+            if let scroll = copyNumberView as? NSScrollView { self?.scrollToTop(scroll) }
+            if let scroll = visualizationView as? NSScrollView { self?.scrollToTop(scroll) }
+            if let scroll = hdbscanView as? NSScrollView { self?.scrollToTop(scroll) }
+            if let scroll = centroidsView as? NSScrollView { self?.scrollToTop(scroll) }
+        }
         
         // Create button container
         let buttonContainer = NSView()
@@ -1449,6 +1492,16 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         statusLabel.stringValue = "\(isGlobal ? "Global" : "Well") Parameters window opened"
     }
+
+    private func scrollToTop(_ scrollView: NSScrollView) {
+        guard let doc = scrollView.documentView else { return }
+        let clip = scrollView.contentView
+        // Compute the top-left point in non-flipped coordinates
+        let maxY = max(0, doc.bounds.size.height - clip.bounds.size.height)
+        let topPoint = NSPoint(x: 0, y: maxY)
+        clip.scroll(to: topPoint)
+        scrollView.reflectScrolledClipView(clip)
+    }
     
     private func createHDBSCANParametersView(isGlobal: Bool, parameters: [String: Any]) -> NSView {
         let scrollView = NSScrollView()
@@ -1507,8 +1560,8 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             yPos -= spacing
         }
         
-        // Advanced Parameters (only for global)
-        if isGlobal {
+        // Advanced Parameters (shown for both global and well-specific to match layout)
+        do {
             yPos -= 20
             let advancedLabel = NSTextField(labelWithString: "Advanced Settings")
             advancedLabel.font = NSFont.boldSystemFont(ofSize: 14)
@@ -1523,7 +1576,11 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             let metricPopup = NSPopUpButton()
             metricPopup.identifier = NSUserInterfaceItemIdentifier("HDBSCAN_METRIC")
             metricPopup.addItems(withTitles: ["euclidean", "manhattan", "chebyshev", "minkowski"])
-            metricPopup.selectItem(withTitle: "euclidean")
+            if let value = parameters["HDBSCAN_METRIC"] as? String {
+                metricPopup.selectItem(withTitle: value)
+            } else {
+                metricPopup.selectItem(withTitle: "euclidean")
+            }
             metricPopup.frame = NSRect(x: 250, y: yPos, width: 120, height: fieldHeight)
             metricPopup.toolTip = "Distance metric used for clustering calculations"
             
@@ -1538,7 +1595,11 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             let selectionPopup = NSPopUpButton()
             selectionPopup.identifier = NSUserInterfaceItemIdentifier("HDBSCAN_CLUSTER_SELECTION_METHOD")
             selectionPopup.addItems(withTitles: ["eom", "leaf"])
-            selectionPopup.selectItem(withTitle: "eom")
+            if let value = parameters["HDBSCAN_CLUSTER_SELECTION_METHOD"] as? String {
+                selectionPopup.selectItem(withTitle: value)
+            } else {
+                selectionPopup.selectItem(withTitle: "eom")
+            }
             selectionPopup.frame = NSRect(x: 250, y: yPos, width: 120, height: fieldHeight)
             selectionPopup.toolTip = "Method for selecting clusters from the hierarchy tree"
             
@@ -1614,8 +1675,8 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             yPos -= spacing
         }
         
-        // Centroid Matching Parameters (only for global)
-        if isGlobal {
+        // Centroid Matching Parameters (shown for both global and well-specific to match layout)
+        do {
             yPos -= 20
             let matchingLabel = NSTextField(labelWithString: "Centroid Matching Parameters")
             matchingLabel.font = NSFont.boldSystemFont(ofSize: 14)
@@ -1861,9 +1922,28 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         // Set proper view size with padding - ensure all content is visible
         let contentHeight = 480 - yPos + 40  // Total content height from top to bottom element
-        let finalHeight = max(contentHeight, 600)  // Ensure sufficient minimum height
+        var finalHeight = max(contentHeight, 600)  // Ensure sufficient minimum height
         print("📏 Copy Number view: final yPos = \(yPos), contentHeight = \(contentHeight), finalHeight = \(finalHeight)")
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
+
+        // Align content towards the top to avoid large empty space above
+        let topMargin: CGFloat = 20
+        var maxSubviewY: CGFloat = 0
+        for subview in view.subviews {
+            maxSubviewY = max(maxSubviewY, subview.frame.maxY)
+        }
+        if maxSubviewY < finalHeight - topMargin {
+            let shift = (finalHeight - topMargin) - maxSubviewY
+            for subview in view.subviews {
+                var f = subview.frame
+                f.origin.y += shift
+                subview.frame = f
+            }
+            // Recompute max Y after shift (for debugging)
+            var newMaxY: CGFloat = 0
+            for subview in view.subviews { newMaxY = max(newMaxY, subview.frame.maxY) }
+            print("📐 Copy Number view: shifted content up by \(shift), newMaxY=\(newMaxY)")
+        }
         
         // Setup scroll view properly
         scrollView.documentView = view
@@ -1979,9 +2059,23 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             yPos -= spacing
         }
         
-        // Set proper view size with padding
-        let finalHeight = max(350 - yPos + 40, 300)  // Ensure minimum height
+        // Set proper view size with padding and top-align content to avoid empty space at top
+        let contentHeight = 350 - yPos + 40
+        var finalHeight = max(contentHeight, 600)  // Ensure sufficient minimum height so top stays aligned
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
+
+        let topMargin: CGFloat = 20
+        var maxSubviewY: CGFloat = 0
+        for subview in view.subviews { maxSubviewY = max(maxSubviewY, subview.frame.maxY) }
+        if maxSubviewY < finalHeight - topMargin {
+            let shift = (finalHeight - topMargin) - maxSubviewY
+            for subview in view.subviews {
+                var f = subview.frame
+                f.origin.y += shift
+                subview.frame = f
+            }
+            print("📐 Visualization view: shifted content up by \(shift)")
+        }
         
         // Setup scroll view properly
         scrollView.documentView = view
@@ -2069,8 +2163,18 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         statusLabel.stringValue = "Saving well parameters and re-processing..."
         
-        // Extract parameters from the UI fields
-        let parameters = extractParametersFromWindow(window, isGlobal: false)
+        // Extract parameters from the UI fields (all tabs)
+        var parameters = extractParametersFromWindow(window, isGlobal: false)
+        // Merge with any existing well-specific parameters to avoid losing untouched overrides
+        if selectedWellIndex >= 0 && selectedWellIndex < wellData.count {
+            let well = wellData[selectedWellIndex]
+            if let existing = wellParametersMap[well.well] {
+                // Keep existing values for keys not present in the current extraction
+                for (k, v) in existing where parameters[k] == nil {
+                    parameters[k] = v
+                }
+            }
+        }
         
         if parameters.isEmpty {
             statusLabel.stringValue = "Failed to extract parameters"
@@ -2212,7 +2316,14 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         
-        extractFromView(window.contentView!)
+        // Extract from the currently visible hierarchy first
+        if let content = window.contentView { extractFromView(content) }
+        // Also extract from all tab views to include fields from non-visible tabs
+        if let tabView = currentParamTabView {
+            for item in tabView.tabViewItems {
+                if let v = item.view { extractFromView(v) }
+            }
+        }
         print("   Found \(foundFields) UI fields total")
         print("   Extracted \(parameters.count) parameters: \(parameters.keys.sorted())")
         return parameters
@@ -2347,42 +2458,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
     
-    // Test function for debugging parameter system
-    @objc private func testParameterSystem() {
-        print("🧪 Testing parameter system...")
-        
-        // Load default parameters from config.py for testing
-        let defaultParams = getDefaultParameters()
-        
-        // Create test parameters using a subset of defaults
-        var testParams: [String: Any] = [:]
-        if let xAxisMax = defaultParams["X_AXIS_MAX"] {
-            testParams["X_AXIS_MAX"] = xAxisMax
-        }
-        if let yAxisMax = defaultParams["Y_AXIS_MAX"] {
-            testParams["Y_AXIS_MAX"] = yAxisMax
-        }
-        if let clusterSize = defaultParams["HDBSCAN_MIN_CLUSTER_SIZE"] {
-            testParams["HDBSCAN_MIN_CLUSTER_SIZE"] = clusterSize
-        }
-        
-        print("🧪 Saving test parameters...")
-        saveParametersToFile(testParams)
-        
-        print("🧪 Loading test parameters...")
-        let loadedParams = loadGlobalParameters()
-        
-        print("🧪 Test complete. Loaded \(loadedParams.count) parameters: \(loadedParams.keys.sorted())")
-        if let xAxisMax = loadedParams["X_AXIS_MAX"] {
-            print("🧪 X_AXIS_MAX = \(xAxisMax)")
-        }
-        
-        // Test parameter restoration if global window is open
-        if let window = currentGlobalWindow {
-            print("🧪 Testing parameter restoration on open global window...")
-            restoreDefaultsInWindow(window, parameters: loadedParams)
-        }
-    }
+    
     
     private func getDefaultParameters() -> [String: Any] {
         print("📋 Loading default parameters from config.py")
@@ -2618,25 +2694,7 @@ print(json.dumps(defaults))
         }
     }
     
-    private func reprocessWell(_ wellId: String) {
-        // TODO: Implement individual well reprocessing
-        statusLabel.stringValue = "Re-processing well \(wellId)..."
-        // This would call the Python pipeline for just this well
-    }
     
-    private func reprocessAllWells(folderURL: URL) {
-        // Show processing indicator
-        showProcessingIndicator("Re-processing all wells with new parameters...")
-        
-        // Clear cache to force re-analysis with new parameters
-        invalidateCache()
-        
-        // Clear current data and restart analysis
-        wellData.removeAll()
-        wellListView.reloadData()
-        showPlaceholderImage()
-        startAnalysis(folderURL: folderURL)
-    }
     
     // MARK: - Processing Indicator
     
@@ -2725,18 +2783,15 @@ print(json.dumps(defaults))
         }
     }
     
-    private func updateProcessingIndicator(_ message: String) {
-        if let window = processingIndicatorWindow,
-           let contentView = window.contentView,
-           let stackView = contentView.subviews.first as? NSStackView,
-           let label = stackView.arrangedSubviews.first as? NSTextField {
-            label.stringValue = message
-            print("🔄 Processing indicator updated: \(message)")
-        }
-    }
+    
 
     // MARK: - Actions
-    
+
+    // Exposed for menu action: open a new input folder and start analysis
+    @objc func openInputFolder() {
+        selectFolderAndAnalyze()
+    }
+
     @objc private func editWellParameters() {
         guard selectedWellIndex >= 0 && selectedWellIndex < wellData.count else { return }
         let well = wellData[selectedWellIndex]
@@ -2866,44 +2921,19 @@ print(json.dumps(defaults))
             } else if line.hasPrefix("DEBUG:") {
                 // Log debug messages from Python
                 print("🐍 Python: \(line)")
+                writeDebugLog("🐍 \(line)")
             }
         }
     }
     
     private func handleWellCompleted(jsonString: String) {
         guard let data = jsonString.data(using: .utf8),
-              let wellInfo = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-              let wellId = wellInfo["well"] as? String,
-              let sampleName = wellInfo["sample_name"] as? String,
-              let dropletCount = wellInfo["droplet_count"] as? Int,
-              let hasData = wellInfo["has_data"] as? Bool else {
+              let wellInfo = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
             return
         }
         
         DispatchQueue.main.async { [weak self] in
-            let newWell = WellData(
-                well: wellId,
-                sampleName: sampleName,
-                dropletCount: dropletCount,
-                hasData: hasData
-            )
-            
-            // Add to well data array
-            self?.wellData.append(newWell)
-            
-            // Update table view
-            self?.wellListView.reloadData()
-            
-            // Update status
-            self?.statusLabel.stringValue = "Processed \(self?.wellData.count ?? 0) wells..."
-            
-            // Enable buttons if this is the first well
-            if self?.wellData.count == 1 {
-                self?.editWellButton.isEnabled = true
-                self?.globalParamsButton.isEnabled = true
-                self?.exportExcelButton.isEnabled = true
-                self?.exportPlotsButton.isEnabled = true
-            }
+            self?.addWellProgressively(wellInfo: wellInfo)
         }
     }
     
@@ -3066,11 +3096,26 @@ print(json.dumps(defaults))
     }
     
     private func findDDQuint() -> String? {
-        let paths = [
+        let fm = FileManager.default
+        // 1) Prefer bundled Python resources in the .app
+        if let resPath = Bundle.main.resourcePath {
+            let pyPath = resPath + "/Python"
+            if fm.fileExists(atPath: pyPath + "/ddquint") {
+                return pyPath
+            }
+        }
+        // 2) Prefer local project-relative 'ddquint' (dev/debug)
+        let cwd = fm.currentDirectoryPath
+        let localPath = (cwd as NSString).appendingPathComponent("ddquint")
+        if fm.fileExists(atPath: localPath) {
+            return cwd
+        }
+        // 3) Fallback to user paths
+        let fallbacks = [
             "/Users/jakob/Applications/Git/ddQuint",
             NSHomeDirectory() + "/ddQuint"
         ]
-        return paths.first { FileManager.default.fileExists(atPath: $0 + "/ddquint") }
+        return fallbacks.first { fm.fileExists(atPath: $0 + "/ddquint") }
     }
     
     private func showError(_ message: String) {
@@ -3212,15 +3257,20 @@ print(json.dumps(defaults))
             let process = Process()
             process.executableURL = URL(fileURLWithPath: pythonPath)
             
-            // Set environment for matplotlib
-            process.environment = (process.environment ?? ProcessInfo.processInfo.environment).merging([
+            // Set environment for matplotlib and template settings
+            var env = (process.environment ?? ProcessInfo.processInfo.environment).merging([
                 "MPLBACKEND": "Agg",
                 "PYTHONDONTWRITEBYTECODE": "1"
             ]) { _, new in new }
+            env["DDQ_TEMPLATE_DESC_COUNT"] = String(self?.templateDescriptionCount ?? 4)
+            if let tpl = self?.templateFileURL?.path { env["DDQ_TEMPLATE_PATH"] = tpl }
+            process.environment = env
             
             let escapedCSVPath = csvFile.path.replacingOccurrences(of: "'", with: "\\'")
             let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
             let escapedParamFile = tempParamsFile?.replacingOccurrences(of: "'", with: "\\'") ?? ""
+            let escapedTemplatePath = self?.templateFileURL?.path.replacingOccurrences(of: "'", with: "\\'") ?? ""
+            let templateCount = self?.templateDescriptionCount ?? 4
             
             // Use inline Python approach (like main analysis and plot generation)
             process.arguments = [
@@ -3245,7 +3295,7 @@ print(json.dumps(defaults))
                     from ddquint.config import Config
                     from ddquint.utils.parameter_editor import load_parameters_if_exist
                     from ddquint.core.file_processor import process_csv_file
-                    from ddquint.utils import get_sample_names
+                    from ddquint.utils.template_parser import parse_template_file as _ptf
                     
                     # Initialize config
                     config = Config.get_instance()
@@ -3287,9 +3337,15 @@ print(json.dumps(defaults))
                     graphs_dir = os.path.join(temp_base, 'ddquint_analysis_plots')
                     os.makedirs(graphs_dir, exist_ok=True)
                     
-                    # Get sample names
+                    # Get sample names using explicit template path if available
                     folder_path = os.path.dirname('\(escapedCSVPath)')
-                    sample_names = get_sample_names(folder_path)
+                    template_path = '\(escapedTemplatePath)'
+                    sample_names = {}
+                    if template_path:
+                        try:
+                            sample_names = _ptf(template_path, description_count=\(templateCount))
+                        except Exception as e:
+                            print(f'DEBUG:TEMPLATE_PARSE_ERROR {e}')
                     
                     # Process the CSV file (this will regenerate the plot)
                     result = process_csv_file('\(escapedCSVPath)', graphs_dir, sample_names, verbose=True)
@@ -3734,11 +3790,15 @@ print(json.dumps(defaults))
             let process = Process()
             process.executableURL = URL(fileURLWithPath: pythonPath)
             
-            // Hide matplotlib windows from dock
-            process.environment = (process.environment ?? ProcessInfo.processInfo.environment).merging([
+            // Hide matplotlib windows from dock and pass template settings
+            var env = (process.environment ?? ProcessInfo.processInfo.environment).merging([
                 "MPLBACKEND": "Agg",
                 "PYTHONDONTWRITEBYTECODE": "1"
             ]) { _, new in new }
+            // Template settings for Python template_parser
+            env["DDQ_TEMPLATE_DESC_COUNT"] = String(self?.templateDescriptionCount ?? 4)
+            if let tpl = self?.templateFileURL?.path { env["DDQ_TEMPLATE_PATH"] = tpl }
+            process.environment = env
             
             let escapedSourcePath = sourceFolder.path.replacingOccurrences(of: "'", with: "\\'")
             let escapedExportPath = exportURL.path.replacingOccurrences(of: "'", with: "\\'")
@@ -3844,6 +3904,27 @@ print(json.dumps(defaults))
         templateFileURL = url
         statusLabel.stringValue = "Template file selected: \(url.lastPathComponent)"
     }
+
+    func getTemplateDescriptionCount() -> Int { templateDescriptionCount }
+
+    func setTemplateDescriptionCount(_ count: Int) {
+        guard (1...4).contains(count) else { return }
+        templateDescriptionCount = count
+        statusLabel.stringValue = "Using \(count) sample description field(s)"
+        UserDefaults.standard.set(count, forKey: userDefaultsDescCountKey)
+        writeDebugLog("🧩 Persisted Sample Description Fields: \(count)")
+    }
+
+    func applyTemplateChangeAndReanalyze() {
+        // If a folder is selected, re-run analysis so names and plots update
+        guard let folderURL = selectedFolderURL else { return }
+        // Clear caches and restart
+        invalidateCache()
+        wellData.removeAll()
+        wellListView.reloadData()
+        showPlaceholderImage()
+        startAnalysis(folderURL: folderURL)
+    }
     
     func exportPlateOverview() {
         guard let folderURL = selectedFolderURL else {
@@ -3867,6 +3948,101 @@ print(json.dumps(defaults))
         if response == .OK, let saveURL = savePanel.url {
             exportPlateOverviewToFile(saveURL: saveURL, sourceFolder: folderURL)
         }
+    }
+
+    // MARK: - Export/Import Parameters Bundle
+    
+    func exportParametersBundle() {
+        // Gather current parameters
+        let globalParams = loadGlobalParameters()
+        let bundle: [String: Any] = [
+            "global_parameters": globalParams,
+            "well_parameters": wellParametersMap,
+            "template_description_count": templateDescriptionCount,
+            "template_file": templateFileURL?.path ?? NSNull()
+        ]
+        
+        // Show save panel
+        let savePanel = NSSavePanel()
+        savePanel.title = "Export Parameters"
+        savePanel.prompt = "Export"
+        savePanel.allowedContentTypes = [.json]
+        savePanel.nameFieldStringValue = "ddQuint_parameters.json"
+        
+        let response = savePanel.runModal()
+        if response == .OK, let url = savePanel.url {
+            do {
+                let data = try JSONSerialization.data(withJSONObject: bundle, options: .prettyPrinted)
+                try data.write(to: url)
+                statusLabel.stringValue = "Parameters exported to \(url.lastPathComponent)"
+            } catch {
+                showError("Failed to export parameters: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func importParametersBundle() {
+        // Open panel
+        let openPanel = NSOpenPanel()
+        openPanel.canChooseFiles = true
+        openPanel.canChooseDirectories = false
+        openPanel.allowsMultipleSelection = false
+        openPanel.allowedContentTypes = [.json]
+        openPanel.prompt = "Load"
+        openPanel.message = "Choose a ddQuint parameters JSON file"
+        
+        let response = openPanel.runModal()
+        guard response == .OK, let url = openPanel.url else { return }
+        
+        do {
+            let data = try Data(contentsOf: url)
+            guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                showError("Invalid parameters file format")
+                return
+            }
+            
+            // Load global parameters (if present)
+            if let globals = obj["global_parameters"] as? [String: Any] {
+                saveParametersToFile(globals)
+            }
+            
+            // Load well-specific parameters
+            if let wells = obj["well_parameters"] as? [String: Any] {
+                var map: [String: [String: Any]] = [:]
+                for (well, value) in wells {
+                    if let dict = value as? [String: Any] {
+                        map[well] = dict
+                    }
+                }
+                wellParametersMap = map
+            }
+            
+            // Apply template settings if present
+            if let count = obj["template_description_count"] as? Int, (1...4).contains(count) {
+                templateDescriptionCount = count
+                UserDefaults.standard.set(count, forKey: userDefaultsDescCountKey)
+            }
+            if let tpl = obj["template_file"] as? String, !tpl.isEmpty {
+                templateFileURL = URL(fileURLWithPath: tpl)
+            }
+            
+            statusLabel.stringValue = "Parameters loaded. Re-running analysis..."
+            applyTemplateChangeAndReanalyze()
+        } catch {
+            showError("Failed to load parameters: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Template Creator
+    
+    func openTemplateDesigner() {
+        // Single instance
+        if templateDesigner == nil {
+            templateDesigner = TemplateCreatorWindowController(findPython: { [weak self] in self?.findPython() },
+                                                               findDDQuint: { [weak self] in self?.findDDQuint() })
+        }
+        templateDesigner?.showWindow(nil)
+        templateDesigner?.window?.makeKeyAndOrderFront(nil)
     }
     
     private func exportPlateOverviewToFile(saveURL: URL, sourceFolder: URL) {
@@ -4099,467 +4275,6 @@ struct WellData {
     let hasData: Bool
 }
 
-// MARK: - Parameter Editor Window
-
-class WellParameterEditorWindow: NSWindowController {
-    
-    var completionHandler: (([String: Any]?) -> Void)?
-    
-    private var clusteringSizeField: NSTextField!
-    private var minSamplesField: NSTextField!
-    private var epsilonField: NSTextField!
-    private var minDropletsField: NSTextField!
-    private var toleranceField: NSTextField!
-    
-    convenience init(wellName: String) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        
-        self.init(window: window)
-        window.title = "Edit Parameters - \(wellName)"
-        window.center()
-        setupParameterEditor()
-    }
-    
-    private func setupParameterEditor() {
-        guard let contentView = window?.contentView else { return }
-        
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(scrollView)
-        
-        let containerView = NSView()
-        scrollView.documentView = containerView
-        
-        // Create form elements
-        let stackView = NSStackView()
-        stackView.orientation = .vertical
-        stackView.alignment = .leading
-        stackView.spacing = 20
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.addSubview(stackView)
-        
-        // Clustering Parameters Section
-        let clusteringSection = createSection(title: "Clustering Parameters")
-        stackView.addArrangedSubview(clusteringSection)
-        
-        clusteringSizeField = createParameterField(
-            label: "Min Cluster Size:",
-            defaultValue: "",
-            tooltip: "Minimum number of droplets required to form a cluster"
-        )
-        clusteringSection.addArrangedSubview(clusteringSizeField.superview!)
-        
-        minSamplesField = createParameterField(
-            label: "Min Samples:",
-            defaultValue: "", 
-            tooltip: "Minimum points in neighborhood for core point classification"
-        )
-        clusteringSection.addArrangedSubview(minSamplesField.superview!)
-        
-        epsilonField = createParameterField(
-            label: "Epsilon:",
-            defaultValue: "",
-            tooltip: "Distance threshold for cluster selection from hierarchy"
-        )
-        clusteringSection.addArrangedSubview(epsilonField.superview!)
-        
-        // Copy Number Parameters Section
-        let copyNumberSection = createSection(title: "Copy Number Parameters")
-        stackView.addArrangedSubview(copyNumberSection)
-        
-        minDropletsField = createParameterField(
-            label: "Min Usable Droplets:",
-            defaultValue: "",
-            tooltip: "Minimum total droplets required for reliable analysis"
-        )
-        copyNumberSection.addArrangedSubview(minDropletsField.superview!)
-        
-        toleranceField = createParameterField(
-            label: "Base Target Tolerance:",
-            defaultValue: "",
-            tooltip: "Base tolerance distance for matching detected clusters"
-        )
-        copyNumberSection.addArrangedSubview(toleranceField.superview!)
-        
-        // Buttons
-        let buttonContainer = NSView()
-        let buttonStack = NSStackView()
-        buttonStack.orientation = .horizontal
-        buttonStack.spacing = 10
-        buttonStack.translatesAutoresizingMaskIntoConstraints = false
-        buttonContainer.addSubview(buttonStack)
-        
-        let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
-        let applyButton = NSButton(title: "Apply", target: self, action: #selector(applyClicked))
-        applyButton.bezelStyle = .rounded
-        applyButton.keyEquivalent = "\r"
-        
-        buttonStack.addArrangedSubview(cancelButton)
-        buttonStack.addArrangedSubview(applyButton)
-        
-        stackView.addArrangedSubview(buttonContainer)
-        
-        // Constraints
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            
-            containerView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            
-            stackView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20),
-            stackView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
-            stackView.trailingAnchor.constraint(lessThanOrEqualTo: containerView.trailingAnchor, constant: -20),
-            stackView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -20),
-            stackView.widthAnchor.constraint(equalToConstant: 460),
-            
-            buttonStack.trailingAnchor.constraint(equalTo: buttonContainer.trailingAnchor),
-            buttonStack.centerYAnchor.constraint(equalTo: buttonContainer.centerYAnchor),
-            buttonContainer.heightAnchor.constraint(equalToConstant: 44)
-        ])
-    }
-    
-    private func createSection(title: String) -> NSStackView {
-        let section = NSStackView()
-        section.orientation = .vertical
-        section.spacing = 10
-        section.alignment = .leading
-        
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize + 2)
-        section.addArrangedSubview(titleLabel)
-        
-        return section
-    }
-    
-    private func createParameterField(label: String, defaultValue: String, tooltip: String) -> NSTextField {
-        let container = NSView()
-        
-        let labelField = NSTextField(labelWithString: label)
-        labelField.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(labelField)
-        
-        let valueField = NSTextField()
-        valueField.stringValue = defaultValue
-        valueField.translatesAutoresizingMaskIntoConstraints = false
-        valueField.toolTip = tooltip
-        container.addSubview(valueField)
-        
-        NSLayoutConstraint.activate([
-            labelField.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            labelField.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            labelField.widthAnchor.constraint(equalToConstant: 150),
-            
-            valueField.leadingAnchor.constraint(equalTo: labelField.trailingAnchor, constant: 10),
-            valueField.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            valueField.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            valueField.widthAnchor.constraint(equalToConstant: 100),
-            
-            container.heightAnchor.constraint(equalToConstant: 24)
-        ])
-        
-        return valueField
-    }
-    
-    @objc private func cancelClicked() {
-        completionHandler?(nil)
-        window?.close()
-    }
-    
-    @objc private func applyClicked() {
-        let parameters: [String: Any] = [
-            "HDBSCAN_MIN_CLUSTER_SIZE": Int(clusteringSizeField.stringValue) ?? 0,
-            "HDBSCAN_MIN_SAMPLES": Int(minSamplesField.stringValue) ?? 0,
-            "HDBSCAN_EPSILON": Double(epsilonField.stringValue) ?? 0.0,
-            "MIN_USABLE_DROPLETS": Int(minDropletsField.stringValue) ?? 0,
-            "BASE_TARGET_TOLERANCE": Int(toleranceField.stringValue) ?? 0
-        ]
-        
-        completionHandler?(parameters)
-        window?.close()
-    }
-}
-
-// MARK: - Global Parameter Editor Window
-
-class GlobalParameterEditorWindow: NSWindowController {
-    
-    var completionHandler: (([String: Any]?) -> Void)?
-    
-    private var centroidsGrid: NSTableView!
-    private var clusteringSizeField: NSTextField!
-    private var minSamplesField: NSTextField!
-    private var epsilonField: NSTextField!
-    private var minDropletsField: NSTextField!
-    private var toleranceField: NSTextField!
-    
-    private var centroidsData: [[String]] = []
-    
-    convenience init() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 700, height: 600),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        
-        self.init(window: window)
-        window.title = "Global Parameters"
-        window.center()
-        window.minSize = NSSize(width: 600, height: 500)
-        print("Creating global parameter editor window")
-        setupGlobalParameterEditor()
-        loadDefaultValues()
-        print("Global parameter editor setup complete")
-    }
-    
-    private func setupGlobalParameterEditor() {
-        guard let contentView = window?.contentView else { return }
-        
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(scrollView)
-        
-        let containerView = NSView()
-        scrollView.documentView = containerView
-        
-        let stackView = NSStackView()
-        stackView.orientation = .vertical
-        stackView.alignment = .leading
-        stackView.spacing = 25
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.addSubview(stackView)
-        
-        // Expected Centroids Section
-        let centroidsSection = createSection(title: "Expected Centroids")
-        stackView.addArrangedSubview(centroidsSection)
-        
-        let centroidsScrollView = NSScrollView()
-        centroidsScrollView.hasVerticalScroller = true
-        centroidsScrollView.borderType = .bezelBorder
-        
-        centroidsGrid = NSTableView()
-        centroidsGrid.usesAlternatingRowBackgroundColors = true
-        centroidsGrid.gridStyleMask = [.solidVerticalGridLineMask, .solidHorizontalGridLineMask]
-        
-        let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
-        nameColumn.title = "Target Name"
-        nameColumn.width = 120
-        centroidsGrid.addTableColumn(nameColumn)
-        
-        let famColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("fam"))
-        famColumn.title = "FAM Fluorescence"
-        famColumn.width = 140
-        centroidsGrid.addTableColumn(famColumn)
-        
-        let hexColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("hex"))
-        hexColumn.title = "HEX Fluorescence"
-        hexColumn.width = 140
-        centroidsGrid.addTableColumn(hexColumn)
-        
-        centroidsScrollView.documentView = centroidsGrid
-        centroidsGrid.dataSource = self
-        centroidsGrid.delegate = self
-        
-        centroidsScrollView.translatesAutoresizingMaskIntoConstraints = false
-        centroidsSection.addArrangedSubview(centroidsScrollView)
-        
-        NSLayoutConstraint.activate([
-            centroidsScrollView.widthAnchor.constraint(equalToConstant: 450),
-            centroidsScrollView.heightAnchor.constraint(equalToConstant: 200)
-        ])
-        
-        // Clustering Parameters Section
-        let clusteringSection = createSection(title: "Clustering Parameters")
-        stackView.addArrangedSubview(clusteringSection)
-        
-        clusteringSizeField = createParameterField(
-            label: "Min Cluster Size:",
-            defaultValue: "",
-            tooltip: "Minimum number of droplets required to form a cluster"
-        )
-        clusteringSection.addArrangedSubview(clusteringSizeField.superview!)
-        
-        minSamplesField = createParameterField(
-            label: "Min Samples:",
-            defaultValue: "",
-            tooltip: "Minimum points in neighborhood for core point classification"
-        )
-        clusteringSection.addArrangedSubview(minSamplesField.superview!)
-        
-        epsilonField = createParameterField(
-            label: "Epsilon:",
-            defaultValue: "",
-            tooltip: "Distance threshold for cluster selection from hierarchy"
-        )
-        clusteringSection.addArrangedSubview(epsilonField.superview!)
-        
-        // General Parameters Section
-        let generalSection = createSection(title: "General Parameters")
-        stackView.addArrangedSubview(generalSection)
-        
-        minDropletsField = createParameterField(
-            label: "Min Usable Droplets:",
-            defaultValue: "",
-            tooltip: "Minimum total droplets required for reliable analysis"
-        )
-        generalSection.addArrangedSubview(minDropletsField.superview!)
-        
-        toleranceField = createParameterField(
-            label: "Base Target Tolerance:",
-            defaultValue: "",
-            tooltip: "Base tolerance distance for matching detected clusters"
-        )
-        generalSection.addArrangedSubview(toleranceField.superview!)
-        
-        // Buttons
-        let buttonContainer = NSView()
-        let buttonStack = NSStackView()
-        buttonStack.orientation = .horizontal
-        buttonStack.spacing = 10
-        buttonStack.translatesAutoresizingMaskIntoConstraints = false
-        buttonContainer.addSubview(buttonStack)
-        
-        let resetButton = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetClicked))
-        let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
-        let applyButton = NSButton(title: "Apply & Reanalyze", target: self, action: #selector(applyClicked))
-        applyButton.bezelStyle = .rounded
-        applyButton.keyEquivalent = "\r"
-        
-        buttonStack.addArrangedSubview(resetButton)
-        buttonStack.addArrangedSubview(NSView()) // Spacer
-        buttonStack.addArrangedSubview(cancelButton)
-        buttonStack.addArrangedSubview(applyButton)
-        
-        stackView.addArrangedSubview(buttonContainer)
-        
-        // Constraints
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            
-            containerView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            
-            stackView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 20),
-            stackView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
-            stackView.trailingAnchor.constraint(lessThanOrEqualTo: containerView.trailingAnchor, constant: -20),
-            stackView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -20),
-            stackView.widthAnchor.constraint(equalToConstant: 660),
-            
-            buttonStack.trailingAnchor.constraint(equalTo: buttonContainer.trailingAnchor),
-            buttonStack.leadingAnchor.constraint(equalTo: buttonContainer.leadingAnchor),
-            buttonStack.centerYAnchor.constraint(equalTo: buttonContainer.centerYAnchor),
-            buttonContainer.heightAnchor.constraint(equalToConstant: 44)
-        ])
-    }
-    
-    private func createSection(title: String) -> NSStackView {
-        let section = NSStackView()
-        section.orientation = .vertical
-        section.spacing = 10
-        section.alignment = .leading
-        
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize + 2)
-        section.addArrangedSubview(titleLabel)
-        
-        return section
-    }
-    
-    private func createParameterField(label: String, defaultValue: String, tooltip: String) -> NSTextField {
-        let container = NSView()
-        
-        let labelField = NSTextField(labelWithString: label)
-        labelField.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(labelField)
-        
-        let valueField = NSTextField()
-        valueField.stringValue = defaultValue
-        valueField.translatesAutoresizingMaskIntoConstraints = false
-        valueField.toolTip = tooltip
-        container.addSubview(valueField)
-        
-        NSLayoutConstraint.activate([
-            labelField.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            labelField.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            labelField.widthAnchor.constraint(equalToConstant: 180),
-            
-            valueField.leadingAnchor.constraint(equalTo: labelField.trailingAnchor, constant: 10),
-            valueField.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            valueField.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            valueField.widthAnchor.constraint(equalToConstant: 100),
-            
-            container.heightAnchor.constraint(equalToConstant: 24)
-        ])
-        
-        return valueField
-    }
-    
-    private func loadDefaultValues() {
-        // No hardcoded default values - centroids should come from parameters
-        centroidsData = [
-            ["Negative", "", ""],
-            ["Chrom1", "", ""],
-            ["Chrom2", "", ""],
-            ["Chrom3", "", ""],
-            ["Chrom4", "", ""],
-            ["Chrom5", "", ""]
-        ]
-        centroidsGrid.reloadData()
-    }
-    
-    @objc private func resetClicked() {
-        loadDefaultValues()
-        clusteringSizeField.stringValue = ""
-        minSamplesField.stringValue = ""
-        epsilonField.stringValue = ""
-        minDropletsField.stringValue = ""
-        toleranceField.stringValue = ""
-    }
-    
-    @objc private func cancelClicked() {
-        completionHandler?(nil)
-        window?.close()
-    }
-    
-    @objc private func applyClicked() {
-        var centroids: [String: [Double]] = [:]
-        
-        // Collect centroid data
-        for row in centroidsData {
-            if row.count >= 3 && !row[0].isEmpty && !row[1].isEmpty && !row[2].isEmpty {
-                if let fam = Double(row[1]), let hex = Double(row[2]) {
-                    centroids[row[0]] = [fam, hex]
-                }
-            }
-        }
-        
-        let parameters: [String: Any] = [
-            "EXPECTED_CENTROIDS": centroids,
-            "HDBSCAN_MIN_CLUSTER_SIZE": Int(clusteringSizeField.stringValue) ?? 0,
-            "HDBSCAN_MIN_SAMPLES": Int(minSamplesField.stringValue) ?? 0,
-            "HDBSCAN_EPSILON": Double(epsilonField.stringValue) ?? 0.0,
-            "MIN_USABLE_DROPLETS": Int(minDropletsField.stringValue) ?? 0,
-            "BASE_TARGET_TOLERANCE": Int(toleranceField.stringValue) ?? 0
-        ]
-        
-        completionHandler?(parameters)
-        window?.close()
-    }
-}
-
-// MARK: - Global Parameter Editor Table Data Source & Delegate
-
 // MARK: - Drag and Drop Support
 
 protocol DragDropDelegate: AnyObject {
@@ -4645,55 +4360,4 @@ extension InteractiveMainWindowController: DragDropDelegate {
     }
 }
 
-extension GlobalParameterEditorWindow: NSTableViewDataSource, NSTableViewDelegate {
-    
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        return centroidsData.count
-    }
-    
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row < centroidsData.count else { return nil }
-        
-        let identifier = tableColumn?.identifier.rawValue ?? ""
-        let cellView = NSTableCellView()
-        
-        let textField = NSTextField()
-        textField.isBordered = false
-        textField.backgroundColor = .clear
-        textField.isEditable = true
-        
-        switch identifier {
-        case "name":
-            textField.stringValue = centroidsData[row][0]
-        case "fam":
-            textField.stringValue = centroidsData[row][1]
-        case "hex":
-            textField.stringValue = centroidsData[row][2]
-        default:
-            textField.stringValue = ""
-        }
-        
-        textField.target = self
-        textField.action = #selector(cellEdited(_:))
-        textField.tag = row * 10 + (identifier == "name" ? 0 : identifier == "fam" ? 1 : 2)
-        
-        cellView.addSubview(textField)
-        textField.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            textField.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-            textField.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-            textField.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
-        ])
-        
-        return cellView
-    }
-    
-    @objc private func cellEdited(_ sender: NSTextField) {
-        let row = sender.tag / 10
-        let col = sender.tag % 10
-        
-        if row < centroidsData.count && col < 3 {
-            centroidsData[row][col] = sender.stringValue
-        }
-    }
-}
+ 
