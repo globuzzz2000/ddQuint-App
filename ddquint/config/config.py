@@ -127,7 +127,6 @@ class Config:
     
     # DPI settings for different plot types
     INDIVIDUAL_PLOT_DPI = 300      # High resolution for standalone plots
-    COMPOSITE_PLOT_DPI = 200       # Medium resolution for composite images
     PLACEHOLDER_PLOT_DPI = 150     # Lower resolution for placeholder plots
     
     # Axis limits
@@ -195,7 +194,7 @@ class Config:
         PARAMETER_ATTRS = {
             'HDBSCAN_MIN_CLUSTER_SIZE', 'HDBSCAN_MIN_SAMPLES', 'HDBSCAN_EPSILON',
             'HDBSCAN_METRIC', 'HDBSCAN_CLUSTER_SELECTION_METHOD', 'MIN_POINTS_FOR_CLUSTERING',
-            'INDIVIDUAL_PLOT_DPI', 'COMPOSITE_PLOT_DPI', 'PLACEHOLDER_PLOT_DPI',
+            'INDIVIDUAL_PLOT_DPI', 'PLACEHOLDER_PLOT_DPI',
             'X_AXIS_MIN', 'X_AXIS_MAX', 'Y_AXIS_MIN', 'Y_AXIS_MAX',
             'X_GRID_INTERVAL', 'Y_GRID_INTERVAL',
             'COMPOSITE_FIGURE_SIZE', 'INDIVIDUAL_FIGURE_SIZE', 'COMPOSITE_PLOT_SIZE',
@@ -421,7 +420,6 @@ class Config:
         instance = cls.get_instance()
         dpi_mapping = {
             'individual': getattr(instance, 'INDIVIDUAL_PLOT_DPI', cls.INDIVIDUAL_PLOT_DPI),
-            'composite': getattr(instance, 'COMPOSITE_PLOT_DPI', cls.COMPOSITE_PLOT_DPI),
             'placeholder': getattr(instance, 'PLACEHOLDER_PLOT_DPI', cls.PLACEHOLDER_PLOT_DPI)
         }
         

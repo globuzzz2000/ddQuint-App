@@ -344,8 +344,7 @@ def _populate_data_well(ax, well, result, config):
             title = sample_name if sample_name else well
             ax.set_title(title, fontsize=6, pad=2)
             
-            # Apply colored borders based on copy number state
-            _apply_well_border(ax, result, well)
+            # Borders/overlays are handled in the app UI now; skip plot adornments
             
         except Exception as e:
             logger.debug(f"Error displaying image for well {well}: {e}")
@@ -359,40 +358,13 @@ def _populate_data_well(ax, well, result, config):
 
 
 def _add_plate_buffer_zone_overlay(ax):
-    """
-    Add buffer zone overlay for plate plots only (center overlay for composite view).
-    
-    Args:
-        ax: Matplotlib axes object
-    """
-    ax.text(0.5, 0.5, "Buffer Zone", 
-            horizontalalignment='center', verticalalignment='center',
-            transform=ax.transAxes, fontsize=5, color='black',
-            bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgrey', alpha=0.8))
-    
-    logger.debug("Added buffer zone overlay to plate plot")
+    """Deprecated: overlays handled by UI; no-op."""
+    return
 
 
 def _apply_well_border(ax, result, well):
-    """Apply colored border based on well status."""
-
-    if result.get('has_aneuploidy', False) and not result.get('has_buffer_zone', False):
-        # Only apply special border for aneuploidy if it's NOT a buffer zone
-        border_color = '#E6B8E6'  # Pink border for aneuploidy
-        border_width = 2
-        logger.debug(f"Applied aneuploidy border (pink) to well {well}")
-    else:
-        # Standard grey border for all other cases (including buffer zones)
-        border_color = '#B0B0B0'  # Light grey border for normal wells
-        border_width = 1
-        logger.debug(f"Applied standard border (light grey) to well {well}")
-    
-    # Apply the border
-    for spine in ax.spines.values():
-        spine.set_edgecolor(border_color)
-        spine.set_color(border_color)
-        spine.set_linewidth(border_width)
-        spine.set_visible(True)
+    """Deprecated: borders handled by UI; no-op."""
+    return
 
 
 def _add_plate_labels(fig, row_labels, col_labels):

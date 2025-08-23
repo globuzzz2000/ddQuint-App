@@ -382,7 +382,11 @@ private func setupUI() {
         openPanel.allowsMultipleSelection = false
         openPanel.allowedFileTypes = ["csv", "xlsx", "xls"]
         openPanel.prompt = "Select"
+        if let last = UserDefaults.standard.string(forKey: "LastDir.TemplateCreator.Input") {
+            openPanel.directoryURL = URL(fileURLWithPath: last)
+        }
         if openPanel.runModal() == .OK, let url = openPanel.url {
+            UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: "LastDir.TemplateCreator.Input")
             loadSampleNames(from: url)
         }
     }
@@ -409,10 +413,6 @@ private func setupUI() {
             "    else:",
             "        df = None",
             "    if df is not None and len(df)>0:",
-            "        # If header-like row exists, drop it",
-            "        first = ' '.join(map(str, list(df.iloc[0]))).lower()",
-            "        if 'sample' in first or 'description' in first or 'name' in first:",
-            "            df = df.drop(df.index[0]).reset_index(drop=True)",
             "        # Extract up to 4 columns as strings",
             "        def col(i):",
             "            return [str(x).strip() for x in (df.iloc[:,i].tolist() if i < df.shape[1] else [])]",
@@ -491,8 +491,8 @@ private func setupUI() {
         for (idx, rowChar) in ["A","B","C","D","E","F","G","H"].enumerated() {
             var rowViews: [NSView] = [TemplateCreatorWindowController.cellBox(with: rowChar, centered: true)]
             for col in 1...12 {
-                // Row-major mapping: row-first then columns
-                let dataIdx = idx * 12 + (col - 1)
+                // Column-major mapping: column-first then rows
+                let dataIdx = (col - 1) * 8 + idx
                 let n1 = dataIdx < sampleCol1.count ? sampleCol1[dataIdx] : (dataIdx < sampleNames.count ? sampleNames[dataIdx] : "")
                 let n2 = dataIdx < sampleCol2.count ? sampleCol2[dataIdx] : ""
                 let n3 = dataIdx < sampleCol3.count ? sampleCol3[dataIdx] : ""
@@ -667,9 +667,13 @@ private func setupUI() {
         } else {
             savePanel.nameFieldStringValue = "plate_template.csv"
         }
+        if let last = UserDefaults.standard.string(forKey: "LastDir.TemplateCreator.Export") {
+            savePanel.directoryURL = URL(fileURLWithPath: last)
+        }
         savePanel.prompt = "Export"
         if savePanel.runModal() != .OK { return }
         guard let outURL = savePanel.url else { return }
+        UserDefaults.standard.set(outURL.deletingLastPathComponent().path, forKey: "LastDir.TemplateCreator.Export")
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
@@ -730,7 +734,7 @@ private func setupUI() {
             "    base = [well_id, \"Yes\", experiment, name, n2, n3, n4, sample_type, supermix, assay]",
             "    at = assay.lower()",
             "    if 'single target per channel' in at:",
-            "        count = 1",
+            "        count = 2",
             "    elif 'amplitude multiplex' in at:",
             "        count = 4",
             "    else:",
@@ -739,12 +743,14 @@ private func setupUI() {
             "    while len(chosen) < count:",
             "        chosen.append(f'Target{len(chosen)+1}')",
             "    rows = []",
-            "    if count == 1:",
-            "        patterns = [(\"FAM\", \"HEX\")]",
+            "    # Use EvaGreen instead of FAM if EvaGreen supermix is selected",
+            "    fam_signal = 'EvaGreen' if 'evagreen' in supermix.lower() else 'FAM'",
+            "    if count == 2:",
+            "        patterns = [(f\"{fam_signal}\", \"None\"), (\"None\", \"HEX\")]",
             "    elif count == 3:",
-            "        patterns = [(\"None\", \"HEX\"), (\"FAM\", \"HEX\"), (\"FAM\", \"None\")]",
+            "        patterns = [(\"None\", \"HEX\"), (f\"{fam_signal}\", \"HEX\"), (f\"{fam_signal}\", \"None\")]",
             "    else:",
-            "        patterns = [(\"FAM lo\", \"None\"), (\"FAM hi\", \"None\"), (\"None\", \"HEX lo\"), (\"None\", \"HEX hi\")]",
+            "        patterns = [(f\"{fam_signal} Lo\", \"None\"), (f\"{fam_signal} Hi\", \"None\"), (\"None\", \"HEX Lo\"), (\"None\", \"HEX Hi\")]",
             "    for i in range(count):",
             "        target_name = chosen[i]",
             "        sig1, sig2 = patterns[i]",
@@ -756,7 +762,7 @@ private func setupUI() {
             "for row_idx, row_letter in enumerate('ABCDEFGH'):",
             "    for col in range(1,13):",
             "        well = f'{row_letter}{col:02d}'",
-            "        idx = row_idx*12 + (col-1)",
+            "        idx = (col-1)*8 + row_idx",
             "        if idx < len(names):",
             "            nm = str(names[idx])",
             "            n2 = str(names2[idx]) if idx < len(names2) else ''",
@@ -813,22 +819,25 @@ private func setupUI() {
 
     private func updateTargetHint() {
         let sel = assayPopup.titleOfSelectedItem?.lowercased() ?? ""
+        let supermix = supermixPopup.titleOfSelectedItem ?? ""
+        let famSignal = supermix.lowercased().contains("evagreen") ? "EvaGreen" : "FAM"
+        
         var hint = ""
         var needed = 3
         var placeholders: [String] = []
         
         if sel.contains("single target per channel") {
-            hint = "1 target"
-            needed = 1
-            placeholders = ["FAM / HEX"]
+            hint = "2 targets"
+            needed = 2
+            placeholders = ["\(famSignal) / None", "None / HEX"]
         } else if sel.contains("amplitude multiplex") {
             hint = "4 targets"
             needed = 4
-            placeholders = ["FAM lo / None", "FAM hi / None", "None / HEX lo", "None / HEX hi"]
+            placeholders = ["\(famSignal) Lo / None", "\(famSignal) Hi / None", "None / HEX Lo", "None / HEX Hi"]
         } else {
             hint = "3 targets"
             needed = 3
-            placeholders = ["None / HEX", "FAM / HEX", "FAM / None"]
+            placeholders = ["None / HEX", "\(famSignal) / HEX", "\(famSignal) / None"]
         }
         
         targetHintLabel.stringValue = hint

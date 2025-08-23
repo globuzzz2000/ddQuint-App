@@ -50,19 +50,20 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         # ALWAYS apply consistent axis formatting first (unified base)
         _apply_axis_formatting(ax, config)
         
-        # Determine plot type and add content overlay
+        # Determine plot type and add content (overlays removed; handled in app UI)
         if _is_error_result(clustering_results):
             if df is not None and not df.empty:
-                # Show raw data points with error overlay
+                # Show raw data points (no overlay)
                 _add_raw_data_with_error(ax, df, clustering_results, well_id, for_composite)
             else:
-                # No data available - just show error message
-                _add_error_overlay(ax, clustering_results, well_id, for_composite)
+                # No data available - overlays removed
+                pass
         elif _has_insufficient_data(df, clustering_results, config):
             if df is not None and not df.empty:
                 # Show whatever data we have
                 _add_raw_data_content(ax, df, for_composite)
             # Skip "no data" overlay - just show empty plot with axes
+            pass
         else:
             _add_data_content(ax, df, clustering_results, well_id, for_composite, 
                             add_copy_numbers, sample_name, config)
@@ -71,8 +72,7 @@ def create_well_plot(df, clustering_results, well_id, save_path, for_composite=F
         _set_plot_labels_and_title(ax, well_id, sample_name, for_composite)
         
         # Save figure with config-based DPI
-        plot_type = 'composite' if for_composite else 'individual'
-        dpi = config.get_plot_dpi(plot_type)
+        dpi = config.get_plot_dpi('individual')
         plt.savefig(save_path, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         
@@ -179,7 +179,7 @@ def _validate_clustering_data(clustering_results):
 
 def _add_raw_data_with_error(ax, df, clustering_results, well_id, for_composite):
     """
-    Add raw data visualization with error overlay on top of pre-formatted axes.
+    Add raw data visualization on top of pre-formatted axes (no overlays).
     Shows both raw data points and any available clustering results.
     
     Args:
@@ -219,17 +219,10 @@ def _add_raw_data_with_error(ax, df, clustering_results, well_id, for_composite)
         ax.scatter(df['Ch2Amplitude'], df['Ch1Amplitude'],
                   c='grey', s=scatter_size, alpha=0.5, label='Raw Droplets')
         
-        logger.debug(f"Plotted {len(df)} raw droplets for well {well_id} with error overlay")
+        logger.debug(f"Plotted {len(df)} raw droplets for well {well_id}")
     
-    # Add error message overlay in upper portion
-    error_msg = clustering_results.get('error', 'Unknown Error')
-    display_msg = _get_error_message(error_msg)
-    
-    font_size = 12 if for_composite else 16
-    ax.text(0.5, 0.85, display_msg, 
-            horizontalalignment='center', verticalalignment='top',
-            transform=ax.transAxes, fontsize=font_size, color='red',
-            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.9))
+    # Overlays removed: no error text added on plots
+    pass
 
 
 def _add_raw_data_content(ax, df, for_composite):
@@ -250,6 +243,8 @@ def _add_raw_data_content(ax, df, for_composite):
 
 
 def _add_error_overlay(ax, clustering_results, well_id, for_composite):
+    """Deprecated: overlays handled in app UI; no-op."""
+    return
     """
     Add error message overlay on top of pre-formatted axes.
     
@@ -327,8 +322,7 @@ def _add_data_content(ax, df, clustering_results, well_id, for_composite,
                                    label_color_map, for_composite)
     
     # Add buffer zone overlay for well plots (bottom right corner)
-    if clustering_results.get('has_buffer_zone', False):
-        _add_well_buffer_zone_overlay(ax, for_composite)
+    # Overlays removed for buffer zones
     
     # Add legend for standalone plots
     if not for_composite:
@@ -336,20 +330,8 @@ def _add_data_content(ax, df, clustering_results, well_id, for_composite,
 
 
 def _add_well_buffer_zone_overlay(ax, for_composite):
-    """
-    Add buffer zone overlay for well plots (same position as error messages).
-    
-    Args:
-        ax: Matplotlib axes object
-        for_composite (bool): Whether this is for composite image
-    """
-    font_size = 12 if for_composite else 16
-    ax.text(0.5, 0.85, "Buffer Zone", 
-            horizontalalignment='center', verticalalignment='top',
-            transform=ax.transAxes, fontsize=font_size, color='black',
-            bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgrey', alpha=0.8))
-    
-    logger.debug("Added buffer zone overlay to well plot")
+    """Deprecated: overlays handled in app UI; no-op."""
+    return
 
 
 def _add_copy_number_annotations(ax, df_filtered, copy_numbers, copy_number_states, 

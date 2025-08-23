@@ -6,6 +6,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindowController: InteractiveMainWindowController?
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        // Clear all cached plots and data on app launch
+        clearAllCaches()
+        
         // Create and show main window
         mainWindowController = InteractiveMainWindowController()
         mainWindowController?.showWindow(nil)
@@ -28,6 +31,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
+    }
+    
+    private func clearAllCaches() {
+        let fileManager = FileManager.default
+        
+        // Clear temp plot files in /tmp/
+        do {
+            let tempContents = try fileManager.contentsOfDirectory(atPath: "/tmp")
+            for item in tempContents {
+                if item.hasPrefix("ddquint_plot_") && item.hasSuffix(".png") {
+                    let fullPath = "/tmp/\(item)"
+                    try fileManager.removeItem(atPath: fullPath)
+                    print("CACHE_CLEAR: Removed temp plot: \(fullPath)")
+                }
+            }
+        } catch {
+            print("CACHE_CLEAR: Error clearing /tmp/ plots: \(error)")
+        }
+        
+        // Clear analysis plots directory
+        let tempBase = NSTemporaryDirectory()
+        let graphsDir = tempBase.appending("ddquint_analysis_plots")
+        if fileManager.fileExists(atPath: graphsDir) {
+            do {
+                try fileManager.removeItem(atPath: graphsDir)
+                print("CACHE_CLEAR: Removed analysis plots directory: \(graphsDir)")
+            } catch {
+                print("CACHE_CLEAR: Error removing analysis plots directory: \(error)")
+            }
+        }
+        
+        // Clear any parameter temp files
+        do {
+            let tempContents = try fileManager.contentsOfDirectory(atPath: tempBase)
+            for item in tempContents {
+                if item.hasPrefix("ddquint_params_") && item.hasSuffix(".json") {
+                    let fullPath = tempBase.appending(item)
+                    try fileManager.removeItem(atPath: fullPath)
+                    print("CACHE_CLEAR: Removed param file: \(fullPath)")
+                }
+            }
+        } catch {
+            print("CACHE_CLEAR: Error clearing param files: \(error)")
+        }
+        
+        print("CACHE_CLEAR: Cache clearing completed")
     }
     
     private func setupMenuBar() {
@@ -79,11 +128,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         templateMenuItem.submenu = templateMenu
         mainMenu.addItem(templateMenuItem)
 
-        // Export menu (images and parameter bundles)
+        // Export menu (parameter bundles)
         let exportMenuItem = NSMenuItem()
         let exportMenu = NSMenu(title: "Export")
-        exportMenu.addItem(NSMenuItem(title: "Export Plate Overview...", action: #selector(exportPlateOverview), keyEquivalent: "e"))
-        exportMenu.addItem(NSMenuItem.separator())
         exportMenu.addItem(NSMenuItem(title: "Export Parameters...", action: #selector(exportParametersBundle), keyEquivalent: ""))
         exportMenu.addItem(NSMenuItem(title: "Load Parameters...", action: #selector(importParametersBundle), keyEquivalent: ""))
         exportMenuItem.submenu = exportMenu
@@ -100,9 +147,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         openPanel.allowedContentTypes = [.text, .plainText]
         openPanel.prompt = "Select Template File"
         openPanel.message = "Choose a template file for sample name assignments"
+        if let last = UserDefaults.standard.string(forKey: "LastDir.TemplateFile") { openPanel.directoryURL = URL(fileURLWithPath: last) }
         
         let response = openPanel.runModal()
         if response == .OK, let url = openPanel.url {
+            UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: "LastDir.TemplateFile")
             mainWindowController?.setTemplateFile(url)
             mainWindowController?.applyTemplateChangeAndReanalyze()
         }
@@ -128,9 +177,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowController?.applyTemplateChangeAndReanalyze()
     }
     
-    @objc private func exportPlateOverview() {
-        mainWindowController?.exportPlateOverview()
-    }
 
     @objc private func exportParametersBundle() {
         mainWindowController?.exportParametersBundle()

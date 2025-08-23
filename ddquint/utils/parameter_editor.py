@@ -707,13 +707,6 @@ class ParameterEditorFrame(wx.Dialog):
             'individual_dpi', form2
         )
         
-        # Composite DPI with tooltip
-        self.vis_controls['COMPOSITE_PLOT_DPI'] = wx.SpinCtrl(panel, min=75, max=600, initial=200)
-        create_labeled_control_with_tooltip(
-            panel, "Composite DPI:", 
-            self.vis_controls['COMPOSITE_PLOT_DPI'], 
-            'composite_dpi', form2
-        )
         
         dpi_box_sizer.Add(form2, 1, wx.EXPAND | wx.ALL, 10)
         sizer.Add(dpi_box_sizer, 0, wx.EXPAND | wx.ALL, 5)
@@ -793,7 +786,6 @@ class ParameterEditorFrame(wx.Dialog):
             'X_GRID_INTERVAL': 500,
             'Y_GRID_INTERVAL': 1000,
             'INDIVIDUAL_PLOT_DPI': 300,
-            'COMPOSITE_PLOT_DPI': 200,
         }
 
     def _get_config_snapshot(self):

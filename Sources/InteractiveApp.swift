@@ -1,13 +1,64 @@
 import Cocoa
 
+// MARK: - High Quality Image View
+
+class HighQualityImageView: NSView {
+    var image: NSImage? {
+        didSet {
+            needsDisplay = true
+        }
+    }
+    
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        
+        guard let image = self.image,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        
+        // Set high-quality interpolation
+        context.interpolationQuality = .high
+        context.setShouldAntialias(true)
+        context.setAllowsAntialiasing(true)
+        
+        // Calculate scaling to fit bounds while maintaining aspect ratio
+        let imageSize = image.size
+        let viewSize = bounds.size
+        
+        let scaleX = viewSize.width / imageSize.width
+        let scaleY = viewSize.height / imageSize.height
+        let scale = min(scaleX, scaleY)
+        
+        let scaledWidth = imageSize.width * scale
+        let scaledHeight = imageSize.height * scale
+        
+        // Center the image
+        let x = (viewSize.width - scaledWidth) / 2
+        let y = (viewSize.height - scaledHeight) / 2
+        
+        let drawRect = NSRect(x: x, y: y, width: scaledWidth, height: scaledHeight)
+        
+        // Draw with high quality scaling
+        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: [
+            .interpolation: NSNumber(value: NSImageInterpolation.high.rawValue)
+        ]) {
+            context.draw(cgImage, in: drawRect)
+        }
+    }
+}
+
 class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     
     // UI Elements
     private var wellListScrollView: NSScrollView!
     private var wellListView: NSTableView!
-    private var plotImageView: NSImageView!
+    private var filterButton: NSButton!
+    private var legendButton: NSButton!
+    private var overviewButton: NSButton!
+    private var filterPopover: NSPopover?
+    private var hideBufferZoneButton: NSButton!
+    private var hideWarningButton: NSButton!
+    private var plotImageView: HighQualityImageView!
     private var plotClickView: NSView!
-    private var plotScrollView: NSScrollView!
     private var progressIndicator: NSProgressIndicator!
     private var editWellButton: NSButton!
     private var globalParamsButton: NSButton!
@@ -19,7 +70,12 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     private var selectedFolderURL: URL?
     private var analysisResults: [[String: Any]] = []
     private var wellData: [WellData] = []
+    private var filteredWellData: [WellData] = []
     private var selectedWellIndex: Int = -1
+    
+    // Filter state
+    private var hideBufferZones = false
+    private var hideWarnings = false
     
     // Analysis state
     private var isAnalysisComplete = false
@@ -36,6 +92,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     
     // Parameter storage - well parameters stored per well ID, reset on app close
     private var wellParametersMap: [String: [String: Any]] = [:]
+    private var activelyAdjustedParameters: [String: Set<String>] = [:] // Tracks which parameters per well were actively changed
     
     // Cache for processed results
     private var cachedResults: [[String: Any]] = []
@@ -47,7 +104,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -142,7 +199,35 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         wellListView.dataSource = self
         wellListView.delegate = self
         
+        // Filter + help controls (icons)
+        if #available(macOS 11.0, *) {
+            // Use a larger SF Symbol for better visibility
+            var img = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "Filter") ?? NSImage()
+            if let configured = img.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)) {
+                img = configured
+            }
+            filterButton = NSButton(image: img, target: self, action: #selector(showFilterPopover))
+        } else {
+            filterButton = NSButton(title: "Filter", target: self, action: #selector(showFilterPopover))
+        }
+        legendButton = NSButton()
+        legendButton.bezelStyle = .helpButton
+        legendButton.title = ""
+        legendButton.target = self
+        legendButton.action = #selector(showLegend)
+
+        overviewButton = NSButton(title: "Overview", target: self, action: #selector(showOverview))
+        overviewButton.bezelStyle = .rounded
+        overviewButton.isEnabled = false
+
+        filterButton.translatesAutoresizingMaskIntoConstraints = false
+        legendButton.translatesAutoresizingMaskIntoConstraints = false
+        overviewButton.translatesAutoresizingMaskIntoConstraints = false
+        
         contentView.addSubview(wellListScrollView)
+        contentView.addSubview(filterButton)
+        contentView.addSubview(legendButton)
+        contentView.addSubview(overviewButton)
         
         // Plot display (right panel)
         plotClickView = NSView()
@@ -151,36 +236,18 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         plotClickView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(plotClickView)
         
-        // Add scroll view for zoom functionality
-        plotScrollView = NSScrollView()
-        plotScrollView.hasVerticalScroller = true
-        plotScrollView.hasHorizontalScroller = true
-        plotScrollView.autohidesScrollers = true
-        plotScrollView.allowsMagnification = true
-        plotScrollView.maxMagnification = 4.0
-        plotScrollView.translatesAutoresizingMaskIntoConstraints = false
-        
-        // Note: NSScrollView doesn't have scrollEnabled property
-        
-        plotClickView.addSubview(plotScrollView)
-        
-        plotImageView = NSImageView()
-        plotImageView.imageScaling = .scaleNone  // Don't scale the image, let the scroll view handle zoom
-        plotImageView.imageAlignment = .alignCenter
+        // Add custom high-quality image view directly to plot area
+        plotImageView = HighQualityImageView()
         plotImageView.translatesAutoresizingMaskIntoConstraints = false
-        plotScrollView.documentView = plotImageView
+        plotClickView.addSubview(plotImageView)
         
-        // Make scroll view fill the plot click view
+        // Make image view fill the entire plot area
         NSLayoutConstraint.activate([
-            plotScrollView.topAnchor.constraint(equalTo: plotClickView.topAnchor),
-            plotScrollView.leadingAnchor.constraint(equalTo: plotClickView.leadingAnchor),
-            plotScrollView.trailingAnchor.constraint(equalTo: plotClickView.trailingAnchor),
-            plotScrollView.bottomAnchor.constraint(equalTo: plotClickView.bottomAnchor)
+            plotImageView.topAnchor.constraint(equalTo: plotClickView.topAnchor),
+            plotImageView.leadingAnchor.constraint(equalTo: plotClickView.leadingAnchor),
+            plotImageView.trailingAnchor.constraint(equalTo: plotClickView.trailingAnchor),
+            plotImageView.bottomAnchor.constraint(equalTo: plotClickView.bottomAnchor)
         ])
-        
-        // Set up image view without constraining its size - let it be natural size
-        // The scroll view will handle the zoom and scrolling
-        plotImageView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)  // Initial size, will be updated when image loads
         
         // Progress indicator (initially hidden) - add to main content view
         progressIndicator = NSProgressIndicator()
@@ -224,10 +291,50 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         // Initial state - don't show placeholder yet
     }
     
-    private func setupConstraints(in contentView: NSView) {
+    
+
+    // MARK: - Helpers: Parameter value formatting and last-used directories
+
+    private func formatParamValue(_ value: Any) -> String {
+        if let d = value as? Double {
+            // Round to 6 decimals then trim trailing zeros and dot
+            let s = String(format: "%.6f", d)
+            var trimmed = s
+            while trimmed.contains(".") && (trimmed.hasSuffix("0") || trimmed.hasSuffix(".")) {
+                trimmed.removeLast()
+            }
+            return trimmed
+        }
+        return String(describing: value)
+    }
+
+    private func lastURL(for key: String) -> URL? {
+        if let path = UserDefaults.standard.string(forKey: key), !path.isEmpty { return URL(fileURLWithPath: path) }
+        return nil
+    }
+
+    private func setLastURL(_ url: URL, for key: String) {
+        UserDefaults.standard.set(url.path, forKey: key)
+    }
+private func setupConstraints(in contentView: NSView) {
         NSLayoutConstraint.activate([
-            // Well list (left side)
-            wellListScrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            // Filter/help controls (above well list)
+            filterButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            filterButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            filterButton.widthAnchor.constraint(equalToConstant: 28),
+            filterButton.heightAnchor.constraint(equalToConstant: 28),
+
+            legendButton.centerYAnchor.constraint(equalTo: filterButton.centerYAnchor),
+            legendButton.leadingAnchor.constraint(equalTo: filterButton.trailingAnchor, constant: 8),
+            legendButton.widthAnchor.constraint(equalToConstant: 20),
+            legendButton.heightAnchor.constraint(equalToConstant: 20),
+
+            overviewButton.centerYAnchor.constraint(equalTo: filterButton.centerYAnchor),
+            overviewButton.trailingAnchor.constraint(equalTo: wellListScrollView.trailingAnchor),
+            overviewButton.heightAnchor.constraint(equalToConstant: 28),
+            
+            // Well list (left side, below filter/help controls)
+            wellListScrollView.topAnchor.constraint(equalTo: filterButton.bottomAnchor, constant: 8),
             wellListScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             wellListScrollView.widthAnchor.constraint(equalToConstant: 220),
             wellListScrollView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -20),
@@ -307,6 +414,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         image.unlockFocus()
         
         plotImageView.image = image
+        ensurePlotFillsArea()
     }
     
     private func showFolderSelectionPrompt() {
@@ -360,6 +468,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         image.unlockFocus()
         
         plotImageView.image = image
+        ensurePlotFillsArea()
         statusLabel.stringValue = "Ready to analyze ddPCR data"
         
         // Click handling is now done by the DragDropView that covers the plot area
@@ -380,10 +489,13 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         openPanel.allowsMultipleSelection = false
         openPanel.prompt = "Select Folder"
         openPanel.message = "Choose a folder containing ddPCR CSV files"
+        if let last = lastURL(for: "LastDir.InputFolder") { openPanel.directoryURL = last }
         
         let response = openPanel.runModal()
         
         if response == .OK, let url = openPanel.url {
+            // Save the parent directory of the selected folder
+            setLastURL(url.deletingLastPathComponent(), for: "LastDir.InputFolder")
             selectedFolderURL = url
             showAnalysisProgress()
             startAnalysis(folderURL: url)
@@ -397,6 +509,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         // Clear existing data for progressive loading
         wellData.removeAll()
+        filteredWellData.removeAll()
         wellListView.reloadData()
         
         // Disable buttons until wells start completing
@@ -404,6 +517,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         globalParamsButton.isEnabled = false
         exportExcelButton.isEnabled = false
         exportPlotsButton.isEnabled = false
+        overviewButton.isEnabled = false
         
         // Clear the plot area and show progress
         plotImageView.image = nil
@@ -598,7 +712,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     WELL_PARAMS = json.loads('''\(wellParamsJSON)''') if '''\(wellParamsJSON)''' else {}
                     PARAM_KEYS = [
                         'HDBSCAN_MIN_CLUSTER_SIZE','HDBSCAN_MIN_SAMPLES','HDBSCAN_EPSILON','HDBSCAN_METRIC','HDBSCAN_CLUSTER_SELECTION_METHOD','MIN_POINTS_FOR_CLUSTERING',
-                        'INDIVIDUAL_PLOT_DPI','COMPOSITE_PLOT_DPI','PLACEHOLDER_PLOT_DPI',
+                        'INDIVIDUAL_PLOT_DPI','PLACEHOLDER_PLOT_DPI',
                         'X_AXIS_MIN','X_AXIS_MAX','Y_AXIS_MIN','Y_AXIS_MAX','X_GRID_INTERVAL','Y_GRID_INTERVAL',
                         'BASE_TARGET_TOLERANCE','SCALE_FACTOR_MIN','SCALE_FACTOR_MAX','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','TOLERANCE_MULTIPLIER'
                     ]
@@ -679,7 +793,10 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                                     'well': well_id,
                                     'sample_name': sample_name,
                                     'droplet_count': total_droplets,
-                                    'has_data': has_data
+                                    'has_data': has_data,
+                                    'has_buffer_zone': bool(result.get('has_buffer_zone', False)),
+                                    'has_aneuploidy': bool(result.get('has_aneuploidy', False)),
+                                    'error': result.get('error')
                                 }
                                 
                                 print(f'WELL_COMPLETED:{json.dumps(well_info)}')
@@ -718,15 +835,6 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     
                     print(f'ANALYSIS_COMPLETE: Processed {len(results)} files successfully')
                     
-                    # Generate composite overview plot in temporary directory
-                    if results:
-                        from ddquint.visualization import create_composite_image
-                        composite_path = os.path.join(temp_base, 'ddquint_composite_overview.png')
-                        try:
-                            create_composite_image(results, composite_path)
-                            print(f'COMPOSITE_READY:{composite_path}')
-                        except Exception as e:
-                            print(f'Error creating composite: {e}')
                     
                     # Extract well data for GUI
                     wells_data = []
@@ -888,11 +996,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             statusLabel.stringValue = "Progress: \(progressInfo) files processed"
         }
         else if trimmedLine.hasPrefix("ANALYSIS_COMPLETE:") {
-            statusLabel.stringValue = "Analysis complete - generating overview..."
-        }
-        else if trimmedLine.hasPrefix("COMPOSITE_READY:") {
-            let compositePath = String(trimmedLine.dropFirst("COMPOSITE_READY:".count))
-            handleCompositeReady(path: compositePath)
+            statusLabel.stringValue = "Analysis complete"
         }
         else if trimmedLine.hasPrefix("COMPLETE_RESULTS:") {
             let resultsJson = String(trimmedLine.dropFirst("COMPLETE_RESULTS:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -906,6 +1010,23 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                let wellName = result["well"] as? String {
                 print("🎯 FOUND UPDATED_RESULT in output parser for well: \(wellName)")
                 updateCachedResultForWell(wellName: wellName, resultJson: resultJson)
+                // Update the indicator immediately
+                if let idx = wellData.firstIndex(where: { $0.well == wellName }) {
+                    let newStatus = determineWellStatus(from: result, wellName: wellName)
+                    let edited = isWellEdited(wellName)
+                    let current = wellData[idx]
+                    wellData[idx] = WellData(well: current.well,
+                                              sampleName: current.sampleName,
+                                              dropletCount: current.dropletCount,
+                                              hasData: current.hasData,
+                                              status: newStatus,
+                                              isEdited: edited)
+                    applyFilters()
+                    if let filteredIdx = filteredWellData.firstIndex(where: { $0.well == wellName }) {
+                        let tableRow = (compositeImagePath != nil) ? filteredIdx + 1 : filteredIdx
+                        wellListView.reloadData(forRowIndexes: IndexSet(integer: tableRow), columnIndexes: IndexSet(integer: 0))
+                    }
+                }
             }
         }
         else if trimmedLine.hasPrefix("DEBUG:") {
@@ -934,22 +1055,18 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             cacheCompleteResults(resultsJson)
         }
         
-        // Check for composite plot creation
-        if let compositeStart = output.range(of: "COMPOSITE_READY:")?.upperBound {
-            let compositeLine = output[compositeStart...].components(separatedBy: .newlines)[0]
-            let compositePath = String(compositeLine).trimmingCharacters(in: .whitespacesAndNewlines)
-            print("🏁 Found composite path: \(compositePath)")
-            handleCompositeReady(path: compositePath)
-        }
         
         // Analysis complete - finalize UI
         progressIndicator.isHidden = true
         progressIndicator.stopAnimation(nil)
         
-        // Enable global parameters button now that analysis is complete
+        // Enable buttons now that analysis is complete
         globalParamsButton.isEnabled = true
+        exportExcelButton.isEnabled = true
+        exportPlotsButton.isEnabled = true
+        overviewButton.isEnabled = true
         
-        statusLabel.stringValue = "Analysis complete - \(wellData.count) wells processed"
+        statusLabel.stringValue = "Analysis complete"
         print("🏁 Analysis complete with \(wellData.count) wells")
         
         // Note: Complete results are cached by cacheCompleteResults() method when COMPLETE_RESULTS is received
@@ -976,6 +1093,22 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     cachedResults = completeResults
                     cacheTimestamp = Date()
                     print("✅ Cached \(cachedResults.count) complete analysis results for Excel export")
+                    // Also update indicators for all wells from final results
+                    var updated = false
+                    for (i, w) in wellData.enumerated() {
+                        if let r = cachedResults.first(where: { ($0["well"] as? String) == w.well }) {
+                            let st = determineWellStatus(from: r, wellName: w.well)
+                            let ed = isWellEdited(w.well)
+                            wellData[i] = WellData(well: w.well,
+                                                   sampleName: w.sampleName,
+                                                   dropletCount: w.dropletCount,
+                                                   hasData: w.hasData,
+                                                   status: st,
+                                                   isEdited: ed)
+                            updated = true
+                        }
+                    }
+                    if updated { applyFilters() }
                     
                     // Persist cache to disk
                     persistCacheToFile(folderURL: folderURL)
@@ -997,6 +1130,19 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         let sampleName = wellInfo["sample_name"] as? String ?? ""
         
+        // Determine status from WELL_COMPLETED payload if available; fall back to cache
+        var status: WellStatus = .euploid
+        var isEdited = isWellEdited(well)
+        if let err = wellInfo["error"] as? String, !err.isEmpty {
+            status = .warning
+        } else if let hb = wellInfo["has_buffer_zone"] as? Bool, hb {
+            status = .buffer
+        } else if let ha = wellInfo["has_aneuploidy"] as? Bool, ha {
+            status = .aneuploid
+        } else if let cachedResult = cachedResults.first(where: { ($0["well"] as? String) == well }) {
+            status = determineWellStatus(from: cachedResult, wellName: well)
+        }
+        
         // Avoid duplicate entries if both progressive handlers emit the same well
         if wellData.contains(where: { $0.well == well }) {
             // Update sample name/droplet count/hasData if changed, then refresh list preserving selection
@@ -1004,7 +1150,9 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                 wellData[idx] = WellData(well: well,
                                          sampleName: sampleName,
                                          dropletCount: dropletCount,
-                                         hasData: hasData)
+                                         hasData: hasData,
+                                         status: status,
+                                         isEdited: isEdited)
                 reloadWellListPreservingSelection()
             }
             return
@@ -1014,19 +1162,16 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             well: well,
             sampleName: sampleName,
             dropletCount: dropletCount,
-            hasData: hasData
+            hasData: hasData,
+            status: status,
+            isEdited: isEdited
         )
         
         // Add to well data, keep column-first ordering, and preserve selection
         wellData.append(wellEntry)
-        reloadWellListPreservingSelection()
+        applyFilters() // This will reload the table with filtered data
         
-        // Enable export/global buttons when the first well with data appears
-        if hasData && exportExcelButton.isEnabled == false {
-            exportExcelButton.isEnabled = true
-            exportPlotsButton.isEnabled = true
-            globalParamsButton.isEnabled = true
-        }
+        // Don't enable buttons here - wait until analysis is completely finished
         
         statusLabel.stringValue = "Processed \(wellData.count) wells..."
     }
@@ -1077,14 +1222,6 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
     
-    private func handleCompositeReady(path: String) {
-        compositeImagePath = path
-        
-        // Refresh the well list (adds Overview row) while preserving current selection
-        reloadWellListPreservingSelection()
-        
-        statusLabel.stringValue = "Overview plot ready"
-    }
     
     
     
@@ -1108,12 +1245,13 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         }
         writeDebugLog("DEBUG WELL SORTING: After sort - wells: \(wellData.map { $0.well })")
         
-        statusLabel.stringValue = "Analysis complete - \(wellData.count) wells processed"
+        statusLabel.stringValue = "Analysis complete"
         
         // Enable buttons
         globalParamsButton.isEnabled = true
         exportExcelButton.isEnabled = true
         exportPlotsButton.isEnabled = true
+        overviewButton.isEnabled = true
         
         // Reload table
         wellListView.reloadData()
@@ -1128,28 +1266,21 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
     
-    // MARK: - Zoom Configuration
+    // MARK: - Plot Scaling
     
-    private func configureZoomForImage(_ image: NSImage) {
-        // Note: NSScrollView scrolling is always enabled
+    private func ensurePlotFillsArea() {
+        // Force the image view to update its layout and ensure it fills the container
+        plotClickView.needsLayout = true
+        plotImageView.needsLayout = true
         
-        // Set the image view frame to the natural image size
-        plotImageView.frame = NSRect(origin: .zero, size: image.size)
+        // Force layout update
+        plotClickView.layoutSubtreeIfNeeded()
         
-        // Calculate the scale to fit the image within the scroll view with no scroll bars
-        let scrollViewSize = plotScrollView.frame.size
-        let imageSize = image.size
-        
-        let widthScale = scrollViewSize.width / imageSize.width
-        let heightScale = scrollViewSize.height / imageSize.height
-        let fitScale = min(widthScale, heightScale)
-        
-        // Set zoom to fit exactly without scroll bars
-        plotScrollView.minMagnification = 0.1  // Allow zooming out very far
-        plotScrollView.maxMagnification = 10.0  // Allow zooming in very far
-        plotScrollView.magnification = fitScale  // Start at fit-to-view scale
-        
-        print("🔍 Zoom configured - Image: \(imageSize), ScrollView: \(scrollViewSize), FitScale: \(fitScale)")
+        print("🖼️ Plot area size: \(plotClickView.bounds.size)")
+        print("🖼️ Image view size: \(plotImageView.bounds.size)")
+        if let image = plotImageView.image {
+            print("🖼️ Image size: \(image.size)")
+        }
     }
     
     // MARK: - Plot Loading
@@ -1297,7 +1428,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             
             if let image = NSImage(contentsOfFile: plotPath) {
                 plotImageView.image = image
-                configureZoomForImage(image)
+                ensurePlotFillsArea()
                 statusLabel.stringValue = "Showing plot for \(well)"
             } else {
                 showPlaceholderImage()
@@ -1307,6 +1438,15 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             showPlaceholderImage()
             statusLabel.stringValue = "No data available for \(well)"
         } else {
+            // Fallback: try to regenerate this well's plot from CSV if available
+            if let folder = selectedFolderURL {
+                let csvFiles = findCSVFiles(in: folder)
+                if let csv = csvFiles.first(where: { $0.lastPathComponent.contains(well) }) {
+                    statusLabel.stringValue = "Generating plot for \(well)"
+                    applyParametersAndRegeneratePlot(wellName: well, parameters: wellParametersMap[well] ?? [:])
+                    return
+                }
+            }
             showPlaceholderImage()
             statusLabel.stringValue = "Could not generate plot for \(well)"
         }
@@ -1433,6 +1573,13 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         restoreButton.translatesAutoresizingMaskIntoConstraints = false
         restoreButton.bezelStyle = .rounded
         
+        var resetButton: NSButton?
+        if !isGlobal {
+            resetButton = NSButton(title: "Reset Parameters", target: self, action: #selector(resetWellParameters))
+            resetButton!.translatesAutoresizingMaskIntoConstraints = false
+            resetButton!.bezelStyle = .rounded
+        }
+        
         let cancelButton = NSButton(title: "Cancel", target: self, action: isGlobal ? #selector(closeGlobalParameterWindow) : #selector(closeWellParameterWindow))
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
         cancelButton.bezelStyle = .rounded
@@ -1443,6 +1590,9 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         saveButton.keyEquivalent = "\r"
         
         buttonContainer.addSubview(restoreButton)
+        if let resetButton = resetButton {
+            buttonContainer.addSubview(resetButton)
+        }
         buttonContainer.addSubview(cancelButton)
         buttonContainer.addSubview(saveButton)
         
@@ -1452,13 +1602,13 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             tabView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
             tabView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             tabView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            tabView.bottomAnchor.constraint(equalTo: buttonContainer.topAnchor, constant: -20),
+            tabView.bottomAnchor.constraint(equalTo: buttonContainer.topAnchor, constant: -10),
             
             // Button container constraints
             buttonContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             buttonContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            buttonContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
-            buttonContainer.heightAnchor.constraint(equalToConstant: 40),
+            buttonContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
+            buttonContainer.heightAnchor.constraint(equalToConstant: 32),
             
             // Button constraints
             restoreButton.leadingAnchor.constraint(equalTo: buttonContainer.leadingAnchor),
@@ -1476,6 +1626,16 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             saveButton.widthAnchor.constraint(equalToConstant: 120),
             saveButton.heightAnchor.constraint(equalToConstant: 32)
         ])
+        
+        // Add reset button constraints if it exists
+        if let resetButton = resetButton {
+            NSLayoutConstraint.activate([
+                resetButton.leadingAnchor.constraint(equalTo: restoreButton.trailingAnchor, constant: 10),
+                resetButton.centerYAnchor.constraint(equalTo: buttonContainer.centerYAnchor),
+                resetButton.widthAnchor.constraint(equalToConstant: 130),
+                resetButton.heightAnchor.constraint(equalToConstant: 32)
+            ])
+        }
         
         // Store window reference before showing
         if isGlobal {
@@ -1507,7 +1667,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         let scrollView = NSScrollView()
         let view = NSView()
         
-        var yPos: CGFloat = 450
+        var yPos: CGFloat = 500
         let fieldHeight: CGFloat = 24
         let spacing: CGFloat = 30
         
@@ -1542,7 +1702,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
             // Use parameter value if available, otherwise leave empty (no hardcoded defaults)
             if let paramValue = parameters[identifier] {
-                paramField.stringValue = String(describing: paramValue)
+                paramField.stringValue = formatParamValue(paramValue)
                 print("🎯 Set field \(identifier) = \(paramValue)")
             } else {
                 paramField.stringValue = ""
@@ -1626,7 +1786,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         let scrollView = NSScrollView()
         let view = NSView()
         
-        var yPos: CGFloat = 480
+        var yPos: CGFloat = 500
         let fieldHeight: CGFloat = 24
         let spacing: CGFloat = 30
         
@@ -1648,7 +1808,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         // Centroid entries
         let targets = ["Negative", "Chrom1", "Chrom2", "Chrom3", "Chrom4", "Chrom5"]
         
-        for (i, target) in targets.enumerated() {
+        for (_, target) in targets.enumerated() {
             let targetLabel = NSTextField(labelWithString: "\(target):")
             targetLabel.frame = NSRect(x: 40, y: yPos, width: 120, height: fieldHeight)
             
@@ -1698,7 +1858,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                 paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
                 // Use parameter value if available, otherwise leave empty
                 if let paramValue = parameters[identifier] {
-                    paramField.stringValue = String(describing: paramValue)
+                    paramField.stringValue = formatParamValue(paramValue)
                     print("🎯 Set field \(identifier) = \(paramValue)")
                 } else {
                     paramField.stringValue = ""
@@ -1735,7 +1895,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         let scrollView = NSScrollView()
         let view = NSView()
         
-        var yPos: CGFloat = 440
+        var yPos: CGFloat = 500
         let fieldHeight: CGFloat = 24
         let spacing: CGFloat = 30
         
@@ -1770,7 +1930,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
             // Use parameter value if available, otherwise leave empty
             if let paramValue = parameters[identifier] {
-                paramField.stringValue = String(describing: paramValue)
+                paramField.stringValue = formatParamValue(paramValue)
                 print("🎯 Set field \(identifier) = \(paramValue)")
             } else {
                 paramField.stringValue = ""
@@ -1827,7 +1987,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
                     print("⚪ Aneuploidy field \(identifier) has no parameter value, leaving empty")
                 }
             } else if let paramValue = parameters[identifier] {
-                paramField.stringValue = String(describing: paramValue)
+                paramField.stringValue = formatParamValue(paramValue)
                 print("🎯 Set field \(identifier) = \(paramValue)")
             } else {
                 paramField.stringValue = ""
@@ -1922,7 +2082,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         // Set proper view size with padding - ensure all content is visible
         let contentHeight = 480 - yPos + 40  // Total content height from top to bottom element
-        var finalHeight = max(contentHeight, 600)  // Ensure sufficient minimum height
+        let finalHeight = max(contentHeight, 600)  // Ensure sufficient minimum height
         print("📏 Copy Number view: final yPos = \(yPos), contentHeight = \(contentHeight), finalHeight = \(finalHeight)")
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
 
@@ -1959,7 +2119,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         let scrollView = NSScrollView()
         let view = NSView()
         
-        var yPos: CGFloat = 380
+        var yPos: CGFloat = 500
         let fieldHeight: CGFloat = 24
         let spacing: CGFloat = 30
         
@@ -2002,7 +2162,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
             // Use parameter value if available, otherwise leave empty
             if let paramValue = parameters[identifier] {
-                paramField.stringValue = String(describing: paramValue)
+                paramField.stringValue = formatParamValue(paramValue)
                 print("🎯 Set field \(identifier) = \(paramValue)")
             } else {
                 paramField.stringValue = ""
@@ -2022,15 +2182,14 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         // DPI Settings
         yPos -= 20
-        let dpiLabel = NSTextField(labelWithString: "Plot Resolution (DPI)")
+        let dpiLabel = NSTextField(labelWithString: "Resolution")
         dpiLabel.font = NSFont.boldSystemFont(ofSize: 14)
         dpiLabel.frame = NSRect(x: 20, y: yPos, width: 200, height: 20)
         view.addSubview(dpiLabel)
         yPos -= 40
         
         let dpiParams = [
-            ("INDIVIDUAL_PLOT_DPI", "Individual Plot DPI:", "", "Resolution for individual well plots"),
-            ("COMPOSITE_PLOT_DPI", "Composite Plot DPI:", "", "Resolution for composite overview plots")
+            ("INDIVIDUAL_PLOT_DPI", "Plot DPI:", "", "Resolution for individual well plots")
         ]
         
         for (identifier, label, _, tooltip) in dpiParams {
@@ -2041,7 +2200,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
             // Use parameter value if available, otherwise leave empty
             if let paramValue = parameters[identifier] {
-                paramField.stringValue = String(describing: paramValue)
+                paramField.stringValue = formatParamValue(paramValue)
                 print("🎯 Set field \(identifier) = \(paramValue)")
             } else {
                 paramField.stringValue = ""
@@ -2061,7 +2220,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         
         // Set proper view size with padding and top-align content to avoid empty space at top
         let contentHeight = 350 - yPos + 40
-        var finalHeight = max(contentHeight, 600)  // Ensure sufficient minimum height so top stays aligned
+        let finalHeight = max(contentHeight, 400)  // Reduced minimum height to fit in window
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
 
         let topMargin: CGFloat = 20
@@ -2158,6 +2317,42 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         print("✅ Well defaults restoration completed with \(defaultParams.count) parameters")
     }
     
+    @objc private func resetWellParameters() {
+        guard selectedWellIndex >= 0 && selectedWellIndex < wellData.count else { 
+            print("❌ No valid well selected")
+            return 
+        }
+        
+        let well = wellData[selectedWellIndex]
+        print("🔄 Resetting parameters for well \(well.well)")
+        
+        // Remove well-specific parameters so it falls back to global defaults
+        if wellParametersMap[well.well] != nil {
+            wellParametersMap.removeValue(forKey: well.well)
+            print("✅ Removed well-specific parameters for \(well.well)")
+            
+            // Close the parameter window
+            if let window = currentWellWindow {
+                window.close()
+                currentWellWindow = nil
+            }
+            
+            statusLabel.stringValue = "Well \(well.well) reset to global parameters"
+            
+            // Regenerate the plot with global parameters
+            if let folder = selectedFolderURL {
+                let csvFiles = findCSVFiles(in: folder)
+                if csvFiles.first(where: { $0.lastPathComponent.contains(well.well) }) != nil {
+                    statusLabel.stringValue = "Regenerating plot for \(well.well) with global parameters..."
+                    applyParametersAndRegeneratePlot(wellName: well.well, parameters: [:])
+                }
+            }
+        } else {
+            print("ℹ️ Well \(well.well) already using global parameters")
+            statusLabel.stringValue = "Well \(well.well) already using global parameters"
+        }
+    }
+    
     @objc private func saveWellParameters() {
         guard let window = currentWellWindow else { return }
         
@@ -2196,6 +2391,15 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
             wellParametersMap[well.well] = parameters
             print("✅ Saved \(parameters.count) parameters for well \(well.well): \(parameters.keys.sorted())")
             print("   wellParametersMap now has \(wellParametersMap.count) entries: \(Array(wellParametersMap.keys).sorted())")
+            // Mark as edited in our table model and refresh row
+            let current = wellData[selectedWellIndex]
+            wellData[selectedWellIndex] = WellData(well: current.well,
+                                                   sampleName: current.sampleName,
+                                                   dropletCount: current.dropletCount,
+                                                   hasData: current.hasData,
+                                                   status: current.status,
+                                                   isEdited: true)
+            applyFilters()
             
             // Apply parameters and re-process the specific well
             applyParametersAndRegeneratePlot(wellName: well.well, parameters: parameters)
@@ -2521,7 +2725,6 @@ defaults = {
     'X_GRID_INTERVAL': 500,
     'Y_GRID_INTERVAL': 1000,
     'INDIVIDUAL_PLOT_DPI': 300,
-    'COMPOSITE_PLOT_DPI': 200,
     'PLACEHOLDER_PLOT_DPI': 150,
     'COMPOSITE_FIGURE_SIZE': [16, 11],
     'INDIVIDUAL_FIGURE_SIZE': [6, 5],
@@ -2808,9 +3011,11 @@ print(json.dumps(defaults))
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.spreadsheet]
         savePanel.nameFieldStringValue = "ddQuint_Results.xlsx"
+        if let last = lastURL(for: "LastDir.ExcelExport") { savePanel.directoryURL = last }
         
         let response = savePanel.runModal()
         if response == .OK, let saveURL = savePanel.url {
+            setLastURL(saveURL.deletingLastPathComponent(), for: "LastDir.ExcelExport")
             exportExcelFile(to: saveURL, sourceFolder: folderURL)
         }
     }
@@ -2822,11 +3027,13 @@ print(json.dumps(defaults))
         openPanel.canChooseFiles = false
         openPanel.canChooseDirectories = true
         openPanel.allowsMultipleSelection = false
+        if let last = lastURL(for: "LastDir.PlotsExport") { openPanel.directoryURL = last }
         openPanel.prompt = "Select Export Folder"
         openPanel.message = "Choose a folder to export all plots"
         
         let response = openPanel.runModal()
         if response == .OK, let exportURL = openPanel.url {
+            setLastURL(exportURL, for: "LastDir.PlotsExport")
             exportAllPlots(to: exportURL, sourceFolder: folderURL)
         }
     }
@@ -2897,11 +3104,6 @@ print(json.dumps(defaults))
                         self?.statusLabel.stringValue = "Processing \(count) wells..."
                     }
                 }
-            } else if line.hasPrefix("COMPOSITE_READY:") {
-                let compositePath = String(line.dropFirst("COMPOSITE_READY:".count))
-                DispatchQueue.main.async { [weak self] in
-                    self?.handleCompositeReady(path: compositePath)
-                }
             } else if line.hasPrefix("COMPLETE_RESULTS:") {
                 let resultsJson = String(line.dropFirst("COMPLETE_RESULTS:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
                 print("🎯 FOUND COMPLETE_RESULTS in progressive output: \(resultsJson.prefix(100))...")
@@ -2940,7 +3142,16 @@ print(json.dumps(defaults))
     // MARK: - Cache Management
     
     private func getCacheFilePath(folderURL: URL) -> URL {
-        return folderURL.appendingPathComponent("ddQuint_results_cache.json")
+        let ddquintDir = folderURL.appendingPathComponent(".ddQuint")
+        
+        // Ensure .ddQuint directory exists
+        do {
+            try FileManager.default.createDirectory(at: ddquintDir, withIntermediateDirectories: true, attributes: nil)
+        } catch {
+            print("Warning: Could not create .ddQuint directory: \(error)")
+        }
+        
+        return ddquintDir.appendingPathComponent("results_cache.json")
     }
     
     private func persistCacheToFile(folderURL: URL) {
@@ -3165,11 +3376,15 @@ print(json.dumps(defaults))
             // The parameters are already stored in wellParametersMap[wellName]
             
             // Update the well data to reflect that it has custom parameters
+            let currentWell = wellData[wellIndex]
+            let status = cachedResults.first(where: { ($0["well"] as? String) == currentWell.well }).map { determineWellStatus(from: $0, wellName: currentWell.well) } ?? WellStatus.euploid
             wellData[wellIndex] = WellData(
-                well: wellData[wellIndex].well,
-                sampleName: wellData[wellIndex].sampleName,
-                dropletCount: wellData[wellIndex].dropletCount,
-                hasData: wellData[wellIndex].hasData
+                well: currentWell.well,
+                sampleName: currentWell.sampleName,
+                dropletCount: currentWell.dropletCount,
+                hasData: currentWell.hasData,
+                status: status,
+                isEdited: true // This well now has custom parameters
             )
         }
         
@@ -3207,6 +3422,7 @@ print(json.dumps(defaults))
         
         // Clear existing data and restart analysis
         wellData.removeAll()
+        filteredWellData.removeAll()
         wellListView.reloadData()
         showPlaceholderImage()
         
@@ -3279,6 +3495,15 @@ print(json.dumps(defaults))
                 import sys, os, tempfile, json, logging
                 sys.path.insert(0, '\(escapedDDQuintPath)')
                 
+                # Force regeneration by removing existing plot file FIRST
+                temp_base = tempfile.gettempdir()
+                graphs_dir = os.path.join(temp_base, 'ddquint_analysis_plots')
+                os.makedirs(graphs_dir, exist_ok=True)
+                existing_plot = os.path.join(graphs_dir, '\(wellName).png')
+                if os.path.exists(existing_plot):
+                    os.remove(existing_plot)
+                    print(f'EARLY_REMOVAL: Removed existing plot file to force regeneration: {existing_plot}')
+                
                 try:
                     # Initialize logging to capture debug output
                     from ddquint.config.logging_config import setup_logging
@@ -3331,11 +3556,6 @@ print(json.dumps(defaults))
                         print('No custom parameters file found or file does not exist')
                     
                     config.finalize_colors()
-                    
-                    # Use same temp directory as main analysis
-                    temp_base = tempfile.gettempdir()
-                    graphs_dir = os.path.join(temp_base, 'ddquint_analysis_plots')
-                    os.makedirs(graphs_dir, exist_ok=True)
                     
                     # Get sample names using explicit template path if available
                     folder_path = os.path.dirname('\(escapedCSVPath)')
@@ -3419,25 +3639,52 @@ print(json.dumps(defaults))
             process.standardError = outputPipe
             
             do {
+                self?.writeDebugLog("🔧 REGEN: Starting process...")
                 try process.run()
-                process.waitUntilExit()
+                self?.writeDebugLog("🔧 REGEN: Process started, waiting for completion...")
                 
-                let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                
-                DispatchQueue.main.async { [weak self] in
-                    self?.hideCornerSpinner()
-                    self?.writeDebugLog("🔧 REGEN_OUTPUT: Raw output length: \(output.count) characters")
-                    self?.writeDebugLog("🔧 REGEN_OUTPUT: First 500 chars: \(String(output.prefix(500)))")
-                    self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains PLOT_CREATED: \(output.contains("PLOT_CREATED"))")
-                    self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains UPDATED_RESULT: \(output.contains("UPDATED_RESULT"))")
-                    self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains ERROR: \(output.contains("ERROR"))")
-                    // Process immediately since we're using the same approach as working functions
-                    self?.handleWellRegenerationResult(output: output, wellName: wellName)
+                // Add timeout handling
+                DispatchQueue.global(qos: .userInitiated).async {
+                    process.waitUntilExit()
+                    
+                    let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: data, encoding: .utf8) ?? ""
+                    
+                    DispatchQueue.main.async { [weak self] in
+                        self?.hideCornerSpinner()
+                        self?.writeDebugLog("🔧 REGEN: Process completed with exit code: \(process.terminationStatus)")
+                        self?.writeDebugLog("🔧 REGEN_OUTPUT: Raw output length: \(output.count) characters")
+                        self?.writeDebugLog("🔧 REGEN_OUTPUT: First 500 chars: \(String(output.prefix(500)))")
+                        self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains EARLY_REMOVAL: \(output.contains("EARLY_REMOVAL"))")
+                        self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains PLOT_CREATED: \(output.contains("PLOT_CREATED"))")
+                        self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains UPDATED_RESULT: \(output.contains("UPDATED_RESULT"))")
+                        self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains ERROR: \(output.contains("ERROR"))")
+                        
+                        // Check for exit code errors
+                        if process.terminationStatus != 0 {
+                            self?.writeDebugLog("🔧 REGEN_ERROR: Process failed with exit code \(process.terminationStatus)")
+                            self?.showError("Plot regeneration failed with exit code \(process.terminationStatus)")
+                        }
+                        
+                        // Process the output
+                        self?.handleWellRegenerationResult(output: output, wellName: wellName)
+                    }
                 }
+                
+                // Add timeout mechanism - increased from 30 to 60 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+                    if process.isRunning {
+                        self?.writeDebugLog("🔧 REGEN_TIMEOUT: Process timed out after 60 seconds, terminating...")
+                        process.terminate()
+                        self?.hideCornerSpinner()
+                        self?.showError("Plot regeneration timed out after 60 seconds")
+                    }
+                }
+                
             } catch {
                 DispatchQueue.main.async { [weak self] in
                     self?.hideCornerSpinner()
+                    self?.writeDebugLog("🔧 REGEN_ERROR: Failed to start process: \(error)")
                     self?.showError("Failed to regenerate plot: \(error.localizedDescription)")
                 }
             }
@@ -3458,6 +3705,26 @@ print(json.dumps(defaults))
             let resultJson = remainingOutput.components(separatedBy: .newlines).first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !resultJson.isEmpty {
                 updateCachedResultForWell(wellName: wellName, resultJson: resultJson)
+                // Update wellData status based on new result
+                if let data = resultJson.data(using: .utf8),
+                   let resultObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let idx = wellData.firstIndex(where: { $0.well == wellName }) {
+                    let newStatus = determineWellStatus(from: resultObj, wellName: wellName)
+                    let edited = isWellEdited(wellName)
+                    let current = wellData[idx]
+                    wellData[idx] = WellData(well: current.well,
+                                              sampleName: current.sampleName,
+                                              dropletCount: current.dropletCount,
+                                              hasData: current.hasData,
+                                              status: newStatus,
+                                              isEdited: edited)
+                    applyFilters()
+                    // Reload specific row if still visible
+                    if let filteredIdx = filteredWellData.firstIndex(where: { $0.well == wellName }) {
+                        let tableRow = (compositeImagePath != nil) ? filteredIdx + 1 : filteredIdx
+                        wellListView.reloadData(forRowIndexes: IndexSet(integer: tableRow), columnIndexes: IndexSet(integer: 0))
+                    }
+                }
             } else {
                 print("⚠️ Empty result JSON for well \(wellName)")
             }
@@ -3483,7 +3750,7 @@ print(json.dumps(defaults))
                 if let image = NSImage(contentsOfFile: firstLineOnly) {
                     writeDebugLog("Successfully loaded image from: \(firstLineOnly)")
                     plotImageView.image = image
-                    configureZoomForImage(image)
+                    ensurePlotFillsArea()
                     statusLabel.stringValue = "Plot regenerated for \(wellName) with new parameters"
                     
                     // Refresh the well list to show any visual changes from regeneration
@@ -3921,35 +4188,12 @@ print(json.dumps(defaults))
         // Clear caches and restart
         invalidateCache()
         wellData.removeAll()
+        filteredWellData.removeAll()
         wellListView.reloadData()
         showPlaceholderImage()
         startAnalysis(folderURL: folderURL)
     }
     
-    func exportPlateOverview() {
-        guard let folderURL = selectedFolderURL else {
-            showError("No data folder selected. Please analyze a folder first.")
-            return
-        }
-        
-        guard isAnalysisComplete else {
-            showError("Analysis not complete. Please wait for analysis to finish.")
-            return
-        }
-        
-        let savePanel = NSSavePanel()
-        savePanel.title = "Export Plate Overview"
-        savePanel.prompt = "Export"
-        savePanel.allowedContentTypes = [.png]
-        savePanel.nameFieldStringValue = "plate_overview.png"
-        savePanel.message = "Choose where to save the plate overview image"
-        
-        let response = savePanel.runModal()
-        if response == .OK, let saveURL = savePanel.url {
-            exportPlateOverviewToFile(saveURL: saveURL, sourceFolder: folderURL)
-        }
-    }
-
     // MARK: - Export/Import Parameters Bundle
     
     func exportParametersBundle() {
@@ -3968,9 +4212,11 @@ print(json.dumps(defaults))
         savePanel.prompt = "Export"
         savePanel.allowedContentTypes = [.json]
         savePanel.nameFieldStringValue = "ddQuint_parameters.json"
+        if let last = lastURL(for: "LastDir.ParametersExport") { savePanel.directoryURL = last }
         
         let response = savePanel.runModal()
         if response == .OK, let url = savePanel.url {
+            setLastURL(url.deletingLastPathComponent(), for: "LastDir.ParametersExport")
             do {
                 let data = try JSONSerialization.data(withJSONObject: bundle, options: .prettyPrinted)
                 try data.write(to: url)
@@ -3988,11 +4234,13 @@ print(json.dumps(defaults))
         openPanel.canChooseDirectories = false
         openPanel.allowsMultipleSelection = false
         openPanel.allowedContentTypes = [.json]
+        if let last = lastURL(for: "LastDir.ParametersImport") { openPanel.directoryURL = last }
         openPanel.prompt = "Load"
         openPanel.message = "Choose a ddQuint parameters JSON file"
         
         let response = openPanel.runModal()
         guard response == .OK, let url = openPanel.url else { return }
+        setLastURL(url.deletingLastPathComponent(), for: "LastDir.ParametersImport")
         
         do {
             let data = try Data(contentsOf: url)
@@ -4045,122 +4293,7 @@ print(json.dumps(defaults))
         templateDesigner?.window?.makeKeyAndOrderFront(nil)
     }
     
-    private func exportPlateOverviewToFile(saveURL: URL, sourceFolder: URL) {
-        statusLabel.stringValue = "Exporting plate overview..."
-        
-        guard let pythonPath = findPython(),
-              let ddquintPath = findDDQuint() else {
-            showError("Python or ddQuint not found")
-            return
-        }
-        
-        DispatchQueue.global().async { [weak self] in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: pythonPath)
-            
-            // Hide matplotlib windows from dock
-            process.environment = (process.environment ?? ProcessInfo.processInfo.environment).merging([
-                "MPLBACKEND": "Agg",
-                "PYTHONDONTWRITEBYTECODE": "1"
-            ]) { _, new in new }
-            
-            let escapedSourcePath = sourceFolder.path.replacingOccurrences(of: "'", with: "\\'")
-            let escapedSavePath = saveURL.path.replacingOccurrences(of: "'", with: "\\'")
-            let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
-            
-            process.arguments = [
-                "-c",
-                """
-                import sys
-                import traceback
-                
-                try:
-                    sys.path.insert(0, '\(escapedDDQuintPath)')
-                    
-                    # Initialize config properly
-                    from ddquint.config import Config
-                    from ddquint.utils.parameter_editor import load_parameters_if_exist
-                    
-                    config = Config.get_instance()
-                    load_parameters_if_exist(Config)
-                    config.finalize_colors()
-                    
-                    # Import modules
-                    from ddquint.core import process_directory
-                    from ddquint.utils import get_sample_names
-                    from ddquint.visualization import create_composite_image
-                    
-                    # Simply copy existing composite overview (no need to regenerate)
-                    import os
-                    import shutil
-                    
-                    # Look for existing composite overview in temp directory
-                    import tempfile
-                    temp_base = tempfile.gettempdir()
-                    existing_composite = os.path.join(temp_base, 'ddquint_composite_overview.png')
-                    
-                    if os.path.exists(existing_composite):
-                        # Copy the existing composite plot
-                        shutil.copy2(existing_composite, '\(escapedSavePath)')
-                        print('OVERVIEW_EXPORT_SUCCESS')
-                    else:
-                        print('No composite plot found in temp directory. Please run analysis first.')
-                        sys.exit(1)
-                    
-                except Exception as e:
-                    print(f'EXPORT_ERROR: {e}')
-                    traceback.print_exc()
-                    sys.exit(1)
-                """
-            ]
-            
-            let outputPipe = Pipe()
-            process.standardOutput = outputPipe
-            
-            do {
-                try process.run()
-                process.waitUntilExit()
-                
-                let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: outputData, encoding: .utf8) ?? ""
-                
-                DispatchQueue.main.async {
-                    if output.contains("OVERVIEW_EXPORT_SUCCESS") {
-                        self?.statusLabel.stringValue = "Plate overview exported successfully"
-                        NSWorkspace.shared.activateFileViewerSelecting([saveURL])
-                    } else {
-                        self?.statusLabel.stringValue = "Plate overview export failed"
-                        self?.showError("Failed to export plate overview")
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self?.statusLabel.stringValue = "Plate overview export failed"
-                    self?.showError("Failed to run plate overview export: \(error)")
-                }
-            }
-        }
-    }
     
-    private func loadCompositeOverview() {
-        guard let compositePath = compositeImagePath else { return }
-        
-        statusLabel.stringValue = "Loading plate overview..."
-        
-        DispatchQueue.global().async { [weak self] in
-            if let image = NSImage(contentsOfFile: compositePath) {
-                DispatchQueue.main.async {
-                    self?.plotImageView.image = image
-                    self?.configureZoomForImage(image)
-                    self?.statusLabel.stringValue = "Plate overview loaded"
-                }
-            } else {
-                DispatchQueue.main.async {
-                    self?.statusLabel.stringValue = "Failed to load plate overview"
-                }
-            }
-        }
-    }
 }
 
 // MARK: - Table View Data Source & Delegate
@@ -4168,80 +4301,75 @@ print(json.dumps(defaults))
 extension InteractiveMainWindowController: NSTableViewDataSource, NSTableViewDelegate {
     
     func numberOfRows(in tableView: NSTableView) -> Int {
-        // Add 1 for Overview item if composite image is available
-        let baseCount = wellData.count
-        return compositeImagePath != nil ? baseCount + 1 : baseCount
+        return filteredWellData.count
     }
     
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cellView = NSTableCellView()
         
-        // Check if this is the Overview row (first row when composite is available)
-        if compositeImagePath != nil && row == 0 {
-            let textField = NSTextField()
-            textField.isBordered = false
-            textField.isEditable = false
-            textField.backgroundColor = .clear
-            textField.stringValue = "📊 Overview (Plate Layout)"
-            textField.textColor = .systemBlue
-            textField.font = NSFont.boldSystemFont(ofSize: 13)
+        guard row < filteredWellData.count else { return nil }
+        let well = filteredWellData[row]
+        
+        // Create well ID label (left side)
+        let wellIdLabel = NSTextField()
+        wellIdLabel.isBordered = false
+        wellIdLabel.isEditable = false
+        wellIdLabel.backgroundColor = .clear
+        wellIdLabel.stringValue = well.well
+        wellIdLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+        wellIdLabel.textColor = well.hasData ? .controlTextColor : .secondaryLabelColor
+        
+        // Create status indicator
+        let statusIndicator = WellStatusIndicatorView(frame: NSRect(x: 0, y: 0, width: 12, height: 12))
+        statusIndicator.status = well.status
+        statusIndicator.isEdited = well.isEdited
+        
+        cellView.addSubview(wellIdLabel)
+        cellView.addSubview(statusIndicator)
+        wellIdLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusIndicator.translatesAutoresizingMaskIntoConstraints = false
+        
+        // Create sample name label (right side) if there's a sample name
+        if !well.sampleName.isEmpty {
+            let sampleLabel = NSTextField()
+            sampleLabel.isBordered = false
+            sampleLabel.isEditable = false
+            sampleLabel.backgroundColor = .clear
+            sampleLabel.stringValue = well.sampleName
+            sampleLabel.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            sampleLabel.textColor = well.hasData ? .secondaryLabelColor : .tertiaryLabelColor
+            sampleLabel.alignment = .right
             
-            cellView.addSubview(textField)
-            textField.translatesAutoresizingMaskIntoConstraints = false
+            cellView.addSubview(sampleLabel)
+            sampleLabel.translatesAutoresizingMaskIntoConstraints = false
+            
             NSLayoutConstraint.activate([
-                textField.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                textField.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-                textField.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
+                wellIdLabel.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
+                wellIdLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                wellIdLabel.widthAnchor.constraint(equalToConstant: 36),
+                
+                statusIndicator.leadingAnchor.constraint(equalTo: wellIdLabel.trailingAnchor, constant: 0),
+                statusIndicator.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                statusIndicator.widthAnchor.constraint(equalToConstant: 12),
+                statusIndicator.heightAnchor.constraint(equalToConstant: 12),
+                
+                sampleLabel.leadingAnchor.constraint(equalTo: statusIndicator.trailingAnchor, constant: 8),
+                sampleLabel.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
+                sampleLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
             ])
         } else {
-            // Regular well data - adjust index if Overview is present
-            let wellIndex = compositeImagePath != nil ? row - 1 : row
-            guard wellIndex < wellData.count else { return nil }
-            
-            let well = wellData[wellIndex]
-            
-            // Create well ID label (left side)
-            let wellIdLabel = NSTextField()
-            wellIdLabel.isBordered = false
-            wellIdLabel.isEditable = false
-            wellIdLabel.backgroundColor = .clear
-            wellIdLabel.stringValue = well.well
-            wellIdLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
-            wellIdLabel.textColor = well.hasData ? .controlTextColor : .secondaryLabelColor
-            
-            cellView.addSubview(wellIdLabel)
-            wellIdLabel.translatesAutoresizingMaskIntoConstraints = false
-            
-            // Create sample name label (right side) if there's a sample name
-            if !well.sampleName.isEmpty {
-                let sampleLabel = NSTextField()
-                sampleLabel.isBordered = false
-                sampleLabel.isEditable = false
-                sampleLabel.backgroundColor = .clear
-                sampleLabel.stringValue = well.sampleName
-                sampleLabel.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-                sampleLabel.textColor = well.hasData ? .secondaryLabelColor : .tertiaryLabelColor
-                sampleLabel.alignment = .right
+            NSLayoutConstraint.activate([
+                wellIdLabel.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
+                wellIdLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                wellIdLabel.widthAnchor.constraint(equalToConstant: 36),
                 
-                cellView.addSubview(sampleLabel)
-                sampleLabel.translatesAutoresizingMaskIntoConstraints = false
+                statusIndicator.leadingAnchor.constraint(equalTo: wellIdLabel.trailingAnchor, constant: 0),
+                statusIndicator.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
+                statusIndicator.widthAnchor.constraint(equalToConstant: 12),
+                statusIndicator.heightAnchor.constraint(equalToConstant: 12),
                 
-                NSLayoutConstraint.activate([
-                    wellIdLabel.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                    wellIdLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                    wellIdLabel.widthAnchor.constraint(equalToConstant: 50),
-                    
-                    sampleLabel.leadingAnchor.constraint(equalTo: wellIdLabel.trailingAnchor, constant: 8),
-                    sampleLabel.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-                    sampleLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
-                ])
-            } else {
-                NSLayoutConstraint.activate([
-                    wellIdLabel.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                    wellIdLabel.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-                    wellIdLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
-                ])
-            }
+                statusIndicator.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: -4)
+            ])
         }
         
         return cellView
@@ -4251,15 +4379,12 @@ extension InteractiveMainWindowController: NSTableViewDataSource, NSTableViewDel
         let selectedRow = wellListView.selectedRow
         print("Well selection changed to row: \(selectedRow)")
         
-        // Check if Overview is selected (first row when composite is available)
-        if compositeImagePath != nil && selectedRow == 0 {
-            loadCompositeOverview()
-        } else {
-            // Regular well selection - adjust index if Overview is present
-            let wellIndex = compositeImagePath != nil ? selectedRow - 1 : selectedRow
-            if wellIndex >= 0 && wellIndex < wellData.count {
-                selectedWellIndex = wellIndex
-                print("Loading plot for well: \(wellData[wellIndex].well)")
+        if selectedRow >= 0 && selectedRow < filteredWellData.count {
+            let selectedWell = filteredWellData[selectedRow]
+            // Find the original index in wellData
+            if let originalIndex = wellData.firstIndex(where: { $0.well == selectedWell.well }) {
+                selectedWellIndex = originalIndex
+                print("Loading plot for well: \(selectedWell.well)")
                 loadPlotForSelectedWell()
             }
         }
@@ -4273,6 +4398,193 @@ struct WellData {
     let sampleName: String
     let dropletCount: Int
     let hasData: Bool
+    let status: WellStatus
+    let isEdited: Bool
+}
+
+extension InteractiveMainWindowController {
+    // Determine well status from analysis results
+    func determineWellStatus(from result: [String: Any], wellName: String) -> WellStatus {
+        print("🟡 Determining status for well \(wellName)")
+        print("   Available keys: \(result.keys.sorted())")
+        
+        // Check for warnings first (red takes priority)
+        if let error = result["error"] as? String, !error.isEmpty {
+            print("   ❌ Found error: \(error) -> WARNING")
+            return .warning
+        }
+        
+        // Check for low droplet count
+        if let totalDroplets = result["total_droplets"] as? Int {
+            print("   💧 Total droplets: \(totalDroplets)")
+            if totalDroplets < 100 {
+                print("   ⚠️ Low droplet count -> WARNING")
+                return .warning
+            }
+        }
+        
+        // Check for reclustering flag (could be a warning)
+        if let reclustered = result["chrom3_reclustered"] as? Bool, reclustered {
+            print("   🔄 Reclustered -> WARNING")
+            return .warning
+        }
+        
+        // Check biological status
+        if let hasBuffer = result["has_buffer_zone"] as? Bool {
+            print("   🔘 has_buffer_zone: \(hasBuffer)")
+            if hasBuffer {
+                print("   -> BUFFER")
+                return .buffer
+            }
+        }
+        
+        if let hasAneuploidy = result["has_aneuploidy"] as? Bool {
+            print("   🌸 has_aneuploidy: \(hasAneuploidy)")
+            if hasAneuploidy {
+                print("   -> ANEUPLOID")
+                return .aneuploid
+            }
+        }
+        
+        // Default to euploid
+        print("   ⚪ -> EUPLOID (default)")
+        return .euploid
+    }
+    
+    // Check if well has been edited
+    func isWellEdited(_ wellName: String) -> Bool {
+        return wellParametersMap.keys.contains(wellName)
+    }
+    
+    // Filter well data based on current filter settings
+    func applyFilters() {
+        // Preserve current selection by well ID
+        var selectedWellId: String? = nil
+        if selectedWellIndex >= 0 && selectedWellIndex < wellData.count {
+            selectedWellId = wellData[selectedWellIndex].well
+        }
+        
+        // Recompute filtered list from current wellData
+        filteredWellData = wellData.filter { well in
+            if hideBufferZones && well.status == .buffer { return false }
+            if hideWarnings && well.status == .warning { return false }
+            return true
+        }
+        
+        // Reload table
+        wellListView.reloadData()
+        
+        // Restore selection if the previously selected well is still present
+        if let id = selectedWellId,
+           let filteredIdx = filteredWellData.firstIndex(where: { $0.well == id }) {
+            let tableRow = (compositeImagePath != nil) ? filteredIdx + 1 : filteredIdx
+            wellListView.selectRowIndexes(IndexSet(integer: tableRow), byExtendingSelection: false)
+        } else {
+            // If selection no longer valid, clear selection and placeholder
+            selectedWellIndex = -1
+            showPlaceholderImage()
+        }
+    }
+    
+    @objc func filterChanged() {
+        hideBufferZones = hideBufferZoneButton.state == .on
+        hideWarnings = hideWarningButton.state == .on
+        applyFilters()
+    }
+
+    @objc func showFilterPopover() {
+        if filterPopover == nil {
+            let pop = NSPopover()
+            pop.behavior = .transient
+            let vc = NSViewController()
+            let container = NSView()
+            container.translatesAutoresizingMaskIntoConstraints = false
+            
+            hideBufferZoneButton = NSButton(checkboxWithTitle: "Hide Buffer Zone Samples", target: self, action: #selector(filterChanged))
+            hideWarningButton = NSButton(checkboxWithTitle: "Hide Warning Samples", target: self, action: #selector(filterChanged))
+            hideBufferZoneButton.setButtonType(.switch)
+            hideWarningButton.setButtonType(.switch)
+            hideBufferZoneButton.state = hideBufferZones ? .on : .off
+            hideWarningButton.state = hideWarnings ? .on : .off
+            hideBufferZoneButton.translatesAutoresizingMaskIntoConstraints = false
+            hideWarningButton.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(hideBufferZoneButton)
+            container.addSubview(hideWarningButton)
+            
+            NSLayoutConstraint.activate([
+                hideBufferZoneButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+                hideBufferZoneButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+                hideBufferZoneButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+                
+                hideWarningButton.topAnchor.constraint(equalTo: hideBufferZoneButton.bottomAnchor, constant: 8),
+                hideWarningButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+                hideWarningButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+                hideWarningButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+                container.widthAnchor.constraint(equalToConstant: 220)
+            ])
+            vc.view = container
+            pop.contentViewController = vc
+            filterPopover = pop
+        }
+        if let button = filterButton {
+            filterPopover?.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+        }
+    }
+    
+    @objc func showOverview() {
+        // TODO: Wire up overview functionality
+        print("Overview button clicked - functionality to be implemented")
+    }
+    
+    @objc func showLegend() {
+        let pop = NSPopover()
+        pop.behavior = .transient
+        let vc = NSViewController()
+        
+        let title = NSTextField(labelWithString: "ddQuint Overview")
+        title.font = NSFont.boldSystemFont(ofSize: 14)
+        
+        let overviewText = """
+        Use the well list to navigate. Select a well to view its plot. Adjust parameters via 'Edit This Well'.
+
+        Indicators next to each well:
+        • White circle: Euploid
+        • Grey circle: Buffer Zone
+        • Purple circle: Aneuploid
+        • Red circle: Warning
+        • Square shape: Edited well (custom parameters)
+
+        Use the filter icon to hide buffer zone samples or warning samples.
+        """
+        let overview = NSTextField(labelWithString: overviewText)
+        overview.lineBreakMode = .byWordWrapping
+        if let cell = overview.cell as? NSTextFieldCell { cell.wraps = true; cell.usesSingleLineMode = false }
+        
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(title)
+        stack.addArrangedSubview(overview)
+        
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+            container.widthAnchor.constraint(equalToConstant: 420)
+        ])
+        
+        vc.view = container
+        pop.contentViewController = vc
+        guard let button = legendButton else { return }
+        pop.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+    }
 }
 
 // MARK: - Drag and Drop Support
