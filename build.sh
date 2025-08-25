@@ -44,6 +44,10 @@ if [ $? -eq 0 ]; then
     echo "📦 Bundling Python ddquint module..."
     cp -r "ddquint" "$APP_PATH/Contents/Resources/Python/"
     
+    # Bundle complete Python environment with dependencies
+    echo "🐍 Bundling complete Python environment..."
+    ./bundle_python.sh
+    
     # Copy icon if it exists
     if [ -f "icon.png" ]; then
         cp "icon.png" "$APP_PATH/Contents/Resources/AppIcon.png"

@@ -6,13 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "ddquint"
 version = "0.1.0"
 description = "Droplet Digital PCR Multiplex Analysis for chromosomal copy number detection"
-readme = "README.md"
+# readme = "README.md"
 authors = [
     {name = "Jakob Wimmer", email = "globuds133@gmail.com"}
 ]
 requires-python = ">=3.10"
-license = "MIT"
-license-files = ["LICENSE"]
+# license = "MIT"
+# license-files = ["LICENSE"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -55,12 +55,12 @@ Homepage = "https://github.com/globuzzz2000/ddQuint"
 Documentation = "https://github.com/globuzzz2000/ddQuint#readme"
 "Bug Tracker" = "https://github.com/globuzzz2000/ddQuint/issues"
 
-[project.scripts]
-ddquint = "ddquint.main:main"
-ddquint-gui = "ddquint.gui:main"
+# [project.scripts]
+# ddquint = "ddquint.main:main"
+# ddquint-gui = "ddquint.gui:main"
 
 [tool.setuptools]
-packages = ["ddquint", "ddquint.core", "ddquint.utils", "ddquint.visualization", "ddquint.config", "ddquint.gui"]
+packages = ["ddquint", "ddquint.core", "ddquint.utils", "ddquint.visualization", "ddquint.config"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

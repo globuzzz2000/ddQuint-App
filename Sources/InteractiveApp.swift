@@ -1,407 +1,11 @@
 import Cocoa
 
-// MARK: - Parameter Tooltips
-
-/// Comprehensive tooltip definitions for parameters (from parameter_editor.py)
-private let parameterTooltips: [String: String] = [
-    // Expected Centroids
-    "EXPECTED_CENTROIDS": """
-Expected Centroid Positions
-
-Define the expected fluorescence positions for each target chromosome.
-These positions are used to assign detected clusters to specific targets.
-
-💡 Tips:
-• Measure actual centroids from control samples
-• Each chromosome should have distinct positions
-""",
-    
-    "BASE_TARGET_TOLERANCE": """
-Base Target Tolerance
-
-Base tolerance distance for matching detected clusters to expected centroids.
-Clusters within this distance are assigned to the nearest target.
-
-💡 Tips:
-• Higher values = more lenient matching
-• Lower values = stricter, more precise matching
-• Adjust based on your assay's cluster tightness
-""",
-    
-    "SCALE_FACTOR_MIN": """
-Scale Factor Minimum
-
-Minimum scale factor for adaptive tolerance adjustment.
-Controls how tolerance scales at different fluorescence intensities.
-
-💡 Tips:
-• Range: 0.1-1.0
-• Lower values = tighter matching requirements
-• 0.5 = tolerance can shrink to 50% of base value
-• Use lower values for well-separated targets
-""",
-    
-    "SCALE_FACTOR_MAX": """
-Scale Factor Maximum
-
-Maximum scale factor for adaptive tolerance adjustment.
-Controls maximum tolerance expansion at high fluorescence.
-
-💡 Tips:
-• Range: 1.0-2.0
-• Higher values = more flexible matching
-• 1.0 = no expansion (constant tolerance)
-• Use higher values if clusters spread at high intensity
-""",
-    
-    // Clustering Settings
-    "HDBSCAN_MIN_CLUSTER_SIZE": """
-HDBSCAN Min Cluster Size
-
-Minimum number of droplets required to form a cluster.
-Smaller clusters are treated as noise and ignored.
-
-💡 Tips:
-• Lower values (2-4): More sensitive, detects small clusters
-• Higher values (8-15): More conservative, ignores noise
-• Increase if too many noise clusters detected
-""",
-    
-    "HDBSCAN_MIN_SAMPLES": """
-HDBSCAN Min Samples
-
-Minimum points in neighborhood for core point classification.
-Controls how conservative the clustering algorithm is.
-
-💡 Tips:
-• Higher values = denser, more conservative clusters
-• Lower values = more loose, inclusive clusters
-• Increase if clusters are too fragmented
-""",
-    
-    "HDBSCAN_EPSILON": """
-HDBSCAN Epsilon
-
-Distance threshold for cluster selection from hierarchy.
-Controls how clusters are extracted from the cluster tree.
-
-💡 Tips:
-• Lower values (0.01-0.05): Tighter, more separated clusters
-• Higher values (0.1+): Merges nearby clusters
-• Increase if legitimate clusters are split
-""",
-    
-    "HDBSCAN_METRIC": """
-Distance Metric
-
-Distance metric used for clustering calculations.
-Determines how distances between points are measured.
-
-💡 Options:
-• Euclidean: Standard straight-line distance (recommended)
-• Manhattan: Sum of absolute differences
-• Chebyshev: Maximum difference in any dimension
-• Minkowski: Generalized distance metric
-""",
-    
-    "HDBSCAN_CLUSTER_SELECTION_METHOD": """
-Cluster Selection Method
-
-Method for selecting clusters from the hierarchy tree.
-Determines which clusters are chosen as final results.
-
-💡 Options:
-• EOM (Excess of Mass): More stable, recommended
-• Leaf: Selects leaf clusters, can be less stable
-""",
-    
-    "MIN_POINTS_FOR_CLUSTERING": """
-Min Points for Clustering
-
-Minimum total data points required before attempting clustering.
-Prevents clustering on insufficient data.
-
-💡 Tips:
-• Higher values = more reliable clustering
-• Lower values = clustering on sparse data
-""",
-    
-    // Copy Number Settings
-    "MIN_USABLE_DROPLETS": """
-Min Usable Droplets
-
-Minimum total droplets required for reliable copy number analysis.
-Wells with fewer droplets are excluded from analysis.
-
-💡 Tips:
-• Higher values = better statistical confidence
-• Lower values = include more wells but less reliable
-""",
-    
-    "COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD": """
-Median Deviation Threshold
-
-Maximum deviation from median for selecting baseline (euploid) chromosomes.
-Only chromosomes close to median are used for normalization.
-
-💡 Tips:
-• Lower values (0.10): Stricter baseline selection
-• Higher values (0.20): More inclusive baseline
-""",
-    
-    "COPY_NUMBER_BASELINE_MIN_CHROMS": """
-Baseline Min Chromosomes
-
-Minimum number of chromosomes needed to establish diploid baseline.
-Ensures robust normalization with sufficient reference chromosomes.
-
-💡 Tips:
-• Higher values = more robust normalization
-• Lower values = less stringent requirements
-""",
-    
-    "TOLERANCE_MULTIPLIER": """
-Tolerance Multiplier
-
-Multiplier applied to chromosome-specific standard deviation.
-Controls width of classification ranges (euploid/aneuploidy).
-
-💡 Tips:
-• Higher values = wider tolerance ranges
-• Lower values = stricter classification
-• 3 = 99.7% confidence interval
-""",
-    
-    "ANEUPLOIDY_TARGETS_LOW": """
-Aneuploidy Deletion Target
-
-Target copy number ratio for chromosome deletions.
-Relative to expected copy number.
-
-💡 Tips:
-• 0.75 = 75% of expected (3 copies instead of 4)
-• Adjust based on your assay design
-""",
-    
-    "ANEUPLOIDY_TARGETS_HIGH": """
-Aneuploidy Duplication Target
-
-Target copy number ratio for duplications.
-Relative to expected copy number.
-
-💡 Tips:
-• 1.25 = 125% of expected (5 copies instead of 4)
-• Adjust based on your assay design
-""",
-    
-    "EXPECTED_COPY_NUMBERS": """
-Expected Copy Numbers
-
-Baseline copy number values for each target.
-Used for normalization and classification thresholds.
-
-💡 Tips:
-• Values should be close to 1.0
-• Slight variations account for assay differences
-• Measure from known control samples
-• Update based on your specific assay performance
-""",
-    
-    "EXPECTED_STANDARD_DEVIATION": """
-Expected Standard Deviation
-
-Standard deviation for each chromosome's copy number.
-Used with tolerance multiplier to set classification ranges.
-
-💡 Tips:
-• Lower values = tighter classification ranges
-• Higher values = more permissive classification
-• Measure from known control samples
-""",
-    
-    "CHROMOSOME_COUNT": """
-Chromosome Count
-
-Number of target chromosomes to analyze in this assay.
-Determines how many chromosomes are expected and displayed.
-
-💡 Tips:
-• Set based on your specific assay design
-• Must match your expected centroids configuration
-• Common values: 3-8 targets per assay
-""",
-    
-    // Visualization (if needed)
-    "X_AXIS_MIN": """
-X-Axis Minimum
-
-Minimum value for X-axis (HEX fluorescence) in plots.
-Sets the left boundary of the plot area.
-""",
-    
-    "X_AXIS_MAX": """
-X-Axis Maximum
-
-Maximum value for X-axis (HEX fluorescence) in plots.
-Sets the right boundary of the plot area.
-""",
-    
-    "Y_AXIS_MIN": """
-Y-Axis Minimum
-
-Minimum value for Y-axis (FAM fluorescence) in plots.
-Sets the bottom boundary of the plot area.
-""",
-    
-    "Y_AXIS_MAX": """
-Y-Axis Maximum
-
-Maximum value for Y-axis (FAM fluorescence) in plots.
-Sets the top boundary of the plot area.
-"""
-]
-
-/// Add tooltip to a control based on its parameter identifier
-private func addParameterTooltip(to control: NSView, identifier: String) {
-    // Handle special cases where identifier might be different from tooltip key
-    let tooltipKey: String
-    var customTooltipText: String? = nil
-    
-    if identifier.hasPrefix("EXPECTED_CENTROIDS_") {
-        tooltipKey = "EXPECTED_CENTROIDS"
-        // Extract the target name and customize the tooltip
-        let target = String(identifier.dropFirst("EXPECTED_CENTROIDS_".count))
-        if target.hasPrefix("Chrom") {
-            let chromNumber = target.replacingOccurrences(of: "Chrom", with: "")
-            customTooltipText = """
-Expected Centroid Position for Target \(chromNumber)
-
-Define the expected fluorescence position (FAM, HEX coordinates) for Target \(chromNumber).
-These positions are used to assign detected clusters to this specific target.
-
-💡 Tips:
-• Measure actual centroids from control samples
-• Each target should have distinct positions
-• Format: FAM_value, HEX_value (e.g., 1500, 2200)
-"""
-        } else if target == "Negative" {
-            customTooltipText = """
-Expected Centroid Position for Negative Control
-
-Define the expected fluorescence position for the negative control droplets.
-These are typically droplets with low fluorescence in both channels.
-
-💡 Tips:
-• Usually positioned at low FAM and HEX values
-• Serves as baseline reference for other targets
-• Format: FAM_value, HEX_value (e.g., 1000, 900)
-"""
-        }
-    } else if identifier.hasPrefix("EXPECTED_COPY_NUMBERS_") {
-        tooltipKey = "EXPECTED_COPY_NUMBERS"
-        // Extract the target name and customize the tooltip
-        let target = String(identifier.dropFirst("EXPECTED_COPY_NUMBERS_".count))
-        if target.hasPrefix("Chrom") {
-            let chromNumber = target.replacingOccurrences(of: "Chrom", with: "")
-            customTooltipText = """
-Expected Copy Number for Target \(chromNumber)
-
-Baseline copy number value for Target \(chromNumber).
-Used for normalization and classification thresholds.
-
-💡 Tips:
-• Measure from known diploid control samples
-• Typically around 1.0 for balanced targets
-• Values significantly different from 1.0 may indicate aneuploidy
-"""
-        }
-    } else if identifier.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
-        tooltipKey = "EXPECTED_STANDARD_DEVIATION"
-        // Extract the target name and customize the tooltip
-        let target = String(identifier.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
-        if target.hasPrefix("Chrom") {
-            let chromNumber = target.replacingOccurrences(of: "Chrom", with: "")
-            customTooltipText = """
-Expected Standard Deviation for Target \(chromNumber)
-
-Standard deviation for Target \(chromNumber)'s copy number.
-Used with tolerance multiplier to set classification ranges.
-
-💡 Tips:
-• Lower values = tighter classification ranges
-• Higher values = more permissive classification
-• Measure from known control samples
-"""
-        }
-    } else {
-        tooltipKey = identifier
-    }
-    
-    // Use custom tooltip text if available, otherwise use the standard one
-    let tooltipText = customTooltipText ?? parameterTooltips[tooltipKey]
-    if let tooltip = tooltipText {
-        control.toolTip = tooltip
-    }
-}
-
-// Helper class for proper coordinate system in scroll views
-class FlippedView: NSView {
-    override var isFlipped: Bool {
-        return true
-    }
-}
-
-// MARK: - High Quality Image View
-
-class HighQualityImageView: NSView {
-    var image: NSImage? {
-        didSet {
-            needsDisplay = true
-        }
-    }
-    
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        
-        guard let image = self.image,
-              let context = NSGraphicsContext.current?.cgContext else { return }
-        
-        // Set high-quality interpolation
-        context.interpolationQuality = .high
-        context.setShouldAntialias(true)
-        context.setAllowsAntialiasing(true)
-        
-        // Calculate scaling to fit bounds while maintaining aspect ratio
-        let imageSize = image.size
-        let viewSize = bounds.size
-        
-        let scaleX = viewSize.width / imageSize.width
-        let scaleY = viewSize.height / imageSize.height
-        let scale = min(scaleX, scaleY)
-        
-        let scaledWidth = imageSize.width * scale
-        let scaledHeight = imageSize.height * scale
-        
-        // Center the image
-        let x = (viewSize.width - scaledWidth) / 2
-        let y = (viewSize.height - scaledHeight) / 2
-        
-        let drawRect = NSRect(x: x, y: y, width: scaledWidth, height: scaledHeight)
-        
-        // Draw with high quality scaling
-        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: [
-            .interpolation: NSNumber(value: NSImageInterpolation.high.rawValue)
-        ]) {
-            context.draw(cgImage, in: drawRect)
-        }
-    }
-}
 
 class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     
     // UI Elements
     private var wellListScrollView: NSScrollView!
-    private var wellListView: NSTableView!
+    var wellListView: NSTableView!
     private var filterButton: NSButton!
     private var legendButton: NSButton!
     private var overviewButton: NSButton!
@@ -411,7 +15,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     private var plotImageView: HighQualityImageView!
     private var plotClickView: NSView!
     private var progressIndicator: NSProgressIndicator!
-    private var editWellButton: NSButton!
+    var editWellButton: NSButton!
     private var globalParamsButton: NSButton!
     private var exportButton: NSButton!
     private var statusLabel: NSTextField!
@@ -419,9 +23,9 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     // Data
     private var selectedFolderURL: URL?
     private var analysisResults: [[String: Any]] = []
-    private var wellData: [WellData] = []
-    private var filteredWellData: [WellData] = []
-    private var selectedWellIndex: Int = -1
+    var wellData: [WellData] = []
+    var filteredWellData: [WellData] = []
+    var selectedWellIndex: Int = -1
     
     // Filter state
     private var hideBufferZones = false
@@ -441,7 +45,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     private var templateDesigner: TemplateCreatorWindowController?
     
     // Parameter storage - well parameters stored per well ID, reset on app close
-    private var wellParametersMap: [String: [String: Any]] = [:]
+    var wellParametersMap: [String: [String: Any]] = [:]
     private var activelyAdjustedParameters: [String: Set<String>] = [:] // Tracks which parameters per well were actively changed
     
     // Cache for processed results
@@ -1623,7 +1227,7 @@ private func setupConstraints(in contentView: NSView) {
     
     // MARK: - Plot Loading
     
-    private func loadPlotForSelectedWell() {
+    func loadPlotForSelectedWell() {
         guard selectedWellIndex >= 0 && selectedWellIndex < wellData.count else {
             print("Invalid well selection: \(selectedWellIndex) of \(wellData.count)")
             return
@@ -4853,12 +4457,33 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
     }
     
     private func findPython() -> String? {
-        let paths = [
+        let fm = FileManager.default
+        
+        // 1) First priority: Use bundled Python in the .app
+        if let resPath = Bundle.main.resourcePath {
+            let bundledPython = resPath + "/Python/python_launcher"
+            if fm.isExecutableFile(atPath: bundledPython) {
+                print("✅ Using bundled Python: \(bundledPython)")
+                return bundledPython
+            }
+        }
+        
+        // 2) Fallback to system Python installations
+        let systemPaths = [
             "/opt/miniconda3/envs/ddpcr/bin/python",
             "/usr/local/bin/python3",
             "/usr/bin/python3"
         ]
-        return paths.first { FileManager.default.isExecutableFile(atPath: $0) }
+        
+        for path in systemPaths {
+            if fm.isExecutableFile(atPath: path) {
+                print("⚠️ Using system Python: \(path)")
+                return path
+            }
+        }
+        
+        print("❌ No Python installation found!")
+        return nil
     }
     
     private func findDDQuint() -> String? {
@@ -4892,7 +4517,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
         alert.runModal()
     }
     
-    private func writeDebugLog(_ message: String) {
+    func writeDebugLog(_ message: String) {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         let timestamp = formatter.string(from: Date())
@@ -5974,206 +5599,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
     
 }
 
-// MARK: - Table View Data Source & Delegate
-
-extension InteractiveMainWindowController: NSTableViewDataSource, NSTableViewDelegate {
-    
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        return filteredWellData.count
-    }
-    
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let cellView = NSTableCellView()
-        
-        guard row < filteredWellData.count else { return nil }
-        let well = filteredWellData[row]
-        
-        // Create well ID label (left side)
-        let wellIdLabel = NSTextField()
-        wellIdLabel.isBordered = false
-        wellIdLabel.isEditable = false
-        wellIdLabel.backgroundColor = .clear
-        wellIdLabel.stringValue = well.well
-        wellIdLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
-        wellIdLabel.textColor = well.hasData ? .controlTextColor : .secondaryLabelColor
-        
-        // Create status indicator
-        let statusIndicator = WellStatusIndicatorView(frame: NSRect(x: 0, y: 0, width: 12, height: 12))
-        statusIndicator.status = well.status
-        statusIndicator.isEdited = well.isEdited
-        
-        cellView.addSubview(wellIdLabel)
-        cellView.addSubview(statusIndicator)
-        wellIdLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusIndicator.translatesAutoresizingMaskIntoConstraints = false
-        
-        // Create sample name label (right side) if there's a sample name
-        if !well.sampleName.isEmpty {
-            let sampleLabel = NSTextField()
-            sampleLabel.isBordered = false
-            sampleLabel.isEditable = false
-            sampleLabel.backgroundColor = .clear
-            sampleLabel.stringValue = well.sampleName
-            sampleLabel.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-            sampleLabel.textColor = well.hasData ? .secondaryLabelColor : .tertiaryLabelColor
-            sampleLabel.alignment = .right
-            
-            cellView.addSubview(sampleLabel)
-            sampleLabel.translatesAutoresizingMaskIntoConstraints = false
-            
-            NSLayoutConstraint.activate([
-                wellIdLabel.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                wellIdLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                wellIdLabel.widthAnchor.constraint(equalToConstant: 36),
-                
-                statusIndicator.leadingAnchor.constraint(equalTo: wellIdLabel.trailingAnchor, constant: 0),
-                statusIndicator.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                statusIndicator.widthAnchor.constraint(equalToConstant: 12),
-                statusIndicator.heightAnchor.constraint(equalToConstant: 12),
-                
-                sampleLabel.leadingAnchor.constraint(equalTo: statusIndicator.trailingAnchor, constant: 8),
-                sampleLabel.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -4),
-                sampleLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                wellIdLabel.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 4),
-                wellIdLabel.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                wellIdLabel.widthAnchor.constraint(equalToConstant: 36),
-                
-                statusIndicator.leadingAnchor.constraint(equalTo: wellIdLabel.trailingAnchor, constant: 0),
-                statusIndicator.centerYAnchor.constraint(equalTo: cellView.centerYAnchor),
-                statusIndicator.widthAnchor.constraint(equalToConstant: 12),
-                statusIndicator.heightAnchor.constraint(equalToConstant: 12),
-                
-                statusIndicator.trailingAnchor.constraint(lessThanOrEqualTo: cellView.trailingAnchor, constant: -4)
-            ])
-        }
-        
-        return cellView
-    }
-    
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        let selectedRows = wellListView.selectedRowIndexes
-        print("Well selection changed to rows: \(Array(selectedRows))")
-        
-        // Update button text based on selection count
-        if selectedRows.isEmpty {
-            editWellButton.title = "Edit Well"
-            editWellButton.isEnabled = false
-            selectedWellIndex = -1
-        } else if selectedRows.count == 1 {
-            let selectedRow = selectedRows.first!
-            editWellButton.title = "Edit This Well"
-            
-            if selectedRow >= 0 && selectedRow < filteredWellData.count {
-                let selectedWell = filteredWellData[selectedRow]
-                // Find the original index in wellData
-                if let originalIndex = wellData.firstIndex(where: { $0.well == selectedWell.well }) {
-                    selectedWellIndex = originalIndex
-                    let well = wellData[originalIndex]
-                    editWellButton.isEnabled = well.hasData
-                    print("Loading plot for well: \(selectedWell.well)")
-                    loadPlotForSelectedWell()
-                }
-            }
-        } else {
-            // Multiple selection
-            editWellButton.title = "Edit \(selectedRows.count) Wells"
-            
-            // Enable if all selected wells have data
-            let allHaveData = selectedRows.allSatisfy { row in
-                guard row >= 0 && row < filteredWellData.count else { return false }
-                let selectedWell = filteredWellData[row]
-                if let originalIndex = wellData.firstIndex(where: { $0.well == selectedWell.well }) {
-                    return wellData[originalIndex].hasData
-                }
-                return false
-            }
-            editWellButton.isEnabled = allHaveData
-            
-            // For multiple selection, show the first well's plot
-            if let firstRow = selectedRows.first,
-               firstRow >= 0 && firstRow < filteredWellData.count {
-                let firstWell = filteredWellData[firstRow]
-                if let originalIndex = wellData.firstIndex(where: { $0.well == firstWell.well }) {
-                    selectedWellIndex = originalIndex
-                    print("Loading plot for first selected well: \(firstWell.well)")
-                    loadPlotForSelectedWell()
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Data Models
-
-struct WellData {
-    let well: String
-    let sampleName: String
-    let dropletCount: Int
-    let hasData: Bool
-    let status: WellStatus
-    let isEdited: Bool
-}
-
 extension InteractiveMainWindowController {
-    // Determine well status from analysis results
-    func determineWellStatus(from result: [String: Any], wellName: String) -> WellStatus {
-        print("🟡 Determining status for well \(wellName)")
-        writeDebugLog("🟡 determineWellStatus called for well: \(wellName)")
-        print("   Available keys: \(result.keys.sorted())")
-        writeDebugLog("🟡 Available keys: \(result.keys.sorted())")
-        
-        // Check for warnings first (red takes priority)
-        if let error = result["error"] as? String, !error.isEmpty {
-            print("   ❌ Found error: \(error) -> WARNING")
-            return .warning
-        }
-        
-        // Check for low droplet count
-        if let totalDroplets = result["total_droplets"] as? Int {
-            print("   💧 Total droplets: \(totalDroplets)")
-            if totalDroplets < 100 {
-                print("   ⚠️ Low droplet count -> WARNING")
-                return .warning
-            }
-        }
-        
-        // Check for reclustering flag (could be a warning)
-        if let reclustered = result["chrom3_reclustered"] as? Bool, reclustered {
-            print("   🔄 Reclustered -> WARNING")
-            return .warning
-        }
-        
-        // Check biological status
-        if let hasBuffer = result["has_buffer_zone"] as? Bool {
-            print("   🔘 has_buffer_zone: \(hasBuffer)")
-            if hasBuffer {
-                print("   -> BUFFER")
-                return .buffer
-            }
-        }
-        
-        if let hasAneuploidy = result["has_aneuploidy"] as? Bool {
-            print("   🌸 has_aneuploidy: \(hasAneuploidy)")
-            if hasAneuploidy {
-                print("   -> ANEUPLOID")
-                return .aneuploid
-            }
-        }
-        
-        // Default to euploid
-        print("   ⚪ -> EUPLOID (default)")
-        writeDebugLog("🟡 Final status for well \(wellName): EUPLOID (default)")
-        return .euploid
-    }
-    
-    // Check if well has been edited
-    func isWellEdited(_ wellName: String) -> Bool {
-        return wellParametersMap.keys.contains(wellName)
-    }
-    
     // Filter well data based on current filter settings
     func applyFilters() {
         // Preserve current selection by well ID
@@ -6305,54 +5731,6 @@ extension InteractiveMainWindowController {
     }
 }
 
-// MARK: - Drag and Drop Support
-
-protocol DragDropDelegate: AnyObject {
-    func didReceiveDroppedFolder(url: URL)
-}
-
-class DragDropView: NSView {
-    weak var dragDropDelegate: DragDropDelegate?
-    weak var clickTarget: AnyObject?
-    var clickAction: Selector?
-    
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        registerForDraggedTypes([.fileURL])
-    }
-    
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        registerForDraggedTypes([.fileURL])
-    }
-    
-    override func mouseUp(with event: NSEvent) {
-        // Handle click events - call the click action if set
-        if let target = clickTarget, let action = clickAction {
-            _ = target.perform(action)
-        }
-        super.mouseUp(with: event)
-    }
-    
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
-           let url = urls.first,
-           url.hasDirectoryPath {
-            return .copy
-        }
-        return []
-    }
-    
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        if let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
-           let url = urls.first,
-           url.hasDirectoryPath {
-            dragDropDelegate?.didReceiveDroppedFolder(url: url)
-            return true
-        }
-        return false
-    }
-}
 
 // MARK: - Window Delegate
 extension InteractiveMainWindowController {
