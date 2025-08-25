@@ -128,9 +128,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         templateMenuItem.submenu = templateMenu
         mainMenu.addItem(templateMenuItem)
 
-        // Export menu (parameter bundles)
+        // Export menu (parameter bundles and analysis results)
         let exportMenuItem = NSMenuItem()
         let exportMenu = NSMenu(title: "Export")
+        exportMenu.addItem(NSMenuItem(title: "Export Excel Results...", action: #selector(exportExcelFromMenu), keyEquivalent: ""))
+        exportMenu.addItem(NSMenuItem(title: "Export Plots...", action: #selector(exportPlotsFromMenu), keyEquivalent: ""))
+        exportMenu.addItem(NSMenuItem.separator())
         exportMenu.addItem(NSMenuItem(title: "Export Parameters...", action: #selector(exportParametersBundle), keyEquivalent: ""))
         exportMenu.addItem(NSMenuItem(title: "Load Parameters...", action: #selector(importParametersBundle), keyEquivalent: ""))
         exportMenuItem.submenu = exportMenu
@@ -188,5 +191,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openTemplateDesigner() {
         mainWindowController?.openTemplateDesigner()
+    }
+    
+    @objc private func exportExcelFromMenu() {
+        mainWindowController?.exportExcelFromMenu()
+    }
+    
+    @objc private func exportPlotsFromMenu() {
+        mainWindowController?.exportPlotsFromMenu()
     }
 }

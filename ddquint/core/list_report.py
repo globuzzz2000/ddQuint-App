@@ -19,13 +19,15 @@ from ..config import Config, ReportGenerationError
 logger = logging.getLogger(__name__)
 
 
-def create_list_report(results, output_path):
+def create_list_report(results, output_path, max_chromosomes=None):
     """
     Create a list-format Excel report with chromosome data in columns.
     
     Args:
         results (list): List of result dictionaries for each well
         output_path (str): Path to save the Excel report
+        max_chromosomes (int, optional): Maximum number of chromosomes to include.
+                                       If not provided, uses config default.
         
     Returns:
         str: Path to the saved Excel report
@@ -68,8 +70,16 @@ def create_list_report(results, output_path):
         # Still create an empty report rather than failing
         filtered_results = []
     
-    # Get the number of chromosomes from config
-    chromosome_keys = config.get_chromosome_keys()
+    # Get the number of chromosomes from config or parameter
+    if max_chromosomes is not None:
+        # Use the passed maximum chromosome count
+        chromosome_keys = [f'Chrom{i}' for i in range(1, max_chromosomes + 1)]
+        logger.debug(f"Using passed max_chromosomes={max_chromosomes} to generate chromosome keys: {chromosome_keys}")
+    else:
+        # Fall back to config default
+        chromosome_keys = config.get_chromosome_keys()
+        logger.debug(f"Using config chromosome keys: {chromosome_keys}")
+    
     num_chromosomes = len(chromosome_keys)
     
     logger.debug(f"Creating list report for {len(filtered_results)} results with {num_chromosomes} chromosomes")

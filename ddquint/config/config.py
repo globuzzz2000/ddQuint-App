@@ -90,6 +90,9 @@ class Config:
     COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD = 0.15  # 15% deviation threshold
     COPY_NUMBER_BASELINE_MIN_CHROMS = 3  # Minimum chromosomes for baseline calc
     
+    # Number of chromosomes to analyze (1-10)
+    CHROMOSOME_COUNT = 5
+    
     # Expected copy number values for each chromosome (baseline for calculations)
     EXPECTED_COPY_NUMBERS = {
         "Chrom1": 0.9716,
@@ -198,7 +201,8 @@ class Config:
             'X_AXIS_MIN', 'X_AXIS_MAX', 'Y_AXIS_MIN', 'Y_AXIS_MAX',
             'X_GRID_INTERVAL', 'Y_GRID_INTERVAL',
             'COMPOSITE_FIGURE_SIZE', 'INDIVIDUAL_FIGURE_SIZE', 'COMPOSITE_PLOT_SIZE',
-            'BASE_TARGET_TOLERANCE', 'SCALE_FACTOR_MIN', 'SCALE_FACTOR_MAX'
+            'BASE_TARGET_TOLERANCE', 'SCALE_FACTOR_MIN', 'SCALE_FACTOR_MAX',
+            'TOLERANCE_MULTIPLIER'
         }
         
         # For parameter attributes, try instance first, then class
@@ -232,20 +236,47 @@ class Config:
     @classmethod
     def get_chromosome_keys(cls) -> List[str]:
         """
-        Get all chromosome keys from expected centroids.
-        
-        Returns:
-            List of chromosome keys sorted numerically
-            
-        Example:
-            >>> config = Config.get_instance()
-            >>> chroms = config.get_chromosome_keys()
-            >>> chroms
-            ['Chrom1', 'Chrom2', 'Chrom3']
+        Get all chromosome keys from configuration, prioritizing actual configured data over CHROMOSOME_COUNT.
         """
-        return sorted([key for key in cls.EXPECTED_CENTROIDS.keys() 
-                      if key.startswith('Chrom')], 
-                     key=lambda x: int(x.replace('Chrom', '')))
+        # First, try to get chromosome keys from actual configured data
+        chromosome_keys = set()
+        
+        # Check expected copy numbers
+        try:
+            cn_map = cls.get_expected_copy_numbers()
+            if isinstance(cn_map, dict) and cn_map:
+                chromosome_keys.update([k for k in cn_map.keys() if str(k).startswith('Chrom')])
+        except Exception:
+            pass
+        
+        # Check expected centroids
+        try:
+            centroids = cls.get_expected_centroids()
+            if isinstance(centroids, dict) and centroids:
+                chromosome_keys.update([k for k in centroids.keys() if str(k).startswith('Chrom')])
+        except Exception:
+            pass
+        
+        # Check expected standard deviations
+        try:
+            std_devs = cls.get_expected_std_dev()
+            if isinstance(std_devs, dict) and std_devs:
+                chromosome_keys.update([k for k in std_devs.keys() if str(k).startswith('Chrom')])
+        except Exception:
+            pass
+        
+        # If we found actual chromosome data, use it (sorted by number)
+        if chromosome_keys:
+            return sorted(chromosome_keys, key=lambda x: int(str(x).replace('Chrom', '')))
+        
+        # Fallback: use CHROMOSOME_COUNT parameter
+        try:
+            instance = cls.get_instance()
+            chrom_count = getattr(instance, 'CHROMOSOME_COUNT', 5)  # Default to 5 if not set
+            return [f'Chrom{i}' for i in range(1, chrom_count + 1)]
+        except Exception:
+            # Final fallback
+            return ['Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
     
     @classmethod
     def get_ordered_labels(cls) -> List[str]:
@@ -261,90 +292,62 @@ class Config:
     def get_tolerance_for_chromosome(cls, chrom_name: str) -> float:
         """
         Get the tolerance value for a specific chromosome based on its standard deviation.
-        
-        Args:
-            chrom_name: Chromosome name (e.g., 'Chrom1')
-            
-        Returns:
-            Tolerance value calculated as std_dev * multiplier
-            
-        Raises:
-            ConfigError: If chromosome not found in configuration
         """
-        if chrom_name not in cls.EXPECTED_STANDARD_DEVIATION:
+        std_map = cls.get_expected_std_dev()
+        if chrom_name not in std_map:
             error_msg = f"Unknown chromosome for standard deviation: {chrom_name}"
             logger.error(error_msg)
             raise ConfigError(error_msg, config_key="EXPECTED_STANDARD_DEVIATION")
-        
-        std_dev = cls.EXPECTED_STANDARD_DEVIATION[chrom_name]
-        tolerance = std_dev * cls.TOLERANCE_MULTIPLIER
-        
-        logger.debug(f"{chrom_name}: std_dev={std_dev:.4f}, tolerance={tolerance:.4f}")
+        std_dev = std_map[chrom_name]
+        # TOLERANCE_MULTIPLIER may be overridden on the instance via __getattribute__
+        multiplier = getattr(cls.get_instance(), 'TOLERANCE_MULTIPLIER', cls.TOLERANCE_MULTIPLIER)
+        tolerance = std_dev * multiplier
+        logger.debug(f"{chrom_name}: std_dev={std_dev:.4f}, tol_mult={multiplier:.3f}, tolerance={tolerance:.4f}")
         return tolerance
     
     @classmethod
     def classify_copy_number_state(cls, chrom_name: str, copy_number: float) -> str:
         """
         Classify a copy number value using standard deviation-based tolerances.
-        
-        Uses chromosome-specific standard deviations with a tolerance multiplier to
-        determine the classification state for copy number analysis.
-        
-        Args:
-            chrom_name: Chromosome name (e.g., 'Chrom1')
-            copy_number: Copy number value to classify
-            
-        Returns:
-            Classification string: 'euploid', 'buffer_zone', or 'aneuploidy'
-            
-        Raises:
-            ConfigError: If chromosome not found in configuration
-            
-        Example:
-            >>> config = Config.get_instance()
-            >>> state = config.classify_copy_number_state('Chrom1', 1.0)
-            >>> state
-            'euploid'
         """
-        if chrom_name not in cls.EXPECTED_COPY_NUMBERS:
+        exp_map = cls.get_expected_copy_numbers()
+        if chrom_name not in exp_map:
             error_msg = f"Unknown chromosome: {chrom_name}"
             logger.error(error_msg)
             raise ConfigError(error_msg, config_key="EXPECTED_COPY_NUMBERS")
-        
-        # Get expected value and tolerance for this chromosome
-        expected = cls.EXPECTED_COPY_NUMBERS[chrom_name]
+        expected = exp_map[chrom_name]
         tolerance = cls.get_tolerance_for_chromosome(chrom_name)
-        
+        targets = cls.get_aneuploidy_targets()
+        deletion_target = expected * targets.get("low", 0.75)
+        duplication_target = expected * targets.get("high", 1.25)
+
         # Define euploid range using chromosome-specific tolerance
         euploid_min = expected - tolerance
         euploid_max = expected + tolerance
-        
+
         # Define aneuploidy target ranges using the same tolerance
-        deletion_target = expected * cls.ANEUPLOIDY_TARGETS["low"]
-        duplication_target = expected * cls.ANEUPLOIDY_TARGETS["high"]
-        
         deletion_min = deletion_target - tolerance
         deletion_max = deletion_target + tolerance
         duplication_min = duplication_target - tolerance
         duplication_max = duplication_target + tolerance
-        
+
         logger.debug(f"{chrom_name} classification ranges:")
         logger.debug(f"  Euploid: [{euploid_min:.4f}, {euploid_max:.4f}]")
         logger.debug(f"  Deletion: [{deletion_min:.4f}, {deletion_max:.4f}]")
         logger.debug(f"  Duplication: [{duplication_min:.4f}, {duplication_max:.4f}]")
         logger.debug(f"  Copy number: {copy_number:.4f}")
-        
+
         # Check if in euploid range
         if euploid_min <= copy_number <= euploid_max:
             logger.debug(f"  -> euploid")
             return 'euploid'
-        
+
         # Check if in aneuploidy ranges
         if (deletion_min <= copy_number <= deletion_max or 
             duplication_min <= copy_number <= duplication_max):
             logger.debug(f"  -> aneuploidy")
             return 'aneuploidy'
-        
+
         # Otherwise, it's in the buffer zone
         logger.debug(f"  -> buffer_zone")
         return 'buffer_zone'
@@ -353,44 +356,31 @@ class Config:
     def get_copy_number_ranges(cls, chrom_name: str) -> Dict[str, tuple]:
         """
         Get copy number ranges for a specific chromosome using standard deviation-based tolerances.
-        
-        Args:
-            chrom_name: Chromosome name (e.g., 'Chrom1')
-            
-        Returns:
-            Dictionary with ranges for each classification
-            
-        Raises:
-            ConfigError: If chromosome not found in configuration
         """
-        if chrom_name not in cls.EXPECTED_COPY_NUMBERS:
+        exp_map = cls.get_expected_copy_numbers()
+        if chrom_name not in exp_map:
             error_msg = f"Unknown chromosome: {chrom_name}"
             logger.error(error_msg)
             raise ConfigError(error_msg, config_key="EXPECTED_COPY_NUMBERS")
-        
-        expected = cls.EXPECTED_COPY_NUMBERS[chrom_name]
+        expected = exp_map[chrom_name]
         tolerance = cls.get_tolerance_for_chromosome(chrom_name)
-        
+        targets = cls.get_aneuploidy_targets()
+        deletion_target = expected * targets.get("low", 0.75)
+        duplication_target = expected * targets.get("high", 1.25)
+
         # Calculate ranges using chromosome-specific tolerance
         euploid_range = (
             expected - tolerance,
             expected + tolerance
         )
-        
-        # Use multiplicative targets for aneuploidy
-        deletion_target = expected * cls.ANEUPLOIDY_TARGETS["low"]
-        duplication_target = expected * cls.ANEUPLOIDY_TARGETS["high"]
-        
         deletion_range = (
             deletion_target - tolerance,
             deletion_target + tolerance
         )
-        
         duplication_range = (
             duplication_target - tolerance,
             duplication_target + tolerance
         )
-        
         return {
             'euploid': euploid_range,
             'deletion': deletion_range,
@@ -588,6 +578,42 @@ class Config:
         return result
     
     @classmethod
+    def get_expected_centroids(cls) -> Dict[str, List[float]]:
+        """
+        Get expected centroids with per-instance support like HDBSCAN parameters.
+        """
+        instance = cls.get_instance()
+        logger.debug(f"DEBUG get_expected_centroids: instance id = {id(instance)}")
+        # Check if instance has custom EXPECTED_CENTROIDS, otherwise use class default
+        instance_centroids = getattr(instance, 'EXPECTED_CENTROIDS', None)
+        expected_centroids = instance_centroids if instance_centroids is not None else cls.EXPECTED_CENTROIDS
+        logger.debug(f"DEBUG get_expected_centroids: instance_centroids = {instance_centroids}")
+        logger.debug(f"DEBUG get_expected_centroids: class_centroids = {cls.EXPECTED_CENTROIDS}")
+        logger.debug(f"DEBUG get_expected_centroids: returning {expected_centroids}")
+        return expected_centroids
+
+    @classmethod
+    def get_expected_copy_numbers(cls) -> Dict[str, float]:
+        """Instance-first accessor for EXPECTED_COPY_NUMBERS."""
+        instance = cls.get_instance()
+        instance_map = getattr(instance, 'EXPECTED_COPY_NUMBERS', None)
+        return instance_map if isinstance(instance_map, dict) else cls.EXPECTED_COPY_NUMBERS
+
+    @classmethod
+    def get_expected_std_dev(cls) -> Dict[str, float]:
+        """Instance-first accessor for EXPECTED_STANDARD_DEVIATION."""
+        instance = cls.get_instance()
+        instance_map = getattr(instance, 'EXPECTED_STANDARD_DEVIATION', None)
+        return instance_map if isinstance(instance_map, dict) else cls.EXPECTED_STANDARD_DEVIATION
+
+    @classmethod
+    def get_aneuploidy_targets(cls) -> Dict[str, float]:
+        """Instance-first accessor for ANEUPLOIDY_TARGETS (low/high multipliers)."""
+        instance = cls.get_instance()
+        instance_map = getattr(instance, 'ANEUPLOIDY_TARGETS', None)
+        return instance_map if isinstance(instance_map, dict) else cls.ANEUPLOIDY_TARGETS
+    
+    @classmethod
     def get_target_tolerance(cls, scale_factor: float = 1.0) -> Dict[str, float]:
         """
         Get target tolerance values with scale factor applied.
@@ -603,7 +629,7 @@ class Config:
         
         # Apply scale factor to base tolerance for all targets
         return {target: cls.BASE_TARGET_TOLERANCE * scale_factor 
-                for target in cls.EXPECTED_CENTROIDS.keys()}
+                for target in cls.get_expected_centroids().keys()}
     
     @classmethod
     def get_plot_dimensions(cls, for_composite: bool = False) -> tuple:
@@ -680,14 +706,25 @@ class Config:
     def _get_target_names(cls):
         """
         Return the current list of target names.
-        Tries EXPECTED_COPY_NUMBERS first, then EXPECTED_CENTROIDS.
+        Tries instance-aware EXPECTED_COPY_NUMBERS first, then EXPECTED_CENTROIDS.
         Always includes special names present in cls.SPECIAL_COLOR_DEFAULTS.
         """
         names = []
-        if hasattr(cls, "EXPECTED_COPY_NUMBERS") and isinstance(cls.EXPECTED_COPY_NUMBERS, dict):
-            names = list(cls.EXPECTED_COPY_NUMBERS.keys())
-        elif hasattr(cls, "EXPECTED_CENTROIDS") and isinstance(cls.EXPECTED_CENTROIDS, dict):
-            names = list(cls.EXPECTED_CENTROIDS.keys())
+        try:
+            # Use instance-aware accessors to get well-specific parameters
+            copy_numbers = cls.get_expected_copy_numbers()
+            if isinstance(copy_numbers, dict):
+                names = list(copy_numbers.keys())
+        except Exception:
+            pass
+        
+        if not names:
+            try:
+                centroids = cls.get_expected_centroids()
+                if isinstance(centroids, dict):
+                    names = list(centroids.keys())
+            except Exception:
+                pass
 
         # ensure specials are present
         for s in getattr(cls, "SPECIAL_COLOR_DEFAULTS", {}).keys():

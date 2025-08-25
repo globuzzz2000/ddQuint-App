@@ -1,5 +1,356 @@
 import Cocoa
 
+// MARK: - Parameter Tooltips
+
+/// Comprehensive tooltip definitions for parameters (from parameter_editor.py)
+private let parameterTooltips: [String: String] = [
+    // Expected Centroids
+    "EXPECTED_CENTROIDS": """
+Expected Centroid Positions
+
+Define the expected fluorescence positions for each target chromosome.
+These positions are used to assign detected clusters to specific targets.
+
+💡 Tips:
+• Measure actual centroids from control samples
+• Each chromosome should have distinct positions
+""",
+    
+    "BASE_TARGET_TOLERANCE": """
+Base Target Tolerance
+
+Base tolerance distance for matching detected clusters to expected centroids.
+Clusters within this distance are assigned to the nearest target.
+
+💡 Tips:
+• Higher values = more lenient matching
+• Lower values = stricter, more precise matching
+• Adjust based on your assay's cluster tightness
+""",
+    
+    "SCALE_FACTOR_MIN": """
+Scale Factor Minimum
+
+Minimum scale factor for adaptive tolerance adjustment.
+Controls how tolerance scales at different fluorescence intensities.
+
+💡 Tips:
+• Range: 0.1-1.0
+• Lower values = tighter matching requirements
+• 0.5 = tolerance can shrink to 50% of base value
+• Use lower values for well-separated targets
+""",
+    
+    "SCALE_FACTOR_MAX": """
+Scale Factor Maximum
+
+Maximum scale factor for adaptive tolerance adjustment.
+Controls maximum tolerance expansion at high fluorescence.
+
+💡 Tips:
+• Range: 1.0-2.0
+• Higher values = more flexible matching
+• 1.0 = no expansion (constant tolerance)
+• Use higher values if clusters spread at high intensity
+""",
+    
+    // Clustering Settings
+    "HDBSCAN_MIN_CLUSTER_SIZE": """
+HDBSCAN Min Cluster Size
+
+Minimum number of droplets required to form a cluster.
+Smaller clusters are treated as noise and ignored.
+
+💡 Tips:
+• Lower values (2-4): More sensitive, detects small clusters
+• Higher values (8-15): More conservative, ignores noise
+• Increase if too many noise clusters detected
+""",
+    
+    "HDBSCAN_MIN_SAMPLES": """
+HDBSCAN Min Samples
+
+Minimum points in neighborhood for core point classification.
+Controls how conservative the clustering algorithm is.
+
+💡 Tips:
+• Higher values = denser, more conservative clusters
+• Lower values = more loose, inclusive clusters
+• Increase if clusters are too fragmented
+""",
+    
+    "HDBSCAN_EPSILON": """
+HDBSCAN Epsilon
+
+Distance threshold for cluster selection from hierarchy.
+Controls how clusters are extracted from the cluster tree.
+
+💡 Tips:
+• Lower values (0.01-0.05): Tighter, more separated clusters
+• Higher values (0.1+): Merges nearby clusters
+• Increase if legitimate clusters are split
+""",
+    
+    "HDBSCAN_METRIC": """
+Distance Metric
+
+Distance metric used for clustering calculations.
+Determines how distances between points are measured.
+
+💡 Options:
+• Euclidean: Standard straight-line distance (recommended)
+• Manhattan: Sum of absolute differences
+• Chebyshev: Maximum difference in any dimension
+• Minkowski: Generalized distance metric
+""",
+    
+    "HDBSCAN_CLUSTER_SELECTION_METHOD": """
+Cluster Selection Method
+
+Method for selecting clusters from the hierarchy tree.
+Determines which clusters are chosen as final results.
+
+💡 Options:
+• EOM (Excess of Mass): More stable, recommended
+• Leaf: Selects leaf clusters, can be less stable
+""",
+    
+    "MIN_POINTS_FOR_CLUSTERING": """
+Min Points for Clustering
+
+Minimum total data points required before attempting clustering.
+Prevents clustering on insufficient data.
+
+💡 Tips:
+• Higher values = more reliable clustering
+• Lower values = clustering on sparse data
+""",
+    
+    // Copy Number Settings
+    "MIN_USABLE_DROPLETS": """
+Min Usable Droplets
+
+Minimum total droplets required for reliable copy number analysis.
+Wells with fewer droplets are excluded from analysis.
+
+💡 Tips:
+• Higher values = better statistical confidence
+• Lower values = include more wells but less reliable
+""",
+    
+    "COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD": """
+Median Deviation Threshold
+
+Maximum deviation from median for selecting baseline (euploid) chromosomes.
+Only chromosomes close to median are used for normalization.
+
+💡 Tips:
+• Lower values (0.10): Stricter baseline selection
+• Higher values (0.20): More inclusive baseline
+""",
+    
+    "COPY_NUMBER_BASELINE_MIN_CHROMS": """
+Baseline Min Chromosomes
+
+Minimum number of chromosomes needed to establish diploid baseline.
+Ensures robust normalization with sufficient reference chromosomes.
+
+💡 Tips:
+• Higher values = more robust normalization
+• Lower values = less stringent requirements
+""",
+    
+    "TOLERANCE_MULTIPLIER": """
+Tolerance Multiplier
+
+Multiplier applied to chromosome-specific standard deviation.
+Controls width of classification ranges (euploid/aneuploidy).
+
+💡 Tips:
+• Higher values = wider tolerance ranges
+• Lower values = stricter classification
+• 3 = 99.7% confidence interval
+""",
+    
+    "ANEUPLOIDY_TARGETS_LOW": """
+Aneuploidy Deletion Target
+
+Target copy number ratio for chromosome deletions.
+Relative to expected copy number.
+
+💡 Tips:
+• 0.75 = 75% of expected (3 copies instead of 4)
+• Adjust based on your assay design
+""",
+    
+    "ANEUPLOIDY_TARGETS_HIGH": """
+Aneuploidy Duplication Target
+
+Target copy number ratio for duplications.
+Relative to expected copy number.
+
+💡 Tips:
+• 1.25 = 125% of expected (5 copies instead of 4)
+• Adjust based on your assay design
+""",
+    
+    "EXPECTED_COPY_NUMBERS": """
+Expected Copy Numbers
+
+Baseline copy number values for each target.
+Used for normalization and classification thresholds.
+
+💡 Tips:
+• Values should be close to 1.0
+• Slight variations account for assay differences
+• Measure from known control samples
+• Update based on your specific assay performance
+""",
+    
+    "EXPECTED_STANDARD_DEVIATION": """
+Expected Standard Deviation
+
+Standard deviation for each chromosome's copy number.
+Used with tolerance multiplier to set classification ranges.
+
+💡 Tips:
+• Lower values = tighter classification ranges
+• Higher values = more permissive classification
+• Measure from known control samples
+""",
+    
+    "CHROMOSOME_COUNT": """
+Chromosome Count
+
+Number of target chromosomes to analyze in this assay.
+Determines how many chromosomes are expected and displayed.
+
+💡 Tips:
+• Set based on your specific assay design
+• Must match your expected centroids configuration
+• Common values: 3-8 targets per assay
+""",
+    
+    // Visualization (if needed)
+    "X_AXIS_MIN": """
+X-Axis Minimum
+
+Minimum value for X-axis (HEX fluorescence) in plots.
+Sets the left boundary of the plot area.
+""",
+    
+    "X_AXIS_MAX": """
+X-Axis Maximum
+
+Maximum value for X-axis (HEX fluorescence) in plots.
+Sets the right boundary of the plot area.
+""",
+    
+    "Y_AXIS_MIN": """
+Y-Axis Minimum
+
+Minimum value for Y-axis (FAM fluorescence) in plots.
+Sets the bottom boundary of the plot area.
+""",
+    
+    "Y_AXIS_MAX": """
+Y-Axis Maximum
+
+Maximum value for Y-axis (FAM fluorescence) in plots.
+Sets the top boundary of the plot area.
+"""
+]
+
+/// Add tooltip to a control based on its parameter identifier
+private func addParameterTooltip(to control: NSView, identifier: String) {
+    // Handle special cases where identifier might be different from tooltip key
+    let tooltipKey: String
+    var customTooltipText: String? = nil
+    
+    if identifier.hasPrefix("EXPECTED_CENTROIDS_") {
+        tooltipKey = "EXPECTED_CENTROIDS"
+        // Extract the target name and customize the tooltip
+        let target = String(identifier.dropFirst("EXPECTED_CENTROIDS_".count))
+        if target.hasPrefix("Chrom") {
+            let chromNumber = target.replacingOccurrences(of: "Chrom", with: "")
+            customTooltipText = """
+Expected Centroid Position for Target \(chromNumber)
+
+Define the expected fluorescence position (FAM, HEX coordinates) for Target \(chromNumber).
+These positions are used to assign detected clusters to this specific target.
+
+💡 Tips:
+• Measure actual centroids from control samples
+• Each target should have distinct positions
+• Format: FAM_value, HEX_value (e.g., 1500, 2200)
+"""
+        } else if target == "Negative" {
+            customTooltipText = """
+Expected Centroid Position for Negative Control
+
+Define the expected fluorescence position for the negative control droplets.
+These are typically droplets with low fluorescence in both channels.
+
+💡 Tips:
+• Usually positioned at low FAM and HEX values
+• Serves as baseline reference for other targets
+• Format: FAM_value, HEX_value (e.g., 1000, 900)
+"""
+        }
+    } else if identifier.hasPrefix("EXPECTED_COPY_NUMBERS_") {
+        tooltipKey = "EXPECTED_COPY_NUMBERS"
+        // Extract the target name and customize the tooltip
+        let target = String(identifier.dropFirst("EXPECTED_COPY_NUMBERS_".count))
+        if target.hasPrefix("Chrom") {
+            let chromNumber = target.replacingOccurrences(of: "Chrom", with: "")
+            customTooltipText = """
+Expected Copy Number for Target \(chromNumber)
+
+Baseline copy number value for Target \(chromNumber).
+Used for normalization and classification thresholds.
+
+💡 Tips:
+• Measure from known diploid control samples
+• Typically around 1.0 for balanced targets
+• Values significantly different from 1.0 may indicate aneuploidy
+"""
+        }
+    } else if identifier.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
+        tooltipKey = "EXPECTED_STANDARD_DEVIATION"
+        // Extract the target name and customize the tooltip
+        let target = String(identifier.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
+        if target.hasPrefix("Chrom") {
+            let chromNumber = target.replacingOccurrences(of: "Chrom", with: "")
+            customTooltipText = """
+Expected Standard Deviation for Target \(chromNumber)
+
+Standard deviation for Target \(chromNumber)'s copy number.
+Used with tolerance multiplier to set classification ranges.
+
+💡 Tips:
+• Lower values = tighter classification ranges
+• Higher values = more permissive classification
+• Measure from known control samples
+"""
+        }
+    } else {
+        tooltipKey = identifier
+    }
+    
+    // Use custom tooltip text if available, otherwise use the standard one
+    let tooltipText = customTooltipText ?? parameterTooltips[tooltipKey]
+    if let tooltip = tooltipText {
+        control.toolTip = tooltip
+    }
+}
+
+// Helper class for proper coordinate system in scroll views
+class FlippedView: NSView {
+    override var isFlipped: Bool {
+        return true
+    }
+}
+
 // MARK: - High Quality Image View
 
 class HighQualityImageView: NSView {
@@ -62,8 +413,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     private var progressIndicator: NSProgressIndicator!
     private var editWellButton: NSButton!
     private var globalParamsButton: NSButton!
-    private var exportExcelButton: NSButton!
-    private var exportPlotsButton: NSButton!
+    private var exportButton: NSButton!
     private var statusLabel: NSTextField!
     
     // Data
@@ -188,6 +538,7 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         wellListView.usesAlternatingRowBackgroundColors = true
         wellListView.gridStyleMask = [.solidHorizontalGridLineMask]
         wellListView.headerView = nil // No header
+        wellListView.allowsMultipleSelection = true // Enable multi-selection
         
         // Create single column for well list
         let wellColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("well"))
@@ -275,18 +626,12 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
         globalParamsButton.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(globalParamsButton)
         
-        // Export buttons
-        exportExcelButton = NSButton(title: "Export Excel", target: self, action: #selector(exportExcel))
-        exportExcelButton.bezelStyle = .rounded
-        exportExcelButton.isEnabled = false
-        exportExcelButton.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(exportExcelButton)
-        
-        exportPlotsButton = NSButton(title: "Export Plots", target: self, action: #selector(exportPlots))
-        exportPlotsButton.bezelStyle = .rounded
-        exportPlotsButton.isEnabled = false
-        exportPlotsButton.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(exportPlotsButton)
+        // Export button (comprehensive export)
+        exportButton = NSButton(title: "Export", target: self, action: #selector(exportAll))
+        exportButton.bezelStyle = .rounded
+        exportButton.isEnabled = false
+        exportButton.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(exportButton)
         
         // Initial state - don't show placeholder yet
     }
@@ -366,14 +711,10 @@ private func setupConstraints(in contentView: NSView) {
             globalParamsButton.bottomAnchor.constraint(equalTo: editWellButton.bottomAnchor),
             globalParamsButton.widthAnchor.constraint(equalToConstant: 130),
             
-            // Export buttons
-            exportExcelButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            exportExcelButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
-            exportExcelButton.widthAnchor.constraint(equalToConstant: 100),
-            
-            exportPlotsButton.trailingAnchor.constraint(equalTo: exportExcelButton.leadingAnchor, constant: -10),
-            exportPlotsButton.bottomAnchor.constraint(equalTo: exportExcelButton.bottomAnchor),
-            exportPlotsButton.widthAnchor.constraint(equalToConstant: 100),
+            // Export button
+            exportButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            exportButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
+            exportButton.widthAnchor.constraint(equalToConstant: 100),
         ])
     }
     
@@ -515,8 +856,7 @@ private func setupConstraints(in contentView: NSView) {
         // Disable buttons until wells start completing
         editWellButton.isEnabled = false
         globalParamsButton.isEnabled = false
-        exportExcelButton.isEnabled = false
-        exportPlotsButton.isEnabled = false
+        exportButton.isEnabled = false
         overviewButton.isEnabled = false
         
         // Clear the plot area and show progress
@@ -714,7 +1054,7 @@ private func setupConstraints(in contentView: NSView) {
                         'HDBSCAN_MIN_CLUSTER_SIZE','HDBSCAN_MIN_SAMPLES','HDBSCAN_EPSILON','HDBSCAN_METRIC','HDBSCAN_CLUSTER_SELECTION_METHOD','MIN_POINTS_FOR_CLUSTERING',
                         'INDIVIDUAL_PLOT_DPI','PLACEHOLDER_PLOT_DPI',
                         'X_AXIS_MIN','X_AXIS_MAX','Y_AXIS_MIN','Y_AXIS_MAX','X_GRID_INTERVAL','Y_GRID_INTERVAL',
-                        'BASE_TARGET_TOLERANCE','SCALE_FACTOR_MIN','SCALE_FACTOR_MAX','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','TOLERANCE_MULTIPLIER'
+                        'BASE_TARGET_TOLERANCE','SCALE_FACTOR_MIN','SCALE_FACTOR_MAX','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','TOLERANCE_MULTIPLIER','CHROMOSOME_COUNT'
                     ]
                     
                     for csv_file in csv_files:
@@ -1062,8 +1402,7 @@ private func setupConstraints(in contentView: NSView) {
         
         // Enable buttons now that analysis is complete
         globalParamsButton.isEnabled = true
-        exportExcelButton.isEnabled = true
-        exportPlotsButton.isEnabled = true
+        exportButton.isEnabled = true
         overviewButton.isEnabled = true
         
         statusLabel.stringValue = "Analysis complete"
@@ -1249,8 +1588,7 @@ private func setupConstraints(in contentView: NSView) {
         
         // Enable buttons
         globalParamsButton.isEnabled = true
-        exportExcelButton.isEnabled = true
-        exportPlotsButton.isEnabled = true
+        exportButton.isEnabled = true
         overviewButton.isEnabled = true
         
         // Reload table
@@ -1469,28 +1807,85 @@ private func setupConstraints(in contentView: NSView) {
         if isGlobal {
             savedParams = loadGlobalParameters()
         } else {
-            // Load parameters for the current well
+            // Load parameters for well editing (single or multi-well)
             print("🔍 Loading well parameters:")
             print("   selectedWellIndex: \(selectedWellIndex)")
             print("   wellData.count: \(wellData.count)")
+            print("   currentMultiEditWells: \(currentMultiEditWells)")
             
             if selectedWellIndex >= 0 && selectedWellIndex < wellData.count {
-                let wellId = wellData[selectedWellIndex].well
-                print("   wellId: \(wellId)")
-                print("   wellParametersMap has \(wellParametersMap.count) entries: \(Array(wellParametersMap.keys).sorted())")
-                
                 // Always start with global parameters as base
                 savedParams = loadGlobalParameters()
                 print("📄 Loaded \(savedParams.count) global parameters as base: \(savedParams.keys.sorted())")
                 
-                // Overlay well-specific modifications if they exist
-                if let savedWellParams = wellParametersMap[wellId], !savedWellParams.isEmpty {
-                    for (key, value) in savedWellParams {
+                if !currentMultiEditWells.isEmpty {
+                    // Multi-well editing: find parameters common to ALL selected wells
+                    print("🔧 Multi-well editing mode: finding common parameters across \(currentMultiEditWells.count) wells")
+                    
+                    var commonParameters: [String: Any] = [:]
+                    
+                    // Get parameters for each selected well
+                    for (index, wellName) in currentMultiEditWells.enumerated() {
+                        if let wellParams = wellParametersMap[wellName] {
+                            print("   Well \(wellName) has \(wellParams.count) custom parameters: \(wellParams.keys.sorted())")
+                            
+                            if index == 0 {
+                                // First well - start with its parameters
+                                commonParameters = wellParams
+                            } else {
+                                // Subsequent wells - keep only parameters that match
+                                var paramsToRemove: [String] = []
+                                for (key, value) in commonParameters {
+                                    if let otherValue = wellParams[key] {
+                                        // Parameter exists in this well, check if values match
+                                        if !areParameterValuesEqual(value, otherValue) {
+                                            print("     Parameter \(key) differs: \(value) vs \(otherValue) - removing from common set")
+                                            paramsToRemove.append(key)
+                                        }
+                                    } else {
+                                        // Parameter doesn't exist in this well - remove from common set
+                                        print("     Parameter \(key) missing in well \(wellName) - removing from common set")
+                                        paramsToRemove.append(key)
+                                    }
+                                }
+                                
+                                for key in paramsToRemove {
+                                    commonParameters.removeValue(forKey: key)
+                                }
+                            }
+                        } else {
+                            print("   Well \(wellName) has no custom parameters")
+                            if index == 0 {
+                                commonParameters = [:] // First well has no params, so no common params
+                            } else {
+                                // If any well has no custom parameters, only global parameters are common
+                                commonParameters = [:]
+                            }
+                        }
+                    }
+                    
+                    // Apply common parameters
+                    for (key, value) in commonParameters {
                         savedParams[key] = value
                     }
-                    print("✅ Applied \(savedWellParams.count) well-specific parameter overrides for well \(wellId): \(savedWellParams.keys.sorted())")
+                    
+                    print("✅ Applied \(commonParameters.count) common parameters across all wells: \(commonParameters.keys.sorted())")
+                    
                 } else {
-                    print("📄 No well-specific parameter overrides for well \(wellId)")
+                    // Single-well editing: use existing logic
+                    let wellId = wellData[selectedWellIndex].well
+                    print("   Single well editing: wellId: \(wellId)")
+                    print("   wellParametersMap has \(wellParametersMap.count) entries: \(Array(wellParametersMap.keys).sorted())")
+                    
+                    // Overlay well-specific modifications if they exist
+                    if let savedWellParams = wellParametersMap[wellId], !savedWellParams.isEmpty {
+                        for (key, value) in savedWellParams {
+                            savedParams[key] = value
+                        }
+                        print("✅ Applied \(savedWellParams.count) well-specific parameter overrides for well \(wellId): \(savedWellParams.keys.sorted())")
+                    } else {
+                        print("📄 No well-specific parameter overrides for well \(wellId)")
+                    }
                 }
             } else {
                 savedParams = [:]
@@ -1534,6 +1929,9 @@ private func setupConstraints(in contentView: NSView) {
         hdbscanTab.view = hdbscanView
         tabView.addTabViewItem(hdbscanTab)
         
+        // Detect current chromosome count for auto-layout
+        let currentChromCount = savedParams["CHROMOSOME_COUNT"] as? Int ?? 5
+        
         // Tab 2: Expected Centroids (for both global and well-specific)
         let centroidsTab = NSTabViewItem(identifier: "centroids")
         centroidsTab.label = "Expected Centroids"
@@ -1541,12 +1939,29 @@ private func setupConstraints(in contentView: NSView) {
         centroidsTab.view = centroidsView
         tabView.addTabViewItem(centroidsTab)
         
+        // Auto-apply two-column layout if chromosome count > 5
+        if currentChromCount > 5 {
+            if let scrollView = centroidsView as? NSScrollView,
+               let documentView = scrollView.documentView {
+                updateCentroidsViewForTargetCount(documentView, targetCount: currentChromCount, parameters: savedParams)
+            }
+        }
+        
         // Tab 3: Copy Number Settings (for both global and well-specific)
         let copyNumberTab = NSTabViewItem(identifier: "copynumber")
         copyNumberTab.label = "Copy Number"
         let copyNumberView = createCopyNumberParametersView(parameters: savedParams)
         copyNumberTab.view = copyNumberView
         tabView.addTabViewItem(copyNumberTab)
+        
+        // Auto-apply two-column layout if chromosome count > 5
+        // Detect current chromosome count for auto-layout (declared above)
+        if currentChromCount > 5 {
+            if let scrollView = copyNumberView as? NSScrollView,
+               let documentView = scrollView.documentView {
+                updateCopyNumberViewForTargetCount(documentView, targetCount: currentChromCount, parameters: savedParams)
+            }
+        }
         
         // Tab 4: Visualization Settings (for both global and well-specific)
         let visualizationTab = NSTabViewItem(identifier: "visualization")
@@ -1697,9 +2112,13 @@ private func setupConstraints(in contentView: NSView) {
         for (identifier, label, _, tooltip) in coreParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
+            paramLabel.wantsLayer = true
+            paramLabel.layer?.zPosition = 10000  // Ensure label is clickable
+            addParameterTooltip(to: paramLabel, identifier: identifier)
             
             let paramField = NSTextField()
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
+            addParameterTooltip(to: paramField, identifier: identifier)
             // Use parameter value if available, otherwise leave empty (no hardcoded defaults)
             if let paramValue = parameters[identifier] {
                 paramField.stringValue = formatParamValue(paramValue)
@@ -1714,6 +2133,8 @@ private func setupConstraints(in contentView: NSView) {
             paramField.isSelectable = true
             paramField.isBordered = true
             paramField.bezelStyle = .roundedBezel
+            paramField.wantsLayer = true
+            paramField.layer?.zPosition = 10000  // Ensure field is above other UI elements
             
             view.addSubview(paramLabel)
             view.addSubview(paramField)
@@ -1732,9 +2153,11 @@ private func setupConstraints(in contentView: NSView) {
             // Distance Metric dropdown
             let metricLabel = NSTextField(labelWithString: "Distance Metric:")
             metricLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
+            addParameterTooltip(to: metricLabel, identifier: "HDBSCAN_METRIC")
             
             let metricPopup = NSPopUpButton()
             metricPopup.identifier = NSUserInterfaceItemIdentifier("HDBSCAN_METRIC")
+            addParameterTooltip(to: metricPopup, identifier: "HDBSCAN_METRIC")
             metricPopup.addItems(withTitles: ["euclidean", "manhattan", "chebyshev", "minkowski"])
             if let value = parameters["HDBSCAN_METRIC"] as? String {
                 metricPopup.selectItem(withTitle: value)
@@ -1751,9 +2174,11 @@ private func setupConstraints(in contentView: NSView) {
             // Cluster Selection Method dropdown
             let selectionLabel = NSTextField(labelWithString: "Cluster Selection Method:")
             selectionLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
+            addParameterTooltip(to: selectionLabel, identifier: "HDBSCAN_CLUSTER_SELECTION_METHOD")
             
             let selectionPopup = NSPopUpButton()
             selectionPopup.identifier = NSUserInterfaceItemIdentifier("HDBSCAN_CLUSTER_SELECTION_METHOD")
+            addParameterTooltip(to: selectionPopup, identifier: "HDBSCAN_CLUSTER_SELECTION_METHOD")
             selectionPopup.addItems(withTitles: ["eom", "leaf"])
             if let value = parameters["HDBSCAN_CLUSTER_SELECTION_METHOD"] as? String {
                 selectionPopup.selectItem(withTitle: value)
@@ -1769,15 +2194,20 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         // Set proper view size with padding
-        let finalHeight = max(450 - yPos + 40, 400)  // Ensure minimum height
+        let finalHeight = max(500 - yPos + 80, 500)  // Ensure adequate height
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
         
         // Setup scroll view properly
+        // Remove explicit frame - let Auto Layout handle it
         scrollView.documentView = view
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        
+        // Ensure proper scrolling behavior
+        scrollView.verticalScrollElasticity = .allowed
+        scrollView.horizontalScrollElasticity = .none
         
         return scrollView
     }
@@ -1786,7 +2216,7 @@ private func setupConstraints(in contentView: NSView) {
         let scrollView = NSScrollView()
         let view = NSView()
         
-        var yPos: CGFloat = 500
+        var yPos: CGFloat = 560  // Proper positioning to reduce gap
         let fieldHeight: CGFloat = 24
         let spacing: CGFloat = 30
         
@@ -1805,15 +2235,65 @@ private func setupConstraints(in contentView: NSView) {
         view.addSubview(instructionLabel)
         yPos -= 40
         
-        // Centroid entries
-        let targets = ["Negative", "Chrom1", "Chrom2", "Chrom3", "Chrom4", "Chrom5"]
+        // Target count selection
+        let chromCountLabel = NSTextField(labelWithString: "Number of Targets:")
+        chromCountLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
+        addParameterTooltip(to: chromCountLabel, identifier: "CHROMOSOME_COUNT")
         
-        for (_, target) in targets.enumerated() {
-            let targetLabel = NSTextField(labelWithString: "\(target):")
+        let chromCountPopup = NSPopUpButton()
+        chromCountPopup.identifier = NSUserInterfaceItemIdentifier("CHROMOSOME_COUNT")
+        addParameterTooltip(to: chromCountPopup, identifier: "CHROMOSOME_COUNT")
+        chromCountPopup.addItems(withTitles: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+        
+        // Determine current chromosome count from existing data - check CHROMOSOME_COUNT parameter first
+        var currentChromCount = 5 // Default
+        if let chromCount = parameters["CHROMOSOME_COUNT"] as? Int {
+            currentChromCount = chromCount
+            print("🎯 Using CHROMOSOME_COUNT parameter: \(chromCount)")
+        } else if let centroids = parameters["EXPECTED_CENTROIDS"] as? [String: [Double]] {
+            let chromKeys = centroids.keys.filter { $0.starts(with: "Chrom") }
+            if !chromKeys.isEmpty {
+                currentChromCount = chromKeys.count
+                print("🎯 Inferred chromosome count from centroids: \(chromKeys.count)")
+            }
+        } else if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double] {
+            let chromKeys = copyNumbers.keys.filter { $0.starts(with: "Chrom") }
+            if !chromKeys.isEmpty {
+                currentChromCount = chromKeys.count
+                print("🎯 Inferred chromosome count from copy numbers: \(chromKeys.count)")
+            }
+        }
+        
+        // Set the popup to current count
+        if currentChromCount >= 1 && currentChromCount <= 10 {
+            chromCountPopup.selectItem(at: currentChromCount - 1)
+        }
+        
+        chromCountPopup.frame = NSRect(x: 250, y: yPos, width: 80, height: fieldHeight)
+        chromCountPopup.target = self
+        chromCountPopup.action = #selector(chromosomeCountChanged(_:))
+        
+        view.addSubview(chromCountLabel)
+        view.addSubview(chromCountPopup)
+        yPos -= 50
+        
+        // Centroid entries - dynamically create based on chromosome count
+        var targets = ["Negative"]
+        for i in 1...currentChromCount {
+            targets.append("Chrom\(i)")
+        }
+        
+        for (index, target) in targets.enumerated() {
+            let displayLabel = target == "Negative" ? "Negative:" : "Target \(index):"
+            let targetLabel = NSTextField(labelWithString: displayLabel)
             targetLabel.frame = NSRect(x: 40, y: yPos, width: 120, height: fieldHeight)
+            targetLabel.wantsLayer = true
+            targetLabel.layer?.zPosition = 10000  // Ensure label is clickable
+            addParameterTooltip(to: targetLabel, identifier: "EXPECTED_CENTROIDS_\(target)")
             
             let targetField = NSTextField()
             targetField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_CENTROIDS_\(target)")
+            addParameterTooltip(to: targetField, identifier: "EXPECTED_CENTROIDS_\(target)")
             
             // Load value from parameters instead of hardcoded defaults
             if let centroids = parameters["EXPECTED_CENTROIDS"] as? [String: [Double]],
@@ -1829,6 +2309,8 @@ private func setupConstraints(in contentView: NSView) {
             targetField.isBordered = true
             targetField.bezelStyle = .roundedBezel
             targetField.backgroundColor = NSColor.textBackgroundColor
+            targetField.wantsLayer = true
+            targetField.layer?.zPosition = 10000  // Ensure field is above other UI elements
             
             view.addSubview(targetLabel)
             view.addSubview(targetField)
@@ -1853,9 +2335,11 @@ private func setupConstraints(in contentView: NSView) {
             for (identifier, label, _, tooltip) in matchingParams {
                 let paramLabel = NSTextField(labelWithString: label)
                 paramLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
+                addParameterTooltip(to: paramLabel, identifier: identifier)
                 
                 let paramField = NSTextField()
                 paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
+                addParameterTooltip(to: paramField, identifier: identifier)
                 // Use parameter value if available, otherwise leave empty
                 if let paramValue = parameters[identifier] {
                     paramField.stringValue = formatParamValue(paramValue)
@@ -1878,15 +2362,20 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         // Set proper view size with padding
-        let finalHeight = max(480 - yPos + 40, 400)  // Ensure minimum height
+        let finalHeight = max(560 - yPos + 80, 600)  // Calculate from actual content height
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
         
         // Setup scroll view properly
+        // Remove explicit frame - let Auto Layout handle it
         scrollView.documentView = view
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        
+        // Ensure proper scrolling behavior
+        scrollView.verticalScrollElasticity = .allowed
+        scrollView.horizontalScrollElasticity = .none
         
         return scrollView
     }
@@ -1925,9 +2414,11 @@ private func setupConstraints(in contentView: NSView) {
         for (identifier, label, _, tooltip) in generalParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 220, height: fieldHeight)
+            addParameterTooltip(to: paramLabel, identifier: identifier)
             
             let paramField = NSTextField()
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
+            addParameterTooltip(to: paramField, identifier: identifier)
             // Use parameter value if available, otherwise leave empty
             if let paramValue = parameters[identifier] {
                 paramField.stringValue = formatParamValue(paramValue)
@@ -1964,9 +2455,11 @@ private func setupConstraints(in contentView: NSView) {
         for (identifier, label, _, tooltip) in aneuploidyParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 220, height: fieldHeight)
+            addParameterTooltip(to: paramLabel, identifier: identifier)
             
             let paramField = NSTextField()
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
+            addParameterTooltip(to: paramField, identifier: identifier)
             // Special handling for aneuploidy targets
             if identifier == "ANEUPLOIDY_TARGETS_LOW" {
                 if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
@@ -2010,17 +2503,42 @@ private func setupConstraints(in contentView: NSView) {
         let copyNumLabel = NSTextField(labelWithString: "Expected Copy Numbers by Chromosome")
         copyNumLabel.font = NSFont.boldSystemFont(ofSize: 14)
         copyNumLabel.frame = NSRect(x: 20, y: yPos, width: 300, height: 20)
+        addParameterTooltip(to: copyNumLabel, identifier: "EXPECTED_COPY_NUMBERS")
         view.addSubview(copyNumLabel)
         yPos -= 40
         
-        let chromosomes = ["Chrom1", "Chrom2", "Chrom3", "Chrom4", "Chrom5"]
+        // Determine current chromosome count from existing data - check CHROMOSOME_COUNT parameter first
+        var currentChromCount = 5 // Default
+        if let chromCount = parameters["CHROMOSOME_COUNT"] as? Int {
+            currentChromCount = chromCount
+            print("🎯 Copy numbers view using CHROMOSOME_COUNT parameter: \(chromCount)")
+        } else if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double] {
+            let chromKeys = copyNumbers.keys.filter { $0.starts(with: "Chrom") }
+            if !chromKeys.isEmpty {
+                currentChromCount = chromKeys.count
+                print("🎯 Copy numbers view inferred from copy numbers: \(chromKeys.count)")
+            }
+        } else if let centroids = parameters["EXPECTED_CENTROIDS"] as? [String: [Double]] {
+            let chromKeys = centroids.keys.filter { $0.starts(with: "Chrom") }
+            if !chromKeys.isEmpty {
+                currentChromCount = chromKeys.count
+                print("🎯 Copy numbers view inferred from centroids: \(chromKeys.count)")
+            }
+        }
         
-        for chrom in chromosomes {
-            let chromLabel = NSTextField(labelWithString: "\(chrom):")
+        // Generate chromosome list dynamically
+        var chromosomes: [String] = []
+        for i in 1...currentChromCount {
+            chromosomes.append("Chrom\(i)")
+        }
+        
+        for (index, chrom) in chromosomes.enumerated() {
+            let chromLabel = NSTextField(labelWithString: "Target \(index + 1):")
             chromLabel.frame = NSRect(x: 40, y: yPos, width: 80, height: fieldHeight)
             
             let copyNumField = NSTextField()
             copyNumField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_COPY_NUMBERS_\(chrom)")
+            addParameterTooltip(to: copyNumField, identifier: "EXPECTED_COPY_NUMBERS_\(chrom)")
             // Use parameter value if available, otherwise leave empty
             if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double],
                let value = copyNumbers[chrom] {
@@ -2037,11 +2555,13 @@ private func setupConstraints(in contentView: NSView) {
             copyNumField.isBordered = true
             copyNumField.bezelStyle = .roundedBezel
             
-            let stdDevLabel = NSTextField(labelWithString: "Std Dev:")
-            stdDevLabel.frame = NSRect(x: 220, y: yPos, width: 60, height: fieldHeight)
+            let stdDevLabel = NSTextField(labelWithString: "SD \(index + 1):")
+            stdDevLabel.frame = NSRect(x: 430, y: yPos, width: 55, height: fieldHeight)  // Match update method spacing (490-60=430)
+            stdDevLabel.alignment = .left  // Match update method alignment
             
             let stdDevField = NSTextField()
             stdDevField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_STANDARD_DEVIATION_\(chrom)")
+            addParameterTooltip(to: stdDevField, identifier: "EXPECTED_STANDARD_DEVIATION_\(chrom)")
             // Use parameter value if available, otherwise leave empty
             if let stdDevs = parameters["EXPECTED_STANDARD_DEVIATION"] as? [String: Double],
                let value = stdDevs[chrom] {
@@ -2051,7 +2571,7 @@ private func setupConstraints(in contentView: NSView) {
                 stdDevField.stringValue = ""
                 print("⚪ Std dev field \(chrom) has no parameter value, leaving empty")
             }
-            stdDevField.frame = NSRect(x: 290, y: yPos, width: 80, height: fieldHeight)
+            stdDevField.frame = NSRect(x: 490, y: yPos, width: 80, height: fieldHeight)  // Match update method position
             stdDevField.toolTip = "Expected standard deviation for \(chrom)"
             stdDevField.isEditable = true
             stdDevField.isSelectable = true
@@ -2106,11 +2626,16 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         // Setup scroll view properly
+        // Remove explicit frame - let Auto Layout handle it
         scrollView.documentView = view
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        
+        // Ensure proper scrolling behavior
+        scrollView.verticalScrollElasticity = .allowed
+        scrollView.horizontalScrollElasticity = .none
         
         return scrollView
     }
@@ -2157,9 +2682,11 @@ private func setupConstraints(in contentView: NSView) {
         for (identifier, label, _, tooltip) in axisParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 150, height: fieldHeight)
+            addParameterTooltip(to: paramLabel, identifier: identifier)
             
             let paramField = NSTextField()
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
+            addParameterTooltip(to: paramField, identifier: identifier)
             // Use parameter value if available, otherwise leave empty
             if let paramValue = parameters[identifier] {
                 paramField.stringValue = formatParamValue(paramValue)
@@ -2195,9 +2722,11 @@ private func setupConstraints(in contentView: NSView) {
         for (identifier, label, _, tooltip) in dpiParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 150, height: fieldHeight)
+            addParameterTooltip(to: paramLabel, identifier: identifier)
             
             let paramField = NSTextField()
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
+            addParameterTooltip(to: paramField, identifier: identifier)
             // Use parameter value if available, otherwise leave empty
             if let paramValue = parameters[identifier] {
                 paramField.stringValue = formatParamValue(paramValue)
@@ -2237,11 +2766,16 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         // Setup scroll view properly
+        // Remove explicit frame - let Auto Layout handle it
         scrollView.documentView = view
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
+        
+        // Ensure proper scrolling behavior
+        scrollView.verticalScrollElasticity = .allowed
+        scrollView.horizontalScrollElasticity = .none
         
         return scrollView
     }
@@ -2358,26 +2892,46 @@ private func setupConstraints(in contentView: NSView) {
         
         statusLabel.stringValue = "Saving well parameters and re-processing..."
         
-        // Extract parameters from the UI fields (all tabs)
-        var parameters = extractParametersFromWindow(window, isGlobal: false)
-        // Merge with any existing well-specific parameters to avoid losing untouched overrides
-        if selectedWellIndex >= 0 && selectedWellIndex < wellData.count {
+        // Extract ALL parameters from the UI fields 
+        let allParametersFromWindow = extractParametersFromWindow(window, isGlobal: false)
+        
+        // Get global parameters for comparison
+        let globalParameters = loadGlobalParameters()
+        
+        // Only store parameters that are different from global defaults
+        var changedParameters: [String: Any] = [:]
+        
+        // For single well editing, start with existing well-specific parameters to preserve previous changes not shown in current window
+        // For multi-well editing, start fresh to avoid inheriting parameters from the first selected well
+        if currentMultiEditWells.isEmpty && selectedWellIndex >= 0 && selectedWellIndex < wellData.count {
             let well = wellData[selectedWellIndex]
             if let existing = wellParametersMap[well.well] {
-                // Keep existing values for keys not present in the current extraction
-                for (k, v) in existing where parameters[k] == nil {
-                    parameters[k] = v
-                }
+                changedParameters = existing
             }
         }
         
-        if parameters.isEmpty {
-            statusLabel.stringValue = "Failed to extract parameters"
-            return
+        // Compare window values with global defaults and only keep differences
+        for (key, windowValue) in allParametersFromWindow {
+            if let globalValue = globalParameters[key] {
+                // Check if values are different (handle different types properly)
+                let valuesAreDifferent = !areParameterValuesEqual(windowValue, globalValue)
+                if valuesAreDifferent {
+                    changedParameters[key] = windowValue
+                    print("📝 Parameter \(key) differs from global: window=\(windowValue), global=\(globalValue)")
+                } else {
+                    // Value matches global default, remove from well-specific overrides if it exists
+                    changedParameters.removeValue(forKey: key)
+                    print("🔄 Parameter \(key) matches global default, removing override")
+                }
+            } else {
+                // Parameter not in global defaults, keep it
+                changedParameters[key] = windowValue
+                print("➕ Parameter \(key) not in global defaults, keeping: \(windowValue)")
+            }
         }
         
-        // Validate parameters
-        guard validateParameters(parameters) else {
+        // Validate the changed parameters
+        if !changedParameters.isEmpty && !validateParameters(changedParameters) {
             statusLabel.stringValue = "Invalid parameter values detected"
             return
         }
@@ -2385,31 +2939,106 @@ private func setupConstraints(in contentView: NSView) {
         // Close window first
         closeWellParameterWindow()
         
-        // Store parameters for this specific well
-        if selectedWellIndex >= 0 && selectedWellIndex < wellData.count {
-            let well = wellData[selectedWellIndex]
-            wellParametersMap[well.well] = parameters
-            print("✅ Saved \(parameters.count) parameters for well \(well.well): \(parameters.keys.sorted())")
-            print("   wellParametersMap now has \(wellParametersMap.count) entries: \(Array(wellParametersMap.keys).sorted())")
-            // Mark as edited in our table model and refresh row
-            let current = wellData[selectedWellIndex]
-            wellData[selectedWellIndex] = WellData(well: current.well,
-                                                   sampleName: current.sampleName,
-                                                   dropletCount: current.dropletCount,
-                                                   hasData: current.hasData,
-                                                   status: current.status,
-                                                   isEdited: true)
-            applyFilters()
+        // Apply changed parameters to selected wells (handles both single and multi-well editing)
+        let wellsToUpdate = currentMultiEditWells.isEmpty ? 
+            (selectedWellIndex >= 0 && selectedWellIndex < wellData.count ? [wellData[selectedWellIndex].well] : []) : 
+            currentMultiEditWells
+        
+        print("📝 Applying parameters to \(wellsToUpdate.count) wells: \(wellsToUpdate)")
+        
+        for wellName in wellsToUpdate {
+            // Find the well index for this well name
+            guard let wellIndex = wellData.firstIndex(where: { $0.well == wellName }) else {
+                print("⚠️ Could not find well index for \(wellName)")
+                continue
+            }
             
-            // Apply parameters and re-process the specific well
-            applyParametersAndRegeneratePlot(wellName: well.well, parameters: parameters)
+            if changedParameters.isEmpty {
+                // No parameters differ from global defaults, remove well from map
+                wellParametersMap.removeValue(forKey: wellName)
+                print("✅ No parameter differences found, removed well \(wellName) from custom parameters")
+                
+                // Mark as not edited since it now uses global parameters
+                let current = wellData[wellIndex]
+                wellData[wellIndex] = WellData(well: current.well,
+                                             sampleName: current.sampleName,
+                                             dropletCount: current.dropletCount,
+                                             hasData: current.hasData,
+                                             status: current.status,
+                                             isEdited: false)
+            } else {
+                // Merge changed parameters with existing well-specific parameters
+                var wellSpecificParams = wellParametersMap[wellName] ?? [:]
+                
+                // Apply the changes from this edit session
+                for (key, value) in changedParameters {
+                    wellSpecificParams[key] = value
+                }
+                
+                // Remove any parameters that now match global defaults (cleanup)
+                let globalParameters = loadGlobalParameters()
+                var paramsToRemove: [String] = []
+                for (key, value) in wellSpecificParams {
+                    if let globalValue = globalParameters[key] {
+                        if areParameterValuesEqual(value, globalValue) {
+                            paramsToRemove.append(key)
+                            print("🔄 Parameter \(key) now matches global default, removing from well \(wellName)")
+                        }
+                    }
+                }
+                
+                for key in paramsToRemove {
+                    wellSpecificParams.removeValue(forKey: key)
+                }
+                
+                // Store the merged parameters and mark well accordingly
+                let current = wellData[wellIndex]
+                if wellSpecificParams.isEmpty {
+                    wellParametersMap.removeValue(forKey: wellName)
+                    print("✅ All parameters match global defaults, removed well \(wellName) from custom parameters")
+                    
+                    // Mark as not edited since it now uses only global parameters
+                    wellData[wellIndex] = WellData(well: current.well,
+                                                 sampleName: current.sampleName,
+                                                 dropletCount: current.dropletCount,
+                                                 hasData: current.hasData,
+                                                 status: current.status,
+                                                 isEdited: false)
+                } else {
+                    wellParametersMap[wellName] = wellSpecificParams
+                    print("✅ Merged \(changedParameters.count) changed parameters with existing parameters for well \(wellName). Total: \(wellSpecificParams.count) custom parameters: \(wellSpecificParams.keys.sorted())")
+                    
+                    // Mark as edited since it has custom parameters
+                    wellData[wellIndex] = WellData(well: current.well,
+                                                 sampleName: current.sampleName,
+                                                 dropletCount: current.dropletCount,
+                                                 hasData: current.hasData,
+                                                 status: current.status,
+                                                 isEdited: true)
+                }
+            }
         }
+        
+        print("   wellParametersMap now has \(wellParametersMap.count) entries: \(Array(wellParametersMap.keys).sorted())")
+        applyFilters()
+        
+        // Apply parameters and re-process all updated wells
+        // For processing, we need to merge changed parameters with global defaults
+        var parametersForProcessing = globalParameters
+        for (key, value) in changedParameters {
+            parametersForProcessing[key] = value
+        }
+        
+        for wellName in wellsToUpdate {
+            applyParametersAndRegeneratePlot(wellName: wellName, parameters: parametersForProcessing)
+        }
+        
+        // Clear the multi-edit array after saving
+        currentMultiEditWells.removeAll()
     }
     
     @objc private func saveGlobalParameters() {
         guard let window = currentGlobalWindow else { return }
-        
-        showProcessingIndicator("Saving global parameters and re-processing all wells...")
         
         // Extract parameters from the UI fields
         let parameters = extractParametersFromWindow(window, isGlobal: true)
@@ -2419,7 +3048,7 @@ private func setupConstraints(in contentView: NSView) {
             return
         }
         
-        // Validate parameters
+        // Validate parameters BEFORE showing processing indicator
         print("🔍 Validating extracted global parameters...")
         guard validateParameters(parameters) else {
             print("❌ Global parameter validation failed")
@@ -2427,6 +3056,9 @@ private func setupConstraints(in contentView: NSView) {
             return
         }
         print("✅ Global parameter validation passed")
+        
+        // Only show processing indicator after validation passes
+        showProcessingIndicator("Saving global parameters and re-processing all wells...")
         
         // Save parameters to file for persistence
         saveParametersToFile(parameters)
@@ -2437,6 +3069,35 @@ private func setupConstraints(in contentView: NSView) {
         // Apply parameters and re-process all wells
         if selectedFolderURL != nil {
             applyGlobalParametersAndReanalyze(parameters: parameters)
+        }
+    }
+    
+    // Helper function to compare parameter values of different types
+    private func areParameterValuesEqual(_ value1: Any, _ value2: Any) -> Bool {
+        // Handle different types of parameter values
+        if let dict1 = value1 as? [String: Any], let dict2 = value2 as? [String: Any] {
+            // Compare dictionaries (like EXPECTED_CENTROIDS, EXPECTED_COPY_NUMBERS)
+            if dict1.count != dict2.count { return false }
+            for (key, val1) in dict1 {
+                guard let val2 = dict2[key] else { return false }
+                if !areParameterValuesEqual(val1, val2) { return false }
+            }
+            return true
+        } else if let arr1 = value1 as? [Double], let arr2 = value2 as? [Double] {
+            // Compare arrays of doubles
+            return arr1.count == arr2.count && zip(arr1, arr2).allSatisfy { abs($0 - $1) < 1e-10 }
+        } else if let num1 = value1 as? NSNumber, let num2 = value2 as? NSNumber {
+            // Compare numbers (Int, Double, etc.)
+            return num1.isEqual(to: num2)
+        } else if let int1 = value1 as? Int, let int2 = value2 as? Int {
+            return int1 == int2
+        } else if let double1 = value1 as? Double, let double2 = value2 as? Double {
+            return abs(double1 - double2) < 1e-10
+        } else if let str1 = value1 as? String, let str2 = value2 as? String {
+            return str1 == str2
+        } else {
+            // Fallback: convert to string and compare
+            return "\(value1)" == "\(value2)"
         }
     }
     
@@ -2457,34 +3118,61 @@ private func setupConstraints(in contentView: NSView) {
                     // Handle different parameter types
                     if identifier.hasPrefix("EXPECTED_CENTROIDS_") {
                         let target = String(identifier.dropFirst("EXPECTED_CENTROIDS_".count))
-                        let coordinates = textField.stringValue.components(separatedBy: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-                        if coordinates.count == 2 {
-                            if parameters["EXPECTED_CENTROIDS"] == nil {
-                                parameters["EXPECTED_CENTROIDS"] = [String: [Double]]()
+                        let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmedValue.isEmpty {
+                            // Store as empty string to detect missing required fields
+                            parameters[identifier] = ""
+                        } else {
+                            let coordinates = textField.stringValue.components(separatedBy: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+                            if coordinates.count == 2 {
+                                if parameters["EXPECTED_CENTROIDS"] == nil {
+                                    parameters["EXPECTED_CENTROIDS"] = [String: [Double]]()
+                                }
+                                var centroids = parameters["EXPECTED_CENTROIDS"] as! [String: [Double]]
+                                centroids[target] = coordinates
+                                parameters["EXPECTED_CENTROIDS"] = centroids
+                            } else {
+                                // Store as invalid string for validation
+                                parameters[identifier] = trimmedValue
                             }
-                            var centroids = parameters["EXPECTED_CENTROIDS"] as! [String: [Double]]
-                            centroids[target] = coordinates
-                            parameters["EXPECTED_CENTROIDS"] = centroids
                         }
                     } else if identifier.hasPrefix("EXPECTED_COPY_NUMBERS_") {
                         let chrom = String(identifier.dropFirst("EXPECTED_COPY_NUMBERS_".count))
-                        if let value = Double(textField.stringValue) {
+                        let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmedValue.isEmpty {
+                            // Store as empty string to detect missing required fields
+                            parameters[identifier] = ""
+                        } else if let value = Double(trimmedValue) {
                             if parameters["EXPECTED_COPY_NUMBERS"] == nil {
                                 parameters["EXPECTED_COPY_NUMBERS"] = [String: Double]()
                             }
                             var copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as! [String: Double]
                             copyNumbers[chrom] = value
                             parameters["EXPECTED_COPY_NUMBERS"] = copyNumbers
+                            // Also store individual parameter for consistency
+                            parameters[identifier] = value
+                        } else {
+                            // Store as invalid string for validation
+                            parameters[identifier] = trimmedValue
                         }
                     } else if identifier.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
                         let chrom = String(identifier.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
-                        if let value = Double(textField.stringValue) {
+                        let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmedValue.isEmpty {
+                            // Store as empty string to detect missing required fields
+                            parameters[identifier] = ""
+                        } else if let value = Double(trimmedValue) {
                             if parameters["EXPECTED_STANDARD_DEVIATION"] == nil {
                                 parameters["EXPECTED_STANDARD_DEVIATION"] = [String: Double]()
                             }
                             var stdDevs = parameters["EXPECTED_STANDARD_DEVIATION"] as! [String: Double]
                             stdDevs[chrom] = value
                             parameters["EXPECTED_STANDARD_DEVIATION"] = stdDevs
+                            // Also store individual parameter for consistency
+                            parameters[identifier] = value
+                        } else {
+                            // Store as invalid string for validation
+                            parameters[identifier] = trimmedValue
                         }
                     } else if identifier == "ANEUPLOIDY_TARGETS_LOW" || identifier == "ANEUPLOIDY_TARGETS_HIGH" {
                         if let value = Double(textField.stringValue) {
@@ -2497,22 +3185,33 @@ private func setupConstraints(in contentView: NSView) {
                             parameters["ANEUPLOIDY_TARGETS"] = targets
                         }
                     } else {
-                        // Handle other numeric parameters
-                        if let intValue = Int(textField.stringValue) {
+                        // Handle other numeric parameters - check for empty values
+                        let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmedValue.isEmpty {
+                            parameters[identifier] = ""
+                            print("⚠️ Extracted empty \(identifier)")
+                        } else if let intValue = Int(trimmedValue) {
                             parameters[identifier] = intValue
                             print("✅ Extracted \(identifier) = \(intValue) (Int)")
-                        } else if let doubleValue = Double(textField.stringValue) {
+                        } else if let doubleValue = Double(trimmedValue) {
                             parameters[identifier] = doubleValue
                             print("✅ Extracted \(identifier) = \(doubleValue) (Double)")
                         } else {
-                            parameters[identifier] = textField.stringValue
-                            print("✅ Extracted \(identifier) = \(textField.stringValue) (String)")
+                            parameters[identifier] = trimmedValue
+                            print("✅ Extracted \(identifier) = \(trimmedValue) (String)")
                         }
                     }
                 } else if let popup = subview as? NSPopUpButton,
                           let identifier = popup.identifier?.rawValue,
                           !identifier.isEmpty {
-                    parameters[identifier] = popup.titleOfSelectedItem ?? ""
+                    if identifier == "CHROMOSOME_COUNT" {
+                        // Convert chromosome count to integer
+                        if let title = popup.titleOfSelectedItem, let count = Int(title) {
+                            parameters[identifier] = count
+                        }
+                    } else {
+                        parameters[identifier] = popup.titleOfSelectedItem ?? ""
+                    }
                 }
                 
                 // Recursively search subviews
@@ -2528,6 +3227,18 @@ private func setupConstraints(in contentView: NSView) {
                 if let v = item.view { extractFromView(v) }
             }
         }
+        
+        // Ensure all chromosome dictionaries are properly formed if any individual fields exist
+        let hasCopyNumberFields = parameters.keys.contains { $0.hasPrefix("EXPECTED_COPY_NUMBERS_") }
+        let hasStdDevFields = parameters.keys.contains { $0.hasPrefix("EXPECTED_STANDARD_DEVIATION_") }
+        
+        if hasCopyNumberFields && parameters["EXPECTED_COPY_NUMBERS"] == nil {
+            parameters["EXPECTED_COPY_NUMBERS"] = [String: Double]()
+        }
+        if hasStdDevFields && parameters["EXPECTED_STANDARD_DEVIATION"] == nil {
+            parameters["EXPECTED_STANDARD_DEVIATION"] = [String: Double]()
+        }
+        
         print("   Found \(foundFields) UI fields total")
         print("   Extracted \(parameters.count) parameters: \(parameters.keys.sorted())")
         return parameters
@@ -2536,6 +3247,141 @@ private func setupConstraints(in contentView: NSView) {
     private func validateParameters(_ parameters: [String: Any]) -> Bool {
         // Validate only the parameters that are present, not all required parameters
         // This allows partial parameter sets from different tabs
+        
+        // Check for empty required string parameters
+        let stringParams = ["HDBSCAN_METRIC", "HDBSCAN_CLUSTER_SELECTION_METHOD"]
+        for param in stringParams {
+            if let value = parameters[param] as? String, value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                showError("\(param.replacingOccurrences(of: "_", with: " ").capitalized) cannot be empty")
+                return false
+            }
+        }
+        
+        // Check for empty numeric parameters (converted from empty strings)
+        let requiredNumericFields = [
+            "HDBSCAN_MIN_CLUSTER_SIZE", "HDBSCAN_MIN_SAMPLES", "HDBSCAN_EPSILON", 
+            "MIN_POINTS_FOR_CLUSTERING", "BASE_TARGET_TOLERANCE", 
+            "SCALE_FACTOR_MIN", "SCALE_FACTOR_MAX", "TOLERANCE_MULTIPLIER"
+        ]
+        
+        for field in requiredNumericFields {
+            if parameters[field] != nil {
+                // Parameter is present, check if it's valid
+                if let strValue = parameters[field] as? String, strValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    showError("\(field.replacingOccurrences(of: "_", with: " ").capitalized) cannot be empty")
+                    return false
+                }
+                // Also check if numeric conversion failed (resulting in nil)
+                if parameters[field] == nil || 
+                   (parameters[field] as? Int == nil && parameters[field] as? Double == nil && parameters[field] as? String != nil) {
+                    showError("\(field.replacingOccurrences(of: "_", with: " ").capitalized) must be a valid number")
+                    return false
+                }
+            }
+        }
+        
+        // Check for empty dynamic centroid fields and ensure complete chromosome configurations
+        var configuredChroms = Set<String>()
+        var chromsWithCentroids = Set<String>()
+        var chromsWithCopyNumbers = Set<String>()
+        var chromsWithStdDevs = Set<String>()
+        
+        // First pass: identify all configured chromosomes and check for empty fields
+        for (key, value) in parameters {
+            if key.hasPrefix("EXPECTED_CENTROIDS_") {
+                let targetName = String(key.dropFirst("EXPECTED_CENTROIDS_".count))
+                if targetName.starts(with: "Chrom") {
+                    configuredChroms.insert(targetName)
+                    if let stringValue = value as? String, stringValue.isEmpty {
+                        let displayName = targetName.replacingOccurrences(of: "Chrom", with: "Target ")
+                        showError("Expected centroids for \(displayName) cannot be empty")
+                        return false
+                    } else {
+                        chromsWithCentroids.insert(targetName)
+                    }
+                }
+            }
+            if key.hasPrefix("EXPECTED_COPY_NUMBERS_") {
+                let chromName = String(key.dropFirst("EXPECTED_COPY_NUMBERS_".count))
+                configuredChroms.insert(chromName)
+                if let stringValue = value as? String, stringValue.isEmpty {
+                    let displayName = chromName.replacingOccurrences(of: "Chrom", with: "Target ")
+                    showError("Expected copy number for \(displayName) cannot be empty")
+                    return false
+                } else {
+                    chromsWithCopyNumbers.insert(chromName)
+                }
+            }
+            if key.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
+                let chromName = String(key.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
+                configuredChroms.insert(chromName)
+                if let stringValue = value as? String, stringValue.isEmpty {
+                    let displayName = chromName.replacingOccurrences(of: "Chrom", with: "Target ")
+                    showError("Standard deviation for \(displayName) cannot be empty")
+                    return false
+                } else {
+                    chromsWithStdDevs.insert(chromName)
+                }
+            }
+        }
+        
+        // Also check chromosomes in the combined dictionaries
+        if let centroids = parameters["EXPECTED_CENTROIDS"] as? [String: [Double]] {
+            for target in centroids.keys {
+                if target.starts(with: "Chrom") {
+                    configuredChroms.insert(target)
+                    chromsWithCentroids.insert(target)
+                }
+            }
+        }
+        if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double] {
+            for chrom in copyNumbers.keys {
+                configuredChroms.insert(chrom)
+                chromsWithCopyNumbers.insert(chrom)
+            }
+        }
+        if let stdDevs = parameters["EXPECTED_STANDARD_DEVIATION"] as? [String: Double] {
+            for chrom in stdDevs.keys {
+                configuredChroms.insert(chrom)
+                chromsWithStdDevs.insert(chrom)
+            }
+        }
+        
+        // Second pass: ensure all configured chromosomes have complete configuration
+        for chrom in configuredChroms {
+            let displayName = chrom.replacingOccurrences(of: "Chrom", with: "Target ")
+            if !chromsWithCentroids.contains(chrom) {
+                showError("Missing centroids for \(displayName)")
+                return false
+            }
+            if !chromsWithCopyNumbers.contains(chrom) {
+                showError("Missing copy number for \(displayName)")
+                return false
+            }
+            if !chromsWithStdDevs.contains(chrom) {
+                showError("Missing standard deviation for \(displayName)")
+                return false
+            }
+        }
+        
+        // Validate copy number and centroid data for completeness
+        if let centroids = parameters["EXPECTED_CENTROIDS"] as? [String: [Double]] {
+            for (target, coords) in centroids {
+                if coords.count < 2 {
+                    showError("Expected centroids for \(target) must have both HEX and FAM coordinates")
+                    return false
+                }
+            }
+        }
+        
+        if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double] {
+            for (target, value) in copyNumbers {
+                if value <= 0 {
+                    showError("Expected copy number for \(target) must be greater than 0")
+                    return false
+                }
+            }
+        }
         
         // Validate HDBSCAN parameters if present
         if let minClusterSize = parameters["HDBSCAN_MIN_CLUSTER_SIZE"] as? Int {
@@ -2692,6 +3538,7 @@ defaults = {
     'COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD': 0.15,
     'COPY_NUMBER_BASELINE_MIN_CHROMS': 3,
     'TOLERANCE_MULTIPLIER': 3,
+    'CHROMOSOME_COUNT': 5,
     'EXPECTED_CENTROIDS': {
         'Negative': [1000, 900],
         'Chrom1': [1000, 2300],
@@ -2779,65 +3626,92 @@ print(json.dumps(defaults))
         
         var restoredFields = 0
         var totalFields = 0
+        let defaultChromCount = 5 // Default chromosome count
         
-        func restoreInView(_ view: NSView) {
+        // Get default chromosome count from parameters (fallback to 5)
+        let targetChromCount = parameters["CHROMOSOME_COUNT"] as? Int ?? defaultChromCount
+        
+        print("🔧 Restoring to chromosome count: \(targetChromCount)")
+        
+        // Simple approach: Just restore values to all fields that exist, and trigger a chromosome count change
+        func restoreAllFields(_ view: NSView) {
             for subview in view.subviews {
                 if let textField = subview as? NSTextField,
                    let identifier = textField.identifier?.rawValue,
                    !identifier.isEmpty {
                     totalFields += 1
-                    print("🔍 Found text field with identifier: \(identifier)")
                     
                     // Handle different parameter types
                     if identifier.hasPrefix("EXPECTED_CENTROIDS_") {
                         let target = String(identifier.dropFirst("EXPECTED_CENTROIDS_".count))
                         if let centroids = parameters["EXPECTED_CENTROIDS"] as? [String: [Double]],
-                           let coords = centroids[target] {
+                           let coords = centroids[target], coords.count >= 2 {
                             textField.stringValue = "\(Int(coords[0])), \(Int(coords[1]))"
+                            restoredFields += 1
+                            print("✅ Restored centroid \(target): \(textField.stringValue)")
                         }
                     } else if identifier.hasPrefix("EXPECTED_COPY_NUMBERS_") {
                         let chrom = String(identifier.dropFirst("EXPECTED_COPY_NUMBERS_".count))
                         if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double],
                            let value = copyNumbers[chrom] {
                             textField.stringValue = String(value)
+                            restoredFields += 1
+                            print("✅ Restored copy number \(chrom): \(textField.stringValue)")
                         }
                     } else if identifier.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
                         let chrom = String(identifier.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
                         if let stdDevs = parameters["EXPECTED_STANDARD_DEVIATION"] as? [String: Double],
                            let value = stdDevs[chrom] {
                             textField.stringValue = String(value)
+                            restoredFields += 1
+                            print("✅ Restored standard deviation \(chrom): \(textField.stringValue)")
                         }
                     } else if identifier == "ANEUPLOIDY_TARGETS_LOW" {
                         if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
                            let value = targets["low"] {
                             textField.stringValue = String(value)
+                            restoredFields += 1
                         }
                     } else if identifier == "ANEUPLOIDY_TARGETS_HIGH" {
                         if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
                            let value = targets["high"] {
                             textField.stringValue = String(value)
+                            restoredFields += 1
                         }
                     } else if let value = parameters[identifier] {
                         let oldValue = textField.stringValue
                         textField.stringValue = String(describing: value)
                         restoredFields += 1
                         print("✅ Restored \(identifier): \(oldValue) → \(value)")
-                    } else {
-                        print("⚠️ No parameter found for identifier: \(identifier) (current value: \(textField.stringValue))")
                     }
                 } else if let popup = subview as? NSPopUpButton,
-                          let identifier = popup.identifier?.rawValue,
-                          let value = parameters[identifier] as? String {
-                    popup.selectItem(withTitle: value)
+                          let identifier = popup.identifier?.rawValue {
+                    if identifier == "CHROMOSOME_COUNT" {
+                        // Set chromosome count and trigger the change event
+                        let currentSelection = popup.titleOfSelectedItem
+                        popup.selectItem(withTitle: String(targetChromCount))
+                        restoredFields += 1
+                        print("✅ Set chromosome count to \(targetChromCount) (was: \(currentSelection ?? "nil"))")
+                        
+                        // Only trigger the change event if the value actually changed
+                        if currentSelection != String(targetChromCount) {
+                            print("🔄 Triggering chromosome count change event...")
+                            chromosomeCountChanged(popup)
+                        }
+                    } else if let value = parameters[identifier] as? String {
+                        popup.selectItem(withTitle: value)
+                        restoredFields += 1
+                    }
                 }
                 
                 // Recursively restore in subviews
-                restoreInView(subview)
+                restoreAllFields(subview)
             }
         }
         
-        restoreInView(window.contentView!)
-        print("🔧 Restoration complete: restored \(restoredFields)/\(totalFields) fields")
+        restoreAllFields(window.contentView!)
+        
+        print("🔧 Restoration complete: restored \(restoredFields)/\(totalFields) fields with chromosome count \(targetChromCount)")
     }
     
     private func loadGlobalParameters() -> [String: Any] {
@@ -2996,13 +3870,75 @@ print(json.dumps(defaults))
     }
 
     @objc private func editWellParameters() {
-        guard selectedWellIndex >= 0 && selectedWellIndex < wellData.count else { return }
-        let well = wellData[selectedWellIndex]
-        openParameterWindow(isGlobal: false, title: "Edit Parameters - \(well.well)")
+        let selectedRows = wellListView.selectedRowIndexes
+        guard !selectedRows.isEmpty else { return }
+        
+        if selectedRows.count == 1 {
+            // Single well selection - existing behavior
+            guard selectedWellIndex >= 0 && selectedWellIndex < wellData.count else { return }
+            let well = wellData[selectedWellIndex]
+            openParameterWindow(isGlobal: false, title: "Edit Parameters - \(well.well)")
+        } else {
+            // Multiple well selection - batch edit
+            let selectedWells = selectedRows.compactMap { row -> String? in
+                guard row >= 0 && row < filteredWellData.count else { return nil }
+                return filteredWellData[row].well
+            }
+            
+            if !selectedWells.isEmpty {
+                let title = "Edit Parameters - \(selectedWells.count) Wells (\(selectedWells.sorted().joined(separator: ", ")))"
+                openMultiWellParameterWindow(wells: selectedWells, title: title)
+            }
+        }
     }
     
     @objc private func editGlobalParameters() {
         openParameterWindow(isGlobal: true, title: "Global Parameters")
+    }
+    
+    private func openMultiWellParameterWindow(wells: [String], title: String) {
+        print("🔧 Opening multi-well parameter window for \(wells.count) wells: \(wells.sorted().joined(separator: ", "))")
+        
+        // Store the wells to be edited
+        currentMultiEditWells = wells
+        
+        // Use the first well as the base for parameters, but mark as multi-edit mode
+        if let firstWell = wells.first,
+           let originalIndex = wellData.firstIndex(where: { $0.well == firstWell }) {
+            selectedWellIndex = originalIndex
+            openParameterWindow(isGlobal: false, title: title)
+        }
+    }
+    
+    // Track multi-well editing state
+    private var currentMultiEditWells: [String] = []
+    
+    @objc private func exportAll() {
+        print("🚀 exportAll() called!")
+        guard let sourceFolder = selectedFolderURL else { 
+            print("❌ No source folder selected")
+            return 
+        }
+        
+        print("📂 Source folder: \(sourceFolder.path)")
+        
+        let openPanel = NSOpenPanel()
+        openPanel.canChooseFiles = false
+        openPanel.canChooseDirectories = true
+        openPanel.allowsMultipleSelection = false
+        if let last = lastURL(for: "LastDir.ExportAll") { openPanel.directoryURL = last }
+        openPanel.prompt = "Select Export Folder"
+        openPanel.message = "Choose a folder to export Excel file, parameters, and plots"
+        
+        print("📁 Showing export folder selection dialog...")
+        let response = openPanel.runModal()
+        if response == .OK, let exportFolder = openPanel.url {
+            print("✅ User selected export folder: \(exportFolder.path)")
+            setLastURL(exportFolder, for: "LastDir.ExportAll")
+            performComprehensiveExport(to: exportFolder, sourceFolder: sourceFolder)
+        } else {
+            print("❌ User cancelled export folder selection")
+        }
     }
     
     @objc private func exportExcel() {
@@ -3019,6 +3955,625 @@ print(json.dumps(defaults))
             exportExcelFile(to: saveURL, sourceFolder: folderURL)
         }
     }
+    
+    @objc private func chromosomeCountChanged(_ sender: NSPopUpButton) {
+        // Get the new chromosome count
+        guard let selectedTitle = sender.titleOfSelectedItem,
+              let newCount = Int(selectedTitle) else { return }
+        
+        print("🔄 Chromosome count changed to: \(newCount)")
+        
+        // Find the current tab view and update the centroids view dynamically
+        if let tabView = currentParamTabView {
+            // Find the centroids tab
+            for item in tabView.tabViewItems {
+                if item.identifier as? String == "centroids" {
+                    if let scrollView = item.view as? NSScrollView,
+                       let documentView = scrollView.documentView {
+                        updateCentroidsViewForTargetCount(documentView, targetCount: newCount, parameters: { if let window = currentWellWindow ?? currentGlobalWindow { return extractParametersFromWindow(window, isGlobal: currentWellWindow == nil) } else { return loadGlobalParameters() } }())
+                    }
+                    break
+                }
+            }
+        }
+        
+        // Also update copy number tab if it exists
+        if let tabView = currentParamTabView {
+            for item in tabView.tabViewItems {
+                if item.identifier as? String == "copynumber" {
+                    if let scrollView = item.view as? NSScrollView,
+                       let documentView = scrollView.documentView {
+                        updateCopyNumberViewForTargetCount(documentView, targetCount: newCount, parameters: { if let window = currentWellWindow ?? currentGlobalWindow { return extractParametersFromWindow(window, isGlobal: currentWellWindow == nil) } else { return loadGlobalParameters() } }())
+                    }
+                    break
+                }
+            }
+        }
+    }
+    
+    // MARK: - Comprehensive Export
+    
+    private func performComprehensiveExport(to exportFolder: URL, sourceFolder: URL) {
+        statusLabel.stringValue = "Starting comprehensive export..."
+        print("🚀 Starting comprehensive export to: \(exportFolder.path)")
+        print("🚀 Source folder: \(sourceFolder.path)")
+        
+        DispatchQueue.global().async { [weak self] in
+            guard let self = self else { 
+                print("❌ Self is nil in comprehensive export")
+                return 
+            }
+            
+            // Create export structure
+            let excelURL = exportFolder.appendingPathComponent("ddQuint_Results.xlsx")
+            let parametersURL = exportFolder.appendingPathComponent("ddQuint_Parameters.json")
+            let graphsFolder = exportFolder.appendingPathComponent("Graphs")
+            
+            var exportSuccess = true
+            var exportSteps = 0
+            let totalSteps = 3
+            
+            print("📂 Export paths:")
+            print("   Excel: \(excelURL.path)")
+            print("   Parameters: \(parametersURL.path)")
+            print("   Graphs: \(graphsFolder.path)")
+            
+            // Step 1: Export Excel file
+            DispatchQueue.main.async {
+                self.statusLabel.stringValue = "Exporting Excel file... (1/3)"
+            }
+            
+            print("📊 Starting Excel export...")
+            if self.exportExcelToURL(excelURL, sourceFolder: sourceFolder) {
+                exportSteps += 1
+                print("✅ Excel export completed")
+            } else {
+                exportSuccess = false
+                print("❌ Excel export failed")
+            }
+            
+            // Step 2: Export parameters
+            if exportSuccess {
+                DispatchQueue.main.async {
+                    self.statusLabel.stringValue = "Exporting parameters... (2/3)"
+                }
+                
+                print("⚙️ Starting parameters export...")
+                if self.exportParametersToURL(parametersURL) {
+                    exportSteps += 1
+                    print("✅ Parameters export completed")
+                } else {
+                    exportSuccess = false
+                    print("❌ Parameters export failed")
+                }
+            }
+            
+            // Step 3: Export plots
+            if exportSuccess {
+                DispatchQueue.main.async {
+                    self.statusLabel.stringValue = "Exporting plots... (3/3)"
+                }
+                
+                print("📈 Starting plots export...")
+                if self.exportPlotsToFolder(graphsFolder, sourceFolder: sourceFolder) {
+                    exportSteps += 1
+                    print("✅ Plots export completed")
+                } else {
+                    exportSuccess = false
+                    print("❌ Plots export failed")
+                }
+            }
+            
+            // Final status
+            DispatchQueue.main.async {
+                if exportSuccess {
+                    self.statusLabel.stringValue = "Comprehensive export completed successfully"
+                } else {
+                    self.statusLabel.stringValue = "Export failed"
+                    self.showError("Export failed. Check the debug log for details.")
+                }
+            }
+        }
+    }
+    
+    private func exportExcelToURL(_ url: URL, sourceFolder: URL) -> Bool {
+        // Try loading from cache file if not in memory
+        print("🔍 EXCEL_DEBUG: Checking cache before comprehensive export")
+        print("   cachedResults.isEmpty: \(cachedResults.isEmpty)")
+        print("   current cacheKey: \(cacheKey ?? "nil")")
+        
+        if cachedResults.isEmpty || cacheKey != generateCacheKey(folderURL: sourceFolder) {
+            print("🔍 EXCEL_DEBUG: Attempting to load cache from file for comprehensive export")
+            let loaded = loadCacheFromFile(folderURL: sourceFolder)
+            print("   cache load result: \(loaded)")
+        } else {
+            print("🔍 EXCEL_DEBUG: Using existing in-memory cache for comprehensive export")
+        }
+        
+        let currentCacheKey = generateCacheKey(folderURL: sourceFolder)
+        
+        if let existingKey = cacheKey, existingKey == currentCacheKey, !cachedResults.isEmpty {
+            return exportExcelFromCachedResultsSync(to: url, sourceFolder: sourceFolder)
+        }
+        
+        print("❌ No cached results available for Excel export")
+        return false
+    }
+    
+    private func exportParametersToURL(_ url: URL) -> Bool {
+        // Export current global parameters
+        let globalParams = loadGlobalParameters()
+        
+        let bundle: [String: Any] = [
+            "global_parameters": globalParams,
+            "well_parameters": wellParametersMap,
+            "export_date": ISO8601DateFormatter().string(from: Date()),
+            "source": "ddQuint macOS App"
+        ]
+        
+        do {
+            let data = try JSONSerialization.data(withJSONObject: bundle, options: .prettyPrinted)
+            try data.write(to: url)
+            return true
+        } catch {
+            print("❌ Failed to export parameters: \(error)")
+            return false
+        }
+    }
+    
+    private func exportPlotsToFolder(_ folder: URL, sourceFolder: URL) -> Bool {
+        do {
+            // Create graphs folder
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            
+            // Find the temp analysis plots folder (it's created during analysis)
+            let tempBase = NSTemporaryDirectory()
+            let tempPlotsFolder = URL(fileURLWithPath: tempBase).appendingPathComponent("ddquint_analysis_plots")
+            
+            print("🔍 Looking for plots in: \(tempPlotsFolder.path)")
+            
+            if FileManager.default.fileExists(atPath: tempPlotsFolder.path) {
+                let plotFiles = try FileManager.default.contentsOfDirectory(at: tempPlotsFolder, includingPropertiesForKeys: nil)
+                let pngFiles = plotFiles.filter({ $0.pathExtension == "png" })
+                
+                print("🔍 Found \(pngFiles.count) PNG files to export")
+                
+                for plotFile in pngFiles {
+                    let destination = folder.appendingPathComponent(plotFile.lastPathComponent)
+                    try FileManager.default.copyItem(at: plotFile, to: destination)
+                    print("📋 Copied plot: \(plotFile.lastPathComponent)")
+                }
+                
+                return true
+            } else {
+                print("❌ No plots folder found at: \(tempPlotsFolder.path)")
+                return false
+            }
+        } catch {
+            print("❌ Failed to export plots: \(error)")
+            return false
+        }
+    }
+    
+    private func getMaxTargetCount() -> Int {
+        // Calculate maximum chromosome count across all wells
+        
+        // Start with global parameter default
+        let globalParams = loadGlobalParameters()
+        var maxTargetCount = globalParams["CHROMOSOME_COUNT"] as? Int ?? 5
+        print("📊 Global CHROMOSOME_COUNT: \(maxTargetCount)")
+        
+        // Check well-specific parameter overrides
+        for (wellId, params) in wellParametersMap {
+            if let chromCount = params["CHROMOSOME_COUNT"] as? Int {
+                maxTargetCount = max(maxTargetCount, chromCount)
+                print("📊 Well \(wellId) has \(chromCount) targets, max so far: \(maxTargetCount)")
+            }
+        }
+        
+        // Also check cached results for actual chromosome data (in case processing created more targets than configured)
+        for result in cachedResults {
+            if let copyNumbers = result["copy_numbers"] as? [String: Any] {
+                let chromCount = copyNumbers.keys.filter { $0.hasPrefix("Chrom") }.count
+                if chromCount > 0 {
+                    maxTargetCount = max(maxTargetCount, chromCount)
+                    print("📊 Cached result has \(chromCount) targets, max so far: \(maxTargetCount)")
+                }
+            }
+            // Also check centroids data
+            if let centroids = result["centroids"] as? [String: Any] {
+                let chromCount = centroids.keys.filter { $0.hasPrefix("Chrom") }.count
+                if chromCount > 0 {
+                    maxTargetCount = max(maxTargetCount, chromCount)
+                    print("📊 Cached centroids has \(chromCount) targets, max so far: \(maxTargetCount)")
+                }
+            }
+        }
+        
+        print("✅ Maximum target count across all wells: \(maxTargetCount)")
+        return maxTargetCount
+    }
+    
+    private func exportExcelFromCachedResultsSync(to saveURL: URL, sourceFolder: URL) -> Bool {
+        guard let pythonPath = findPython(),
+              let ddquintPath = findDDQuint() else {
+            print("❌ Python or ddQuint not found")
+            return false
+        }
+        
+        // Calculate maximum target count for proper Excel columns
+        let maxTargetCount = getMaxTargetCount()
+        
+        // Save cachedResults to temporary JSON file
+        let tempFile = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ddquint_cached_results.json")
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: cachedResults, options: .prettyPrinted)
+            try jsonData.write(to: tempFile)
+        } catch {
+            print("❌ Failed to create temporary cache file: \(error)")
+            return false
+        }
+        
+        // Execute Python script synchronously with max target count
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: pythonPath)
+        
+        let escapedSavePath = saveURL.path.replacingOccurrences(of: "'", with: "\\'")
+        let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
+        let escapedTempJsonPath = tempFile.path.replacingOccurrences(of: "'", with: "\\'")
+        
+        process.arguments = [
+            "-c",
+            """
+            import sys
+            import json
+            import traceback
+            import os
+            
+            try:
+                sys.path.insert(0, '\(escapedDDQuintPath)')
+                
+                # Initialize config
+                from ddquint.config import Config
+                from ddquint.utils.parameter_editor import load_parameters_if_exist
+                
+                config = Config.get_instance()
+                load_parameters_if_exist(Config)
+                config.finalize_colors()
+                
+                # Import create_list_report
+                from ddquint.core import create_list_report
+                
+                # Load cached results from temp file
+                with open('\(escapedTempJsonPath)', 'r') as f:
+                    results = json.load(f)
+                
+                print(f'DEBUG: Loaded {len(results)} cached results for Excel export (sync)')
+                
+                # Export to Excel using cached results with max target count
+                create_list_report(results, '\(escapedSavePath)', \(maxTargetCount))
+                print('EXCEL_EXPORT_SUCCESS_CACHED_SYNC')
+                
+            except Exception as e:
+                print(f'EXPORT_ERROR: {e}')
+                traceback.print_exc()
+                sys.exit(1)
+            """
+        ]
+        
+        // Set environment
+        var env = ProcessInfo.processInfo.environment
+        if let pythonPath = env["PATH"] {
+            env["PATH"] = "\(ddquintPath):\(pythonPath)"
+        } else {
+            env["PATH"] = ddquintPath
+        }
+        env["PYTHONPATH"] = ddquintPath
+        process.environment = env
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            // Clean up temp file
+            try? FileManager.default.removeItem(at: tempFile)
+            
+            return process.terminationStatus == 0
+        } catch {
+            print("❌ Failed to run Excel export process: \(error)")
+            return false
+        }
+    }
+    
+private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int, parameters: [String: Any] = [:]) {
+    // Column-based layout: first 5 chromosomes go in column 1, next 5 in column 2, etc.
+    
+    let fieldHeight: CGFloat = 24
+    let rowSpacing: CGFloat = 30
+    let columnWidth: CGFloat = 200
+    let columnSpacing: CGFloat = 120  // Move second column further right
+    let chromsPerColumn = 5
+    
+    // Find the first chromosome field to establish the base layout
+    var firstChromY: CGFloat?
+    var firstChromX: CGFloat?
+    for s in view.subviews {
+        if let tf = s as? NSTextField,
+           tf.identifier?.rawValue == "EXPECTED_CENTROIDS_Chrom1" {
+            firstChromY = tf.frame.minY
+            firstChromX = tf.frame.minX
+            break
+        }
+    }
+    
+    // Fallback: use Negative field position and estimate first chrom position
+    if firstChromY == nil {
+        for s in view.subviews {
+            if let tf = s as? NSTextField,
+               tf.identifier?.rawValue == "EXPECTED_CENTROIDS_Negative" {
+                firstChromY = tf.frame.minY - rowSpacing
+                firstChromX = tf.frame.minX
+                break
+            }
+        }
+    }
+    
+    guard let baseY = firstChromY, let baseX = firstChromX else {
+        print("Warning: Could not establish base position")
+        return
+    }
+    
+    // Remove existing Chrom* fields AND labels we created for additional columns only
+    var toRemove: [NSView] = []
+    for s in view.subviews {
+        guard let tf = s as? NSTextField else { continue }
+        if let id = tf.identifier?.rawValue {
+            if id.hasPrefix("EXPECTED_CENTROIDS_Chrom") {
+                toRemove.append(tf)
+            }
+        } else {
+            // Only remove labels for Target 6 and above (additional columns)
+            if tf.stringValue.hasPrefix("Target ") && tf.stringValue.hasSuffix(":") {
+                // Extract target number from "Target X:"
+                let targetStr = tf.stringValue.dropFirst(7).dropLast(1)  // Remove "Target " and ":"
+                if let targetNum = Int(targetStr), targetNum > 5 {
+                    toRemove.append(tf)
+                }
+            }
+        }
+    }
+    toRemove.forEach { $0.removeFromSuperview() }
+    
+    // Load saved values - use passed parameters if available, otherwise extract from current window
+    let currentParameters = !parameters.isEmpty ? parameters : { if let window = currentWellWindow ?? currentGlobalWindow { return extractParametersFromWindow(window, isGlobal: currentWellWindow == nil) } else { return loadGlobalParameters() } }()
+    let savedCentroids = (currentParameters["EXPECTED_CENTROIDS"] as? [String: [Double]]) ?? [:]
+    
+    // Add chromosome fields in column layout
+    for idx in 1...max(0, targetCount) {
+        let chromName = "Chrom\(idx)"
+        
+        // Calculate which column and position within that column
+        let columnIndex = (idx - 1) / chromsPerColumn
+        let positionInColumn = (idx - 1) % chromsPerColumn
+        
+        let columnX = baseX + CGFloat(columnIndex) * (columnWidth + columnSpacing)
+        let fieldY = baseY - CGFloat(positionInColumn) * rowSpacing
+        
+        // Create the field
+        let field = NSTextField()
+        field.identifier = NSUserInterfaceItemIdentifier("EXPECTED_CENTROIDS_\(chromName)")
+        if let coords = savedCentroids[chromName], coords.count >= 2 {
+            field.stringValue = "\(Int(coords[0])), \(Int(coords[1]))"
+        } else {
+            field.stringValue = ""
+        }
+        field.frame = NSRect(x: columnX, y: fieldY, width: 150, height: fieldHeight)
+        field.toolTip = "Expected centroid coordinates (HEX, FAM) for \(chromName)"
+        field.isEditable = true
+        field.isSelectable = true
+        field.isBordered = true
+        field.bezelStyle = .roundedBezel
+        field.backgroundColor = NSColor.textBackgroundColor
+        field.wantsLayer = true
+        field.layer?.zPosition = 10000
+        view.addSubview(field)
+        
+        // Only add label for chromosomes in additional columns (first column uses existing labels)
+        if columnIndex > 0 {
+            let labelX = columnX - 130  // Consistent spacing with first column
+            let label = NSTextField(labelWithString: "Target \(idx):")
+            label.frame = NSRect(x: labelX, y: fieldY, width: 120, height: fieldHeight)
+            // Match the font and style of original labels
+            if let existingLabel = view.subviews.first(where: { 
+                ($0 as? NSTextField)?.stringValue == "Negative:" 
+            }) as? NSTextField {
+                label.font = existingLabel.font
+                label.textColor = existingLabel.textColor
+            }
+            label.wantsLayer = true
+            label.layer?.zPosition = 10000
+            view.addSubview(label)
+        }
+    }
+    
+    // Expand document width if we added additional columns
+    let numberOfColumns = (targetCount + chromsPerColumn - 1) / chromsPerColumn
+    if numberOfColumns > 1 {
+        let requiredWidth = baseX + CGFloat(numberOfColumns - 1) * (columnWidth + columnSpacing) + 200
+        if view.frame.width < requiredWidth {
+            var f = view.frame
+            f.size.width = requiredWidth
+            view.frame = f
+        }
+    }
+    
+    view.needsDisplay = true
+}
+    
+private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int, parameters: [String: Any] = [:]) {
+    // Column grouping: CN1 - CN2 (if needed) - SD1 - SD2 (if needed)
+    // 5 chromosomes per column, tighter spacing since we already have 2 default columns
+    
+    let fieldHeight: CGFloat = 24
+    let rowSpacing: CGFloat = 30
+    let columnSpacing: CGFloat = 30  // Tighter spacing
+    let chromsPerColumn = 5
+    
+    // Find existing first chromosome fields to establish base positions
+    var baseCnY: CGFloat?
+    var baseCnX: CGFloat?
+    var baseSdX: CGFloat?
+    
+    for s in view.subviews {
+        if let tf = s as? NSTextField,
+           let id = tf.identifier?.rawValue {
+            if id == "EXPECTED_COPY_NUMBERS_Chrom1" {
+                baseCnY = tf.frame.minY
+                baseCnX = tf.frame.minX
+            } else if id == "EXPECTED_STANDARD_DEVIATION_Chrom1" {
+                baseSdX = tf.frame.minX
+            }
+        }
+    }
+    
+    guard let baseY = baseCnY, let baseCnXPos = baseCnX, let baseSdXPos = baseSdX else {
+        print("Warning: Could not find base copy number field positions")
+        return
+    }
+    
+    // Remove existing Chrom* fields AND all SD-related labels (both old and new)
+    var toRemove: [NSView] = []
+    for s in view.subviews {
+        guard let tf = s as? NSTextField else { continue }
+        if let id = tf.identifier?.rawValue {
+            if id.hasPrefix("EXPECTED_COPY_NUMBERS_Chrom") || id.hasPrefix("EXPECTED_STANDARD_DEVIATION_Chrom") {
+                toRemove.append(tf)
+            }
+        } else {
+            // Remove Target labels for additional columns (6+) and ALL SD labels
+            if tf.stringValue.hasPrefix("Target ") && tf.stringValue.hasSuffix(":") {
+                // Extract target number from "Target X:"
+                let targetStr = tf.stringValue.dropFirst(7).dropLast(1)  // Remove "Target " and ":"
+                if let targetNum = Int(targetStr), targetNum > 5 {
+                    toRemove.append(tf)
+                }
+            } else if tf.stringValue.hasPrefix("SD ") || tf.stringValue == "SD:" || tf.stringValue == "SD" {
+                // Remove ALL SD-related labels (old "SD:", "SD", and new "SD X:" labels)
+                toRemove.append(tf)
+            }
+        }
+    }
+    toRemove.forEach { $0.removeFromSuperview() }
+    
+    // Load saved values - use passed parameters if available, otherwise extract from current window
+    let currentParameters = !parameters.isEmpty ? parameters : { if let window = currentWellWindow ?? currentGlobalWindow { return extractParametersFromWindow(window, isGlobal: currentWellWindow == nil) } else { return loadGlobalParameters() } }()
+    let savedCNs = (currentParameters["EXPECTED_COPY_NUMBERS"] as? [String: Double]) ?? [:]
+    let savedSDs = (currentParameters["EXPECTED_STANDARD_DEVIATION"] as? [String: Double]) ?? [:]
+    
+    // Calculate total columns needed and positions
+    let totalCnColumns = (targetCount + chromsPerColumn - 1) / chromsPerColumn
+    let totalSdColumns = totalCnColumns
+    
+    // Column positions: CN1, CN2, SD1, SD2 with proper separation
+    let cn1X = baseCnXPos
+    let cn2X = baseCnXPos + (totalCnColumns > 1 ? 180 : 0)  // Shift 20px left from previous 200px
+    // SD1 should always stay at current position - never shift further
+    let sd1X = baseSdXPos  // Use current SD position as-is, no more shifting
+    let sd2X = sd1X + (totalSdColumns > 1 ? 150 : 0)  // Second SD column 150px right of SD1 (was 130px)
+    
+    // Add chromosome fields with new grouping
+    for idx in 1...max(0, targetCount) {
+        let chrom = "Chrom\(idx)"
+        
+        // Calculate which column and position within that column
+        let cnColumnIndex = (idx - 1) / chromsPerColumn  // 0 for first column, 1 for second
+        let positionInColumn = (idx - 1) % chromsPerColumn
+        
+        let fieldY = baseY - CGFloat(positionInColumn) * rowSpacing
+        
+        // Copy Number field - goes in CN1 or CN2 column
+        let cnFieldX = cnColumnIndex == 0 ? cn1X : cn2X
+        let cnField = NSTextField()
+        cnField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_COPY_NUMBERS_\(chrom)")
+        if let v = savedCNs[chrom] { cnField.stringValue = String(v) } else { cnField.stringValue = "" }
+        cnField.isEditable = true
+        cnField.isBordered = true
+        cnField.bezelStyle = .roundedBezel
+        cnField.frame = NSRect(x: cnFieldX, y: fieldY, width: 70, height: fieldHeight)
+        cnField.toolTip = "Expected copy number for \(chrom)"
+        view.addSubview(cnField)
+        
+        // Standard Deviation field - goes in SD1 or SD2 column
+        let sdFieldX = cnColumnIndex == 0 ? sd1X : sd2X
+        let sdField = NSTextField()
+        sdField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_STANDARD_DEVIATION_\(chrom)")
+        if let v = savedSDs[chrom] { sdField.stringValue = String(v) } else { sdField.stringValue = "" }
+        sdField.isEditable = true
+        sdField.isBordered = true
+        sdField.bezelStyle = .roundedBezel
+        sdField.frame = NSRect(x: sdFieldX, y: fieldY, width: 70, height: fieldHeight)
+        sdField.toolTip = "Expected standard deviation for \(chrom)"
+        view.addSubview(sdField)
+        
+        // Add "SD X:" label for first column SD fields too (replace the generic "SD:" labels)
+        if cnColumnIndex == 0 {
+            let sdLabelX = sdFieldX - 60  // 50px gap between label and textbox
+            let sdLabel = NSTextField(labelWithString: "SD \(idx):")
+            sdLabel.frame = NSRect(x: sdLabelX, y: fieldY, width: 55, height: fieldHeight)
+            sdLabel.alignment = .left  // Change to left alignment to see if gap changes
+            // Match the font and style of existing Target labels
+            if let existingLabel = view.subviews.first(where: { 
+                ($0 as? NSTextField)?.stringValue.hasPrefix("Target ") ?? false 
+            }) as? NSTextField {
+                sdLabel.font = existingLabel.font
+                sdLabel.textColor = existingLabel.textColor
+            }
+            view.addSubview(sdLabel)
+        }
+        
+        // Add row labels for second column chromosomes using "Target X" format
+        if cnColumnIndex > 0 {
+            let labelX = cnFieldX - 85  // Consistent spacing with first column
+            let label = NSTextField(labelWithString: "Target \(idx):")
+            label.frame = NSRect(x: labelX, y: fieldY, width: 75, height: fieldHeight)
+            // Match the font and style of existing Target labels
+            if let existingLabel = view.subviews.first(where: { 
+                ($0 as? NSTextField)?.stringValue.hasPrefix("Target ") ?? false 
+            }) as? NSTextField {
+                label.font = existingLabel.font
+                label.textColor = existingLabel.textColor
+            }
+            view.addSubview(label)
+            
+            // Add "SD X:" label for each SD field in second column (proper row labels, not headers)
+            let sdLabelX = sdFieldX - 60  // 50px gap between label and textbox
+            let sdLabel = NSTextField(labelWithString: "SD \(idx):")
+            sdLabel.frame = NSRect(x: sdLabelX, y: fieldY, width: 55, height: fieldHeight)
+            sdLabel.alignment = .left  // Change to left alignment to see if gap changes
+            // Match the font and style of existing Target labels
+            if let existingLabel = view.subviews.first(where: { 
+                ($0 as? NSTextField)?.stringValue.hasPrefix("Target ") ?? false 
+            }) as? NSTextField {
+                sdLabel.font = existingLabel.font
+                sdLabel.textColor = existingLabel.textColor
+            }
+            view.addSubview(sdLabel)
+        }
+    }
+    
+    // Expand document width if needed
+    if totalCnColumns > 1 {
+        let requiredWidth = max(cn2X + 70, sd2X + 70) + 50
+        if view.frame.width < requiredWidth {
+            var f = view.frame
+            f.size.width = requiredWidth
+            view.frame = f
+        }
+    }
+    
+    view.needsDisplay = true
+}
     
     @objc private func exportPlots() {
         guard let folderURL = selectedFolderURL else { return }
@@ -3476,7 +5031,8 @@ print(json.dumps(defaults))
             // Set environment for matplotlib and template settings
             var env = (process.environment ?? ProcessInfo.processInfo.environment).merging([
                 "MPLBACKEND": "Agg",
-                "PYTHONDONTWRITEBYTECODE": "1"
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONUNBUFFERED": "1"  // Enable real-time output to prevent pipe buffer deadlock
             ]) { _, new in new }
             env["DDQ_TEMPLATE_DESC_COUNT"] = String(self?.templateDescriptionCount ?? 4)
             if let tpl = self?.templateFileURL?.path { env["DDQ_TEMPLATE_PATH"] = tpl }
@@ -3547,6 +5103,14 @@ print(json.dumps(defaults))
                                 # Verify the attribute was set
                                 verify_value = getattr(config, key)
                                 print(f'Verification: {key} is now {verify_value}')
+                                
+                                # Special debug for EXPECTED_CENTROIDS
+                                if key == 'EXPECTED_CENTROIDS':
+                                    print(f'DEBUG: EXPECTED_CENTROIDS instance check:')
+                                    print(f'  Instance value: {getattr(config, "EXPECTED_CENTROIDS", "NOT_SET")}')
+                                    print(f'  Class value: {getattr(Config, "EXPECTED_CENTROIDS", "NOT_SET")}')
+                                    print(f'  get_expected_centroids(): {config.get_expected_centroids()}')
+                                
                                 applied_count += 1
                             else:
                                 print(f'Warning: Config has no attribute {key}')
@@ -3566,9 +5130,43 @@ print(json.dumps(defaults))
                             sample_names = _ptf(template_path, description_count=\(templateCount))
                         except Exception as e:
                             print(f'DEBUG:TEMPLATE_PARSE_ERROR {e}')
+                            sample_names = {}
+                    if not sample_names:
+                        try:
+                            # Search for a template file then parse with desired description count  
+                            found = _ftf(folder_path)
+                            if found:
+                                sample_names = _ptf(found, description_count=\(templateCount))
+                            else:
+                                sample_names = {}
+                        except Exception as e:
+                            print(f'DEBUG:TEMPLATE_FALLBACK_ERROR {e}')
+                            sample_names = {}
                     
                     # Process the CSV file (this will regenerate the plot)
-                    result = process_csv_file('\(escapedCSVPath)', graphs_dir, sample_names, verbose=True)
+                    print('DEBUG: About to call process_csv_file for well \(wellName)')
+                    print(f'DEBUG: CSV path: \(escapedCSVPath)')  
+                    print(f'DEBUG: graphs_dir: {graphs_dir}')
+                    print(f'DEBUG: sample_names: {sample_names}')
+                    try:
+                        print('DEBUG: Calling process_csv_file now...')
+                        result = process_csv_file('\(escapedCSVPath)', graphs_dir, sample_names, verbose=True)
+                        print('DEBUG: process_csv_file call completed successfully')
+                        print(f'DEBUG: process_csv_file returned result type: {type(result)}')
+                        print(f'DEBUG: result is None: {result is None}')
+                        print(f'DEBUG: result bool value: {bool(result)}')
+                        if result is None:
+                            print('DEBUG: ERROR - process_csv_file returned None!')
+                        elif isinstance(result, dict):
+                            print(f'DEBUG: result keys: {list(result.keys())}')
+                            print(f'DEBUG: has_buffer_zone: {result.get("has_buffer_zone", "MISSING")}')
+                            print(f'DEBUG: has_aneuploidy: {result.get("has_aneuploidy", "MISSING")}')
+                            print(f'DEBUG: error: {result.get("error", "MISSING")}')
+                        else:
+                            print(f'DEBUG: result is not dict: {str(result)[:200]}')
+                    except Exception as e:
+                        print(f'DEBUG: EXCEPTION in process_csv_file: {str(e)}')
+                        result = None
                     
                     # Check if plot was created
                     plot_path = os.path.join(graphs_dir, '\(wellName).png')
@@ -3618,9 +5216,23 @@ print(json.dumps(defaults))
                                 else:
                                     serializable_result['sample_name'] = '\(wellName)'
                             
+                            # Explicitly include status flags for proper classification (critical for UI updates)
+                            serializable_result['has_buffer_zone'] = bool(result.get('has_buffer_zone', False))
+                            serializable_result['has_aneuploidy'] = bool(result.get('has_aneuploidy', False))
+                            if result.get('error'):
+                                serializable_result['error'] = str(result.get('error'))
+                            
                             print(f'UPDATED_RESULT:{json.dumps(serializable_result)}')
                         else:
-                            print('UPDATED_RESULT:{"well": "\(wellName)", "status": "regenerated", "plot_path": "' + plot_path + '"}')
+                            # Fallback result with proper status flags
+                            fallback_result = {
+                                'well': '\(wellName)',
+                                'status': 'regenerated',
+                                'plot_path': plot_path,
+                                'has_buffer_zone': False,
+                                'has_aneuploidy': False
+                            }
+                            print(f'UPDATED_RESULT:{json.dumps(fallback_result)}')
                     else:
                         print('Plot not found for \(wellName)')
                         print('REGENERATION_FAILED')
@@ -3635,30 +5247,74 @@ print(json.dumps(defaults))
             self?.writeDebugLog("🔧 REGEN: Using inline Python approach")
             
             let outputPipe = Pipe()
+            let errorPipe = Pipe()
             process.standardOutput = outputPipe
-            process.standardError = outputPipe
+            process.standardError = errorPipe
             
             do {
                 self?.writeDebugLog("🔧 REGEN: Starting process...")
                 try process.run()
                 self?.writeDebugLog("🔧 REGEN: Process started, waiting for completion...")
                 
+                // Set up continuous pipe draining to prevent deadlock
+                var outputBuffer = ""
+                var errorBuffer = ""
+                let outputHandle = outputPipe.fileHandleForReading
+                let errorHandle = errorPipe.fileHandleForReading
+                
+                outputHandle.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    if data.count > 0, let string = String(data: data, encoding: .utf8) {
+                        outputBuffer += string
+                    }
+                }
+                
+                errorHandle.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    if data.count > 0, let string = String(data: data, encoding: .utf8) {
+                        errorBuffer += string
+                    }
+                }
+                
                 // Add timeout handling
                 DispatchQueue.global(qos: .userInitiated).async {
                     process.waitUntilExit()
                     
-                    let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8) ?? ""
-                    
-                    DispatchQueue.main.async { [weak self] in
+                    // Clean up handlers and read any remaining data
+                    DispatchQueue.main.async {
+                        outputHandle.readabilityHandler = nil
+                        errorHandle.readabilityHandler = nil
+                        
+                        // Read any final data
+                        let finalOutputData = outputHandle.readDataToEndOfFile()
+                        let finalErrorData = errorHandle.readDataToEndOfFile()
+                        
+                        if let finalOutput = String(data: finalOutputData, encoding: .utf8) {
+                            outputBuffer += finalOutput
+                        }
+                        if let finalError = String(data: finalErrorData, encoding: .utf8) {
+                            errorBuffer += finalError
+                        }
+                        
+                        // Use the buffered output instead of reading from pipe again
+                        let output = outputBuffer
+                        let errorOutput = errorBuffer
+                        
+                        DispatchQueue.main.async { [weak self] in
                         self?.hideCornerSpinner()
                         self?.writeDebugLog("🔧 REGEN: Process completed with exit code: \(process.terminationStatus)")
                         self?.writeDebugLog("🔧 REGEN_OUTPUT: Raw output length: \(output.count) characters")
                         self?.writeDebugLog("🔧 REGEN_OUTPUT: First 500 chars: \(String(output.prefix(500)))")
+                        
+                        if !errorOutput.isEmpty {
+                            self?.writeDebugLog("🔧 REGEN_ERROR: Error output length: \(errorOutput.count) characters")
+                            self?.writeDebugLog("🔧 REGEN_ERROR: \(String(errorOutput.prefix(500)))")
+                        }
+                        
                         self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains EARLY_REMOVAL: \(output.contains("EARLY_REMOVAL"))")
                         self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains PLOT_CREATED: \(output.contains("PLOT_CREATED"))")
                         self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains UPDATED_RESULT: \(output.contains("UPDATED_RESULT"))")
-                        self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains ERROR: \(output.contains("ERROR"))")
+                        self?.writeDebugLog("🔧 REGEN_OUTPUT: Contains ERROR: \(output.contains("ERROR") || !errorOutput.isEmpty)")
                         
                         // Check for exit code errors
                         if process.terminationStatus != 0 {
@@ -3668,6 +5324,7 @@ print(json.dumps(defaults))
                         
                         // Process the output
                         self?.handleWellRegenerationResult(output: output, wellName: wellName)
+                        }
                     }
                 }
                 
@@ -3696,6 +5353,9 @@ print(json.dumps(defaults))
         writeDebugLog("=====WELL REGENERATION DEBUG=====")
         writeDebugLog("Well: \(wellName)")
         writeDebugLog("Output: \(output)")
+        writeDebugLog("Output contains UPDATED_RESULT: \(output.contains("UPDATED_RESULT"))")
+        writeDebugLog("Output contains ERROR: \(output.contains("ERROR"))")
+        writeDebugLog("Output contains DEBUG: \(output.contains("DEBUG"))")
         writeDebugLog("==================================")
         
         // Update cached results if we got updated analysis data
@@ -3777,17 +5437,29 @@ print(json.dumps(defaults))
     }
     
     private func updateCachedResultForWell(wellName: String, resultJson: String) {
+        writeDebugLog("🔄 updateCachedResultForWell called for well: \(wellName)")
+        writeDebugLog("🔄 JSON length: \(resultJson.count) characters")
+        writeDebugLog("🔄 JSON preview: \(String(resultJson.prefix(200)))")
+        
         do {
             let data = resultJson.data(using: .utf8) ?? Data()
             if let updatedResult = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
+                writeDebugLog("🔄 Successfully parsed JSON result")
+                writeDebugLog("🔄 Result keys: \(updatedResult.keys.sorted())")
+                writeDebugLog("🔄 has_buffer_zone: \(updatedResult["has_buffer_zone"] ?? "MISSING")")
+                writeDebugLog("🔄 has_aneuploidy: \(updatedResult["has_aneuploidy"] ?? "MISSING")")
+                writeDebugLog("🔄 error: \(updatedResult["error"] ?? "MISSING")")
+                
                 // Find and update the corresponding entry in cachedResults
                 if let index = cachedResults.firstIndex(where: { ($0["well"] as? String) == wellName }) {
                     cachedResults[index] = updatedResult
                     print("✅ Updated cached results for well \(wellName)")
+                    writeDebugLog("✅ Updated cached results for well \(wellName)")
                 } else {
                     // If not found, append it
                     cachedResults.append(updatedResult)
                     print("✅ Added new cached result for well \(wellName)")
+                    writeDebugLog("✅ Added new cached result for well \(wellName)")
                 }
                 
                 // Persist updated cache to file
@@ -3846,6 +5518,9 @@ print(json.dumps(defaults))
             return
         }
         
+        // Calculate maximum target count for proper Excel columns
+        let maxTargetCount = getMaxTargetCount()
+        
         DispatchQueue.global().async { [weak self] in
             guard let self = self else { return }
             
@@ -3858,7 +5533,7 @@ print(json.dumps(defaults))
                 try jsonData.write(to: tempJsonFile)
                 print("💾 Saved cached results to temp file: \(tempJsonFile.path)")
                 
-                self.executeExcelExportWithTempFile(tempJsonFile: tempJsonFile, saveURL: saveURL, ddquintPath: ddquintPath, pythonPath: pythonPath)
+                self.executeExcelExportWithTempFile(tempJsonFile: tempJsonFile, saveURL: saveURL, ddquintPath: ddquintPath, pythonPath: pythonPath, maxTargetCount: maxTargetCount)
                 
             } catch {
                 DispatchQueue.main.async {
@@ -3869,7 +5544,7 @@ print(json.dumps(defaults))
         }
     }
     
-    private func executeExcelExportWithTempFile(tempJsonFile: URL, saveURL: URL, ddquintPath: String, pythonPath: String) {
+    private func executeExcelExportWithTempFile(tempJsonFile: URL, saveURL: URL, ddquintPath: String, pythonPath: String, maxTargetCount: Int) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
         
@@ -3910,8 +5585,8 @@ print(json.dumps(defaults))
                 
                 print(f'DEBUG: Loaded {len(results)} cached results for Excel export')
                 
-                # Export to Excel using cached results
-                create_list_report(results, '\(escapedSavePath)')
+                # Export to Excel using cached results with max target count
+                create_list_report(results, '\(escapedSavePath)', \(maxTargetCount))
                 print('EXCEL_EXPORT_SUCCESS_CACHED')
                 
                 # Clean up temp file
@@ -3967,6 +5642,9 @@ print(json.dumps(defaults))
             return
         }
         
+        // Calculate maximum target count for proper Excel columns
+        let maxTargetCount = getMaxTargetCount()
+        
         DispatchQueue.global().async { [weak self] in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: pythonPath)
@@ -4005,8 +5683,8 @@ print(json.dumps(defaults))
                     with open('\(escapedResultsPath)', 'r') as f:
                         results = json.load(f)
                     
-                    # Export to Excel using existing results
-                    create_list_report(results, '\(escapedSavePath)')
+                    # Export to Excel using existing results with max target count
+                    create_list_report(results, '\(escapedSavePath)', \(maxTargetCount))
                     print('EXCEL_EXPORT_SUCCESS_FROM_FILE')
                     
                 except Exception as e:
@@ -4376,16 +6054,53 @@ extension InteractiveMainWindowController: NSTableViewDataSource, NSTableViewDel
     }
     
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let selectedRow = wellListView.selectedRow
-        print("Well selection changed to row: \(selectedRow)")
+        let selectedRows = wellListView.selectedRowIndexes
+        print("Well selection changed to rows: \(Array(selectedRows))")
         
-        if selectedRow >= 0 && selectedRow < filteredWellData.count {
-            let selectedWell = filteredWellData[selectedRow]
-            // Find the original index in wellData
-            if let originalIndex = wellData.firstIndex(where: { $0.well == selectedWell.well }) {
-                selectedWellIndex = originalIndex
-                print("Loading plot for well: \(selectedWell.well)")
-                loadPlotForSelectedWell()
+        // Update button text based on selection count
+        if selectedRows.isEmpty {
+            editWellButton.title = "Edit Well"
+            editWellButton.isEnabled = false
+            selectedWellIndex = -1
+        } else if selectedRows.count == 1 {
+            let selectedRow = selectedRows.first!
+            editWellButton.title = "Edit This Well"
+            
+            if selectedRow >= 0 && selectedRow < filteredWellData.count {
+                let selectedWell = filteredWellData[selectedRow]
+                // Find the original index in wellData
+                if let originalIndex = wellData.firstIndex(where: { $0.well == selectedWell.well }) {
+                    selectedWellIndex = originalIndex
+                    let well = wellData[originalIndex]
+                    editWellButton.isEnabled = well.hasData
+                    print("Loading plot for well: \(selectedWell.well)")
+                    loadPlotForSelectedWell()
+                }
+            }
+        } else {
+            // Multiple selection
+            editWellButton.title = "Edit \(selectedRows.count) Wells"
+            
+            // Enable if all selected wells have data
+            let allHaveData = selectedRows.allSatisfy { row in
+                guard row >= 0 && row < filteredWellData.count else { return false }
+                let selectedWell = filteredWellData[row]
+                if let originalIndex = wellData.firstIndex(where: { $0.well == selectedWell.well }) {
+                    return wellData[originalIndex].hasData
+                }
+                return false
+            }
+            editWellButton.isEnabled = allHaveData
+            
+            // For multiple selection, show the first well's plot
+            if let firstRow = selectedRows.first,
+               firstRow >= 0 && firstRow < filteredWellData.count {
+                let firstWell = filteredWellData[firstRow]
+                if let originalIndex = wellData.firstIndex(where: { $0.well == firstWell.well }) {
+                    selectedWellIndex = originalIndex
+                    print("Loading plot for first selected well: \(firstWell.well)")
+                    loadPlotForSelectedWell()
+                }
             }
         }
     }
@@ -4406,7 +6121,9 @@ extension InteractiveMainWindowController {
     // Determine well status from analysis results
     func determineWellStatus(from result: [String: Any], wellName: String) -> WellStatus {
         print("🟡 Determining status for well \(wellName)")
+        writeDebugLog("🟡 determineWellStatus called for well: \(wellName)")
         print("   Available keys: \(result.keys.sorted())")
+        writeDebugLog("🟡 Available keys: \(result.keys.sorted())")
         
         // Check for warnings first (red takes priority)
         if let error = result["error"] as? String, !error.isEmpty {
@@ -4448,6 +6165,7 @@ extension InteractiveMainWindowController {
         
         // Default to euploid
         print("   ⚪ -> EUPLOID (default)")
+        writeDebugLog("🟡 Final status for well \(wellName): EUPLOID (default)")
         return .euploid
     }
     
@@ -4661,6 +6379,16 @@ extension InteractiveMainWindowController {
             processingIndicatorWindow = nil
             print("✅ Processing indicator window closed")
         }
+    }
+    
+    // MARK: - Menu Export Methods
+    
+    func exportExcelFromMenu() {
+        exportExcel()
+    }
+    
+    func exportPlotsFromMenu() {
+        exportPlots()
     }
 }
 

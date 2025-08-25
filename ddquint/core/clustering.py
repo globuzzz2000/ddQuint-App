@@ -51,6 +51,13 @@ def analyze_droplets(df):
     """
     config = Config.get_instance()
     
+    # Debug: Log key parameters that might be well-specific
+    logger.info(f"🔧 CLUSTERING DEBUG - Config instance: {id(config)}")
+    logger.info(f"🔧 CLUSTERING DEBUG - MIN_POINTS_FOR_CLUSTERING: {getattr(config, 'MIN_POINTS_FOR_CLUSTERING', 'NOT_SET')}")
+    logger.info(f"🔧 CLUSTERING DEBUG - HDBSCAN_MIN_CLUSTER_SIZE: {getattr(config, 'HDBSCAN_MIN_CLUSTER_SIZE', 'NOT_SET')}")
+    logger.info(f"🔧 CLUSTERING DEBUG - TOLERANCE_MULTIPLIER: {getattr(config, 'TOLERANCE_MULTIPLIER', 'NOT_SET')}")
+    logger.info(f"🔧 CLUSTERING DEBUG - CHROMOSOME_COUNT: {getattr(config, 'CHROMOSOME_COUNT', 'NOT_SET')}")
+    
     # Suppress specific sklearn warnings that don't affect results
     warnings.filterwarnings("ignore", category=UserWarning, message=".*force_all_finite.*")
     warnings.filterwarnings("ignore", category=FutureWarning)
@@ -62,8 +69,9 @@ def analyze_droplets(df):
     total_droplets = len(df_copy)
     
     # Check if we have enough data points for clustering
-    if len(df_copy) < config.MIN_POINTS_FOR_CLUSTERING:
-        logger.debug(f"Insufficient data points for clustering: {len(df_copy)} < {config.MIN_POINTS_FOR_CLUSTERING}")
+    min_points = getattr(config, 'MIN_POINTS_FOR_CLUSTERING', 50)  # Use instance-aware access
+    if len(df_copy) < min_points:
+        logger.debug(f"Insufficient data points for clustering: {len(df_copy)} < {min_points}")
         return _create_empty_result(df_copy, total_droplets)
     
     # Standardize the data for clustering
@@ -173,8 +181,8 @@ def _assign_targets_to_clusters(df_filtered, config):
     Raises:
         ConfigError: If expected centroids are not configured
     """
-    # Get expected centroids from config
-    expected_centroids = config.EXPECTED_CENTROIDS
+    # Get expected centroids from config (with per-instance support)
+    expected_centroids = config.get_expected_centroids()
     if not expected_centroids:
         error_msg = "No expected centroids configured"
         logger.error(error_msg)
@@ -187,8 +195,10 @@ def _assign_targets_to_clusters(df_filtered, config):
     y_range = np.ptp(df_filtered['Ch1Amplitude'])
     scale_factor = min(1.0, max(0.5, np.sqrt((x_range * y_range) / 2000000)))
     
-    # Ensure scale factor is within config limits
-    scale_factor = max(config.SCALE_FACTOR_MIN, min(config.SCALE_FACTOR_MAX, scale_factor))
+    # Ensure scale factor is within config limits - use instance-aware access
+    scale_min = getattr(config, 'SCALE_FACTOR_MIN', 0.5)
+    scale_max = getattr(config, 'SCALE_FACTOR_MAX', 2.0)
+    scale_factor = max(scale_min, min(scale_max, scale_factor))
     logger.debug(f"Calculated scale factor: {scale_factor}")
     
     # Get target tolerance with scale factor
@@ -291,7 +301,8 @@ def _classify_copy_number_states_std_dev(copy_numbers, config):
             
             # Get tolerance for logging
             tolerance = config.get_tolerance_for_chromosome(chrom_name)
-            expected = config.EXPECTED_COPY_NUMBERS.get(chrom_name, 1.0)
+            expected_copy_numbers = config.get_expected_copy_numbers()  # Use instance-aware method
+            expected = expected_copy_numbers.get(chrom_name, 1.0)
             
             if state == 'buffer_zone':
                 has_buffer_zone = True

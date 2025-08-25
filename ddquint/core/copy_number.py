@@ -244,53 +244,76 @@ def _calculate_baseline(concentrations, config):
 
 def detect_aneuploidies(copy_numbers):
     """
-    Detect aneuploidies based on analytically-corrected copy numbers.
-    
-    Identifies chromosomes with copy numbers that deviate significantly
-    from the expected value of 1.0, using the corrected concentrations
-    that account for mixed-positive droplets.
-    
+    Detect aneuploidies based on analytically-corrected copy numbers using expected values.
+
+    Uses per-chromosome expected copy numbers from Config and configurable
+    low/high multipliers to flag losses and gains.
+
     Args:
-        copy_numbers: Dictionary of chromosome names to copy number values
-        
+        copy_numbers: Dict[str, float] of chromosome names to copy number values
+
     Returns:
-        Tuple of (has_abnormality, abnormal_chromosomes_dict)
-        
-    Raises:
-        CopyNumberError: If copy number values are invalid
-        
-    Example:
-        >>> copy_nums = {'Chrom1': 1.3, 'Chrom2': 0.7, 'Chrom3': 1.0}
-        >>> has_abn, abnormal = detect_aneuploidies(copy_nums)
-        >>> has_abn
-        True
+        Tuple[bool, Dict[str, Dict]]: (has_abnormality, details_by_chrom)
     """
     config = Config.get_instance()
+
+    # Instance-aware access with safe fallback if helper methods are missing
+    if hasattr(Config, 'get_expected_copy_numbers') and callable(Config.get_expected_copy_numbers):
+        exp_map = Config.get_expected_copy_numbers()
+    else:
+        exp_map = getattr(config, 'EXPECTED_COPY_NUMBERS', getattr(Config, 'EXPECTED_COPY_NUMBERS', {})) or {}
+
+    if hasattr(Config, 'get_aneuploidy_targets') and callable(Config.get_aneuploidy_targets):
+        targets = Config.get_aneuploidy_targets()
+    else:
+        targets = getattr(config, 'ANEUPLOIDY_TARGETS',
+                          getattr(Config, 'ANEUPLOIDY_TARGETS', {'low': 0.75, 'high': 1.25})) or {'low': 0.75, 'high': 1.25}
+
+    try:
+        low_mult = float(targets.get('low', 0.75))
+        high_mult = float(targets.get('high', 1.25))
+    except Exception:
+        low_mult, high_mult = 0.75, 1.25
+
     abnormal_chromosomes = {}
-    
+
     for chrom, copy_num in copy_numbers.items():
         if not isinstance(copy_num, (int, float)) or np.isnan(copy_num):
             error_msg = f"Invalid copy number value for {chrom}: {copy_num}"
             logger.error(error_msg)
             raise CopyNumberError(error_msg, chromosome=chrom, copy_number=copy_num)
-        
-        # Check for deviation from normal copy number (1.0)
-        deviation = abs(copy_num - 1.0)
-        
-        if deviation > config.COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD:
-            abnormal_type = 'gain' if copy_num > 1.0 else 'loss'
+
+        expected = float(exp_map.get(chrom, 1.0))
+        low_threshold = expected * low_mult
+        high_threshold = expected * high_mult
+        deviation = copy_num - expected
+
+        if copy_num < low_threshold:
             abnormal_chromosomes[chrom] = {
                 'copy_number': copy_num,
+                'expected': expected,
+                'low_threshold': low_threshold,
+                'high_threshold': high_threshold,
                 'deviation': deviation,
-                'type': abnormal_type
+                'type': 'loss'
             }
-            logger.debug(f"{chrom} detected as {abnormal_type}: copy number {copy_num:.3f}, deviation {deviation:.3f}")
+            logger.debug(f"{chrom} detected as loss: CN={copy_num:.3f}, expected={expected:.3f}, low_thr={low_threshold:.3f}")
+        elif copy_num > high_threshold:
+            abnormal_chromosomes[chrom] = {
+                'copy_number': copy_num,
+                'expected': expected,
+                'low_threshold': low_threshold,
+                'high_threshold': high_threshold,
+                'deviation': deviation,
+                'type': 'gain'
+            }
+            logger.debug(f"{chrom} detected as gain: CN={copy_num:.3f}, expected={expected:.3f}, high_thr={high_threshold:.3f}")
         else:
-            logger.debug(f"{chrom} is normal: copy number {copy_num:.3f}, deviation {deviation:.3f}")
-    
+            logger.debug(f"{chrom} normal: CN={copy_num:.3f}, expected={expected:.3f}, in [{low_threshold:.3f}, {high_threshold:.3f}]")
+
     has_abnormality = len(abnormal_chromosomes) > 0
     logger.debug(f"Overall aneuploidy status: {has_abnormality}")
-    
+
     return has_abnormality, abnormal_chromosomes
 
 def calculate_statistics(results):
