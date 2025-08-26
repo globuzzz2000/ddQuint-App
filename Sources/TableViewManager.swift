@@ -131,14 +131,23 @@ extension InteractiveMainWindowController: NSTableViewDataSource, NSTableViewDel
             }
             editWellButton.isEnabled = allHaveData
             
-            // For multiple selection, show the first well's plot
-            if let firstRow = selectedRows.first,
-               firstRow >= 0 && firstRow < filteredWellData.count {
-                let firstWell = filteredWellData[firstRow]
-                if let originalIndex = wellData.firstIndex(where: { $0.well == firstWell.well }) {
-                    selectedWellIndex = originalIndex
-                    print("Loading plot for first selected well: \(firstWell.well)")
-                    loadPlotForSelectedWell()
+            // For multiple selection, show multi-well grid view
+            let selectedWellNames: [String] = selectedRows.compactMap { row in
+                guard row >= 0 && row < filteredWellData.count else { return nil }
+                return filteredWellData[row].well
+            }
+            
+            if !selectedWellNames.isEmpty {
+                print("Loading multi-well view for \(selectedWellNames.count) wells: \(selectedWellNames)")
+                showMultiWellView(selectedWells: selectedWellNames)
+                
+                // Set selectedWellIndex to first well for parameter editing compatibility
+                if let firstRow = selectedRows.first,
+                   firstRow >= 0 && firstRow < filteredWellData.count {
+                    let firstWell = filteredWellData[firstRow]
+                    if let originalIndex = wellData.firstIndex(where: { $0.well == firstWell.well }) {
+                        selectedWellIndex = originalIndex
+                    }
                 }
             }
         }

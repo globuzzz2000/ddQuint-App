@@ -1287,6 +1287,12 @@ private func setupConstraints(in contentView: NSView) {
     // MARK: - Plot Loading
     
     func loadPlotForSelectedWell() {
+        // Exit overview mode if it's active when a well is selected
+        if plotImageView.isHidden {
+            exitOverviewMode()
+            return
+        }
+        
         guard selectedWellIndex >= 0 && selectedWellIndex < wellData.count else {
             print("Invalid well selection: \(selectedWellIndex) of \(wellData.count)")
             return
@@ -6145,8 +6151,487 @@ extension InteractiveMainWindowController {
     }
     
     @objc func showOverview() {
-        // TODO: Wire up overview functionality
-        print("Overview button clicked - functionality to be implemented")
+        print("📋 Overview button clicked - generating overview")
+        
+        // 1. Deselect all wells
+        wellListView.deselectAll(nil)
+        print("🔄 Deselected all wells")
+        
+        // 2. Create and show overview grid
+        createOverviewGrid()
+    }
+    
+    func showMultiWellView(selectedWells: [String]) {
+        print("📋 Multi-well view - showing \(selectedWells.count) wells: \(selectedWells)")
+        createMultiWellGrid(wells: selectedWells)
+    }
+    
+    private func createOverviewGrid() {
+        print("🎯 Creating overview grid")
+        
+        // Clear existing plot display
+        plotImageView.image = nil
+        
+        // Create layout calculator
+        let layout = OverviewLayout(maxCols: getMaxColumnCount())
+        
+        // Create flipped container for proper coordinate system
+        let gridContainer = FlippedView()
+        gridContainer.postsFrameChangedNotifications = true
+        
+        // Create custom scroll view with Cmd+scroll zoom support
+        let overviewScrollView = ZoomableScrollView()
+        overviewScrollView.hasVerticalScroller = true
+        overviewScrollView.hasHorizontalScroller = true
+        overviewScrollView.allowsMagnification = true  // Enable zoom
+        overviewScrollView.minMagnification = 0.1
+        overviewScrollView.maxMagnification = 5.0  // Increased max zoom for better detail viewing
+        overviewScrollView.magnification = 1.0
+        overviewScrollView.usesPredominantAxisScrolling = false  // Allow both axes
+        overviewScrollView.scrollerStyle = .overlay  // Modern overlay scrollers
+        overviewScrollView.documentView = gridContainer
+        
+        let containerWidth = layout.leftMargin + CGFloat(layout.cols) * layout.horizontalSpacing
+        
+        gridContainer.frame = NSRect(x: 0, y: 0,
+                                   width: containerWidth,
+                                   height: layout.requiredHeight)
+        
+        // Set background color for better visibility
+        gridContainer.wantsLayer = true
+        gridContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        
+        // Create thumbnail grid using new layout system
+        createThumbnailGridWithLayout(in: gridContainer, layout: layout)
+        
+        // Set up scroll view
+        overviewScrollView.documentView = gridContainer
+        
+        // Replace the current plot display with overview
+        plotImageView.isHidden = true
+        
+        // Add overview to the plot click view
+        overviewScrollView.translatesAutoresizingMaskIntoConstraints = false
+        plotClickView.addSubview(overviewScrollView)
+        
+        NSLayoutConstraint.activate([
+            overviewScrollView.topAnchor.constraint(equalTo: plotClickView.topAnchor),
+            overviewScrollView.leadingAnchor.constraint(equalTo: plotClickView.leadingAnchor),
+            overviewScrollView.trailingAnchor.constraint(equalTo: plotClickView.trailingAnchor),
+            overviewScrollView.bottomAnchor.constraint(equalTo: plotClickView.bottomAnchor)
+        ])
+        
+        // Immediate scroll to top for FlippedView (y=0 is top)
+        overviewScrollView.contentView.scroll(to: NSPoint(x: 0, y: 0))
+        overviewScrollView.reflectScrolledClipView(overviewScrollView.contentView)
+        
+        // Set minimum magnification
+        DispatchQueue.main.async {
+            
+            // Get the actual visible area of the scroll view
+            let visibleRect = overviewScrollView.documentVisibleRect
+            let visibleWidth = visibleRect.width
+            
+            if visibleWidth > 0 && containerWidth > 0 {
+                // Calculate the magnification that makes the grid width fit exactly in the visible area
+                let fitToWidthMagnification = visibleWidth / containerWidth
+                overviewScrollView.minMagnification = max(0.1, fitToWidthMagnification)
+                
+                // Set initial magnification to this fit-to-width value for consistency
+                if overviewScrollView.magnification < fitToWidthMagnification {
+                    overviewScrollView.magnification = fitToWidthMagnification
+                }
+                
+                print("📏 Set minimum magnification to \(overviewScrollView.minMagnification) (visible: \(visibleWidth), grid: \(containerWidth))")
+                print("📍 Scrolled overview to top for visibility")
+            }
+        }
+        
+        // Store reference to overview scroll view for cleanup
+        plotClickView.subviews.forEach { subview in
+            if subview is NSScrollView && subview != overviewScrollView {
+                subview.removeFromSuperview()
+            }
+        }
+        
+        print("✅ Overview grid created with layout system")
+    }
+    
+    private func createThumbnailGridWithLayout(in container: FlippedView, layout: OverviewLayout) {
+        let rows = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        
+        for row in 0..<layout.rows {
+            for col in 0..<layout.cols {
+                let wellName = "\(rows[row])\(String(format: "%02d", col + 1))"
+                
+                let x = layout.leftMargin + CGFloat(col) * layout.horizontalSpacing
+                let y = layout.topMargin + CGFloat(row) * layout.verticalSpacing
+                let frame = NSRect(x: x, y: y, width: layout.thumbnailSize, height: layout.rowHeight)
+                
+                let thumbnailContainer = NSView(frame: frame)
+                thumbnailContainer.wantsLayer = true
+                
+                // Add Well ID label above the plot
+                let wellLabel = NSTextField(labelWithString: wellName)
+                wellLabel.frame = NSRect(x: 0, y: 0, width: layout.thumbnailSize, height: layout.wellLabelHeight)
+                wellLabel.alignment = NSTextAlignment.center
+                wellLabel.font = NSFont.boldSystemFont(ofSize: 11)
+                wellLabel.textColor = NSColor.labelColor
+                thumbnailContainer.addSubview(wellLabel)
+                
+                // Create image view container with border
+                let imageContainer = NSView()
+                imageContainer.frame = NSRect(x: 0, y: layout.wellLabelHeight, width: layout.thumbnailSize, height: layout.thumbnailHeight)
+                imageContainer.wantsLayer = true
+                imageContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+                imageContainer.layer?.borderColor = NSColor.separatorColor.cgColor
+                imageContainer.layer?.borderWidth = 0.5
+                
+                // Create high-quality image view for thumbnail (same as individual plots)
+                let thumbnailImageView = HighQualityImageView()
+                thumbnailImageView.frame = NSRect(x: 1, y: 1, width: layout.thumbnailSize - 2, height: layout.thumbnailHeight - 2)
+                
+                // Always generate plot for all wells using existing mechanism
+                if wellData.first(where: { $0.well == wellName }) != nil {
+                    // Well exists in data - generate plot immediately using existing mechanism
+                    generatePlotForWellOverview(wellName: wellName, imageView: thumbnailImageView)
+                } else {
+                    // Well doesn't exist in data - use placeholder
+                    thumbnailImageView.image = createPlaceholderThumbnail(wellName: wellName)
+                }
+                
+                imageContainer.addSubview(thumbnailImageView)
+                thumbnailContainer.addSubview(imageContainer)
+                
+                // Add click handler for returning to individual well view
+                let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(thumbnailClicked(_:)))
+                thumbnailContainer.addGestureRecognizer(clickGesture)
+                thumbnailContainer.identifier = NSUserInterfaceItemIdentifier(wellName)
+                
+                container.addSubview(thumbnailContainer)
+            }
+        }
+        
+        print("✅ Overview grid with layout created: \(layout.rows) rows x \(layout.cols) cols")
+    }
+    
+    private func createMultiWellGrid(wells: [String]) {
+        print("🎯 Creating multi-well grid for \(wells.count) wells")
+        
+        // Clear existing plot display
+        plotImageView.image = nil
+        
+        // Calculate efficient grid dimensions for selected wells
+        let wellCount = wells.count
+        let cols = Int(ceil(sqrt(Double(wellCount))))  // Square-ish grid
+        let rows = Int(ceil(Double(wellCount) / Double(cols)))
+        
+        // Create dynamic layout for multi-well view
+        let layout = createDynamicLayout(rows: rows, cols: cols)
+        
+        // Create flipped container for proper coordinate system
+        let gridContainer = FlippedView()
+        gridContainer.postsFrameChangedNotifications = true
+        
+        // Create custom scroll view with Cmd+scroll zoom support
+        let multiWellScrollView = ZoomableScrollView()
+        multiWellScrollView.hasVerticalScroller = true
+        multiWellScrollView.hasHorizontalScroller = true
+        multiWellScrollView.allowsMagnification = true
+        multiWellScrollView.minMagnification = 0.1
+        multiWellScrollView.maxMagnification = 5.0
+        multiWellScrollView.magnification = 1.0
+        multiWellScrollView.usesPredominantAxisScrolling = false
+        multiWellScrollView.scrollerStyle = .overlay
+        multiWellScrollView.documentView = gridContainer
+        
+        let containerWidth = layout.leftMargin + CGFloat(layout.cols) * layout.horizontalSpacing
+        let actualRequiredHeight = CGFloat(rows) * layout.verticalSpacing  // Use actual rows, not layout.rows (8)
+        
+        gridContainer.frame = NSRect(x: 0, y: 0,
+                                   width: containerWidth,
+                                   height: actualRequiredHeight)
+        
+        // Set background color for better visibility
+        gridContainer.wantsLayer = true
+        gridContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        
+        // Create thumbnail grid for selected wells only
+        createSelectedWellThumbnails(in: gridContainer, wells: wells, layout: layout)
+        
+        // Replace the current plot display with multi-well view
+        plotImageView.isHidden = true
+        
+        // Add multi-well view to the plot click view
+        multiWellScrollView.translatesAutoresizingMaskIntoConstraints = false
+        plotClickView.addSubview(multiWellScrollView)
+        
+        NSLayoutConstraint.activate([
+            multiWellScrollView.topAnchor.constraint(equalTo: plotClickView.topAnchor),
+            multiWellScrollView.leadingAnchor.constraint(equalTo: plotClickView.leadingAnchor),
+            multiWellScrollView.trailingAnchor.constraint(equalTo: plotClickView.trailingAnchor),
+            multiWellScrollView.bottomAnchor.constraint(equalTo: plotClickView.bottomAnchor)
+        ])
+        
+        // Immediate scroll to top for FlippedView (y=0 is top)
+        multiWellScrollView.contentView.scroll(to: NSPoint(x: 0, y: 0))
+        multiWellScrollView.reflectScrolledClipView(multiWellScrollView.contentView)
+        
+        // Set zoom
+        DispatchQueue.main.async {
+            
+            // Get the actual visible area of the scroll view
+            let visibleRect = multiWellScrollView.documentVisibleRect
+            let visibleWidth = visibleRect.width
+            
+            if visibleWidth > 0 && containerWidth > 0 {
+                // Calculate the magnification that makes the grid width fit exactly in the visible area
+                let fitToWidthMagnification = visibleWidth / containerWidth
+                multiWellScrollView.minMagnification = max(0.1, fitToWidthMagnification)
+                
+                // Set initial magnification to this fit-to-width value for consistency
+                if multiWellScrollView.magnification < fitToWidthMagnification {
+                    multiWellScrollView.magnification = fitToWidthMagnification
+                }
+                
+                print("📏 Set multi-well minimum magnification to \(multiWellScrollView.minMagnification)")
+                print("📍 Scrolled multi-well view to top for visibility")
+            }
+        }
+        
+        // Store reference to multi-well scroll view for cleanup
+        plotClickView.subviews.forEach { subview in
+            if subview is ZoomableScrollView && subview != multiWellScrollView {
+                subview.removeFromSuperview()
+            }
+        }
+        
+        print("✅ Multi-well grid created with \(rows) rows x \(cols) cols for \(wells.count) wells")
+    }
+    
+    private func createDynamicLayout(rows: Int, cols: Int) -> OverviewLayout {
+        // Create a layout for the dynamic grid
+        let layout = OverviewLayout(maxCols: cols)
+        return layout
+    }
+    
+    private func createSelectedWellThumbnails(in container: FlippedView, wells: [String], layout: OverviewLayout) {
+        for (index, wellName) in wells.enumerated() {
+            let row = index / layout.cols
+            let col = index % layout.cols
+            
+            let x = layout.leftMargin + CGFloat(col) * layout.horizontalSpacing
+            let y = layout.topMargin + CGFloat(row) * layout.verticalSpacing
+            let frame = NSRect(x: x, y: y, width: layout.thumbnailSize, height: layout.rowHeight)
+            
+            let thumbnailContainer = NSView(frame: frame)
+            thumbnailContainer.wantsLayer = true
+            
+            // Add Well ID label above the plot
+            let wellLabel = NSTextField(labelWithString: wellName)
+            wellLabel.frame = NSRect(x: 0, y: 0, width: layout.thumbnailSize, height: layout.wellLabelHeight)
+            wellLabel.alignment = NSTextAlignment.center
+            wellLabel.font = NSFont.boldSystemFont(ofSize: 11)
+            wellLabel.textColor = NSColor.labelColor
+            thumbnailContainer.addSubview(wellLabel)
+            
+            // Create image view container with border
+            let imageContainer = NSView()
+            imageContainer.frame = NSRect(x: 0, y: layout.wellLabelHeight, width: layout.thumbnailSize, height: layout.thumbnailHeight)
+            imageContainer.wantsLayer = true
+            imageContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            imageContainer.layer?.borderColor = NSColor.separatorColor.cgColor
+            imageContainer.layer?.borderWidth = 0.5
+            
+            // Create high-quality image view for thumbnail (same as individual plots)
+            let thumbnailImageView = HighQualityImageView()
+            thumbnailImageView.frame = NSRect(x: 1, y: 1, width: layout.thumbnailSize - 2, height: layout.thumbnailHeight - 2)
+            
+            // Generate plot for this well
+            if wellData.first(where: { $0.well == wellName }) != nil {
+                // Well exists in data - generate plot immediately using existing mechanism
+                generatePlotForWellOverview(wellName: wellName, imageView: thumbnailImageView)
+            } else {
+                // Well doesn't exist in data - use placeholder
+                thumbnailImageView.image = createPlaceholderThumbnail(wellName: wellName)
+            }
+            
+            imageContainer.addSubview(thumbnailImageView)
+            thumbnailContainer.addSubview(imageContainer)
+            
+            // Add click handler for returning to individual well view
+            let clickGesture = NSClickGestureRecognizer(target: self, action: #selector(thumbnailClicked(_:)))
+            thumbnailContainer.addGestureRecognizer(clickGesture)
+            thumbnailContainer.identifier = NSUserInterfaceItemIdentifier(wellName)
+            
+            container.addSubview(thumbnailContainer)
+        }
+        
+        print("✅ Created \(wells.count) selected well thumbnails")
+    }
+    
+    
+    private func getMaxColumnCount() -> Int {
+        // Find the maximum column number (well number) from available wells
+        var maxCol = 1
+        for wellInfo in wellData {
+            if let colStr = wellInfo.well.dropFirst().isEmpty ? nil : String(wellInfo.well.dropFirst()),
+               let col = Int(colStr) {
+                maxCol = max(maxCol, col)
+            }
+        }
+        return maxCol
+    }
+    
+    
+    
+    private func generatePlotForWellOverview(wellName: String, imageView: HighQualityImageView) {
+        // First try to load existing plot from temp directory
+        if let existingImage = loadPlotImage(for: wellName) {
+            imageView.image = existingImage
+            return
+        }
+        
+        // Check for plots from main analysis directory
+        let tempBase = NSTemporaryDirectory()
+        let analysisPlotPath = "\(tempBase)ddquint_analysis_plots/\(wellName).png"
+        
+        if FileManager.default.fileExists(atPath: analysisPlotPath) {
+            // Copy from analysis plots to temp location for consistency
+            let tempPlotPath = "/tmp/ddquint_plot_\(wellName).png"
+            do {
+                try FileManager.default.copyItem(atPath: analysisPlotPath, toPath: tempPlotPath)
+                if let image = NSImage(contentsOfFile: tempPlotPath) {
+                    imageView.image = image
+                    return
+                }
+            } catch {
+                print("Failed to copy analysis plot for \(wellName): \(error)")
+            }
+        }
+        
+        // Set placeholder initially and generate plot using existing mechanism
+        imageView.image = createPlaceholderThumbnail(wellName: wellName)
+        
+        // Store image view reference for later update and call existing plot generation
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            // Save current status label
+            let originalStatus = self.statusLabel.stringValue
+            
+            DispatchQueue.main.async {
+                // Temporarily update status (non-intrusively)
+                
+                // Create a temporary well entry for generation
+                let tempSelectedIndex = self.selectedWellIndex
+                if let wellIndex = self.wellData.firstIndex(where: { $0.well == wellName }) {
+                    self.selectedWellIndex = wellIndex
+                    
+                    // Use the existing plot generation mechanism
+                    self.generatePlotForWell(well: wellName)
+                    
+                    // Wait a moment then check for the generated plot
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        if let newImage = self.loadPlotImage(for: wellName) {
+                            imageView.image = newImage
+                        }
+                        
+                        // Restore original state
+                        self.selectedWellIndex = tempSelectedIndex
+                        self.statusLabel.stringValue = originalStatus
+                    }
+                }
+            }
+        }
+    }
+    
+    
+    private func loadPlotImage(for wellName: String) -> NSImage? {
+        let tempPlotPath = "/tmp/ddquint_plot_\(wellName).png"
+        if FileManager.default.fileExists(atPath: tempPlotPath) {
+            return NSImage(contentsOfFile: tempPlotPath)
+        }
+        return nil
+    }
+    
+    private func createPlaceholderThumbnail(wellName: String) -> NSImage {
+        let size = NSSize(width: 150, height: 112.5)  // Back to original format (150 * 0.75)
+        let image = NSImage(size: size)
+        
+        image.lockFocus()
+        
+        // Draw placeholder background
+        NSColor.controlBackgroundColor.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        
+        // Draw border
+        NSColor.separatorColor.setStroke()
+        let borderRect = NSRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
+        let borderPath = NSBezierPath(rect: borderRect)
+        borderPath.stroke()
+        
+        // Draw well name in center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+        
+        let text = wellName
+        let textSize = text.size(withAttributes: attributes)
+        let textRect = NSRect(
+            x: (size.width - textSize.width) / 2,
+            y: (size.height - textSize.height) / 2,
+            width: textSize.width,
+            height: textSize.height
+        )
+        
+        text.draw(in: textRect, withAttributes: attributes)
+        
+        image.unlockFocus()
+        return image
+    }
+    
+    private func exitOverviewMode() {
+        print("🔄 Exiting overview mode")
+        
+        // Remove overview scroll view
+        plotClickView.subviews.forEach { subview in
+            if subview is NSScrollView {
+                subview.removeFromSuperview()
+            }
+        }
+        
+        // Restore plot image view
+        plotImageView.isHidden = false
+        
+        // Load plot for currently selected well
+        loadPlotForSelectedWell()
+        
+        print("✅ Exited overview mode")
+    }
+    
+    @objc private func thumbnailClicked(_ sender: NSClickGestureRecognizer) {
+        guard let containerView = sender.view,
+              let wellName = containerView.identifier?.rawValue else {
+            return
+        }
+        
+        print("📋 Thumbnail clicked for well: \(wellName)")
+        
+        // Find the well index in wellData
+        if let wellIndex = wellData.firstIndex(where: { $0.well == wellName }) {
+            // Select the well in the table view
+            let tableRow = wellIndex + (compositeImagePath != nil ? 1 : 0) // Account for composite image row
+            wellListView.selectRowIndexes(IndexSet(integer: tableRow), byExtendingSelection: false)
+            
+            // This will trigger loadPlotForSelectedWell() which will exit overview mode
+            selectedWellIndex = wellIndex
+            loadPlotForSelectedWell()
+        } else {
+            print("⚠️ Well \(wellName) not found in data - exiting overview mode without selection")
+            exitOverviewMode()
+        }
     }
     
     @objc func showLegend() {
@@ -6246,5 +6731,58 @@ extension InteractiveMainWindowController: DragDropDelegate {
         startAnalysis(folderURL: url)
     }
 }
+
+// Custom NSScrollView that handles Cmd+scroll wheel zoom
+class ZoomableScrollView: NSScrollView {
+    
+    override func scrollWheel(with event: NSEvent) {
+        // Check if Command key is pressed for zoom
+        if event.modifierFlags.contains(.command) {
+            // Prevent normal scrolling when Command is pressed
+            let zoomFactor: CGFloat = 1.0 + (event.scrollingDeltaY * 0.01)
+            let newMagnification = magnification * zoomFactor
+            let clampedMagnification = max(minMagnification, min(maxMagnification, newMagnification))
+            
+            // Get mouse location for centered zoom
+            let locationInWindow = event.locationInWindow
+            let locationInView = convert(locationInWindow, from: nil)
+            let locationInDocument = documentView?.convert(locationInView, from: self) ?? locationInView
+            
+            setMagnification(clampedMagnification, centeredAt: locationInDocument)
+        } else {
+            // Normal scrolling behavior
+            super.scrollWheel(with: event)
+        }
+    }
+}
+
+
+// Layout calculator for overview grids
+class OverviewLayout {
+    let thumbnailSize: CGFloat = 150
+    let thumbnailHeight: CGFloat
+    let wellLabelHeight: CGFloat = 18
+    let rowHeight: CGFloat
+    let topMargin: CGFloat = 20  // Re-added margin for overview page
+    let leftMargin: CGFloat = 10 // Added left margin
+    let horizontalSpacing: CGFloat
+    let verticalSpacing: CGFloat
+    let rows: Int = 8  // A-H
+    let cols: Int
+    let requiredHeight: CGFloat
+    
+    init(maxCols: Int = 12) {
+        thumbnailHeight = thumbnailSize * 0.75  // Back to original format
+        rowHeight = wellLabelHeight + thumbnailHeight  // Label + plot
+        horizontalSpacing = thumbnailSize + 5  // Small gap between columns
+        verticalSpacing = rowHeight + 2  // Smaller gap between rows (was 5)
+        cols = maxCols
+        
+        // Calculate total required height with top and bottom margins
+        let bottomMargin: CGFloat = 20
+        requiredHeight = topMargin + CGFloat(rows) * verticalSpacing + bottomMargin  // Top + rows + bottom
+    }
+}
+
 
  
