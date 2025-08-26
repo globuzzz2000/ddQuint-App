@@ -17,42 +17,16 @@ These positions are used to assign detected clusters to specific targets.
 """,
     
     "BASE_TARGET_TOLERANCE": """
-Base Target Tolerance
+Target Tolerance
 
-Base tolerance distance for matching detected clusters to expected centroids.
+Tolerance distance for matching detected clusters to expected centroids.
 Clusters within this distance are assigned to the nearest target.
 
 💡 Tips:
 • Higher values = more lenient matching
 • Lower values = stricter, more precise matching
-• Adjust based on your assay's cluster tightness
 """,
     
-    "SCALE_FACTOR_MIN": """
-Scale Factor Minimum
-
-Minimum scale factor for adaptive tolerance adjustment.
-Controls how tolerance scales at different fluorescence intensities.
-
-💡 Tips:
-• Range: 0.1-1.0
-• Lower values = tighter matching requirements
-• 0.5 = tolerance can shrink to 50% of base value
-• Use lower values for well-separated targets
-""",
-    
-    "SCALE_FACTOR_MAX": """
-Scale Factor Maximum
-
-Maximum scale factor for adaptive tolerance adjustment.
-Controls maximum tolerance expansion at high fluorescence.
-
-💡 Tips:
-• Range: 1.0-2.0
-• Higher values = more flexible matching
-• 1.0 = no expansion (constant tolerance)
-• Use higher values if clusters spread at high intensity
-""",
     
     // Clustering Settings
     "HDBSCAN_MIN_CLUSTER_SIZE": """
@@ -130,41 +104,23 @@ Prevents clustering on insufficient data.
     "MIN_USABLE_DROPLETS": """
 Min Usable Droplets
 
-Minimum total droplets required for reliable copy number analysis.
+Minimum total droplets required to perform copy number analysis.
 Wells with fewer droplets are excluded from analysis.
-
-💡 Tips:
-• Higher values = better statistical confidence
-• Lower values = include more wells but less reliable
 """,
     
     "COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD": """
 Median Deviation Threshold
 
-Maximum deviation from median for selecting baseline (euploid) chromosomes.
-Only chromosomes close to median are used for normalization.
-
-💡 Tips:
-• Lower values (0.10): Stricter baseline selection
-• Higher values (0.20): More inclusive baseline
+Maximum deviation from median for dynamically selecting baseline references.
+Only targets this close to median are used for normalization.
 """,
     
-    "COPY_NUMBER_BASELINE_MIN_CHROMS": """
-Baseline Min Chromosomes
-
-Minimum number of chromosomes needed to establish diploid baseline.
-Ensures robust normalization with sufficient reference chromosomes.
-
-💡 Tips:
-• Higher values = more robust normalization
-• Lower values = less stringent requirements
-""",
     
     "TOLERANCE_MULTIPLIER": """
 Tolerance Multiplier
 
-Multiplier applied to chromosome-specific standard deviation.
-Controls width of classification ranges (euploid/aneuploidy).
+Multiplier applied to target-specific standard deviation.
+Controls width of classification ranges.
 
 💡 Tips:
 • Higher values = wider tolerance ranges
@@ -172,63 +128,109 @@ Controls width of classification ranges (euploid/aneuploidy).
 • 3 = 99.7% confidence interval
 """,
     
-    "ANEUPLOIDY_TARGETS_LOW": """
-Aneuploidy Deletion Target
+    "COPY_NUMBER_MULTIPLIER": """
+Copy Number Multiplier
 
-Target copy number ratio for chromosome deletions.
+Multiplier applied for displaying relative copy number results.
+Use to adjust the scale of copy number values relative to the default of 1.
+""",
+    
+    "ENABLE_COPY_NUMBER_ANALYSIS": """
+Do Copy Number Analysis?
+
+Enable or disable copy number analysis and buffer zone detection.
+When disabled, only droplet clustering is performed.
+""",
+    
+    "CLASSIFY_CNV_DEVIATIONS": """
+Classify Copy Number Deviations?
+
+Enable or disable copy number deviation classification.
+When disabled, removes aneuploidy identification and associated formatting.
+""",
+    
+    "LOWER_DEVIATION_TARGET": """
+Lower Deviation Target
+
+Expected ratio for lower copy number deviation.
+Relative to detected reference.
+""",
+    
+    "UPPER_DEVIATION_TARGET": """
+Upper Deviation Target
+
+Expected ratio for upper copy number deviation.
+Relative to detected reference.
+""",
+    
+    "USE_PLOIDY_TERMINOLOGY": """
+Use Ploidy Detection Terminology?
+
+Use ploidy-specific terminology in reports and displays.
+When enabled, uses terms like "monosomy" and "trisomy".
+""",
+    
+    "CNV_LOSS_RATIO": """
+CNV Loss Ratio
+
+Target copy number ratio for deletions.
+Relative to expected copy number.
+""",
+    
+    "CNV_GAIN_RATIO": """
+CNV Gain Ratio
+
+Target copy number ratio for duplications.
+Relative to expected copy number.
+""",
+    
+    "ANEUPLOIDY_TARGETS_LOW": """
+CNV Loss Ratio
+
+Target copy number ratio for deletions.
 Relative to expected copy number.
 
 💡 Tips:
-• 0.75 = 75% of expected (3 copies instead of 4)
+• 0.75 = 75% of expected
 • Adjust based on your assay design
 """,
     
     "ANEUPLOIDY_TARGETS_HIGH": """
-Aneuploidy Duplication Target
+CNV Gain Ratio
 
 Target copy number ratio for duplications.
 Relative to expected copy number.
 
 💡 Tips:
-• 1.25 = 125% of expected (5 copies instead of 4)
+• 1.25 = 125% of expected
 • Adjust based on your assay design
 """,
     
     "EXPECTED_COPY_NUMBERS": """
 Expected Copy Numbers
 
-Baseline copy number values for each target.
-Used for normalization and classification thresholds.
+Baseline copy number values for each target. Used for normalization and classification thresholds.
 
 💡 Tips:
-• Values should be close to 1.0
-• Slight variations account for assay differences
 • Measure from known control samples
-• Update based on your specific assay performance
+• Update in case of systematic target specific deviation
 """,
     
     "EXPECTED_STANDARD_DEVIATION": """
 Expected Standard Deviation
 
-Standard deviation for each chromosome's copy number.
+Standard deviation for each target's copy number.
 Used with tolerance multiplier to set classification ranges.
 
 💡 Tips:
-• Lower values = tighter classification ranges
-• Higher values = more permissive classification
 • Measure from known control samples
 """,
     
     "CHROMOSOME_COUNT": """
 Chromosome Count
 
-Number of target chromosomes to analyze in this assay.
-Determines how many chromosomes are expected and displayed.
-
-💡 Tips:
-• Set based on your specific assay design
-• Must match your expected centroids configuration
-• Common values: 3-8 targets per assay
+Number of targets to analyze in this assay.
+Determines how many targets are expected and displayed.
 """,
     
     // Visualization (if needed)
@@ -281,20 +283,17 @@ These positions are used to assign detected clusters to this specific target.
 
 💡 Tips:
 • Measure actual centroids from control samples
-• Each target should have distinct positions
 • Format: FAM_value, HEX_value (e.g., 1500, 2200)
 """
         } else if target == "Negative" {
             customTooltipText = """
 Expected Centroid Position for Negative Control
 
-Define the expected fluorescence position for the negative control droplets.
+Define the expected fluorescence position (FAM, HEX coordinates) for the target-negative droplets.
 These are typically droplets with low fluorescence in both channels.
-
 💡 Tips:
-• Usually positioned at low FAM and HEX values
-• Serves as baseline reference for other targets
-• Format: FAM_value, HEX_value (e.g., 1000, 900)
+• Measure actual centroids from control samples
+• Format: FAM_value, HEX_value (e.g., 1500, 2200)
 """
         }
     } else if identifier.hasPrefix("EXPECTED_COPY_NUMBERS_") {
@@ -310,9 +309,8 @@ Baseline copy number value for Target \(chromNumber).
 Used for normalization and classification thresholds.
 
 💡 Tips:
-• Measure from known diploid control samples
-• Typically around 1.0 for balanced targets
-• Values significantly different from 1.0 may indicate aneuploidy
+• Measure from known control samples
+• Update in case of systematic target specific deviation
 """
         }
     } else if identifier.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
@@ -328,8 +326,6 @@ Standard deviation for Target \(chromNumber)'s copy number.
 Used with tolerance multiplier to set classification ranges.
 
 💡 Tips:
-• Lower values = tighter classification ranges
-• Higher values = more permissive classification
 • Measure from known control samples
 """
         }

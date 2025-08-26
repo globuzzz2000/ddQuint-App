@@ -16,6 +16,7 @@ Uses analytical solution optimized for exclusive target count data.
 
 import numpy as np
 import logging
+from typing import Dict
 from ..config import Config, CopyNumberError
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,31 @@ def calculate_copy_numbers(target_counts, total_droplets):
             logger.debug(f"{chrom} relative copy number: {copy_num:.3f} (concentration: {concentration:.3f}, baseline: {baseline:.3f})")
     
     return copy_numbers
+
+
+def apply_copy_number_display_multiplier(copy_numbers):
+    """
+    Apply copy number multiplier for display purposes only.
+    This does not affect analysis calculations like aneuploidy or buffer zone detection.
+    
+    Args:
+        copy_numbers: Dictionary of chromosome copy numbers (calculation values)
+        
+    Returns:
+        Dictionary of copy numbers with display multiplier applied
+    """
+    multiplier = Config.get_copy_number_multiplier()
+    if multiplier == 1.0:
+        return copy_numbers.copy()  # Return copy to avoid modifying original
+    
+    logger.debug(f"Applying copy number display multiplier: {multiplier}")
+    display_copy_numbers = {}
+    for chrom, value in copy_numbers.items():
+        display_copy_numbers[chrom] = value * multiplier
+        logger.debug(f"{chrom} display copy number: {value:.3f} -> {display_copy_numbers[chrom]:.3f} (multiplier: {multiplier})")
+    
+    return display_copy_numbers
+
 
 def _estimate_concentrations_analytical(chromosome_counts, negative_count, total_droplets, chromosome_keys):
     """
@@ -233,9 +259,9 @@ def _calculate_baseline(concentrations, config):
             if deviation < deviation_threshold:
                 close_to_median.append(conc)
     
-    if len(close_to_median) >= config.COPY_NUMBER_BASELINE_MIN_CHROMS:
+    if len(close_to_median) > 0:
         baseline = np.mean(close_to_median)
-        logger.debug(f"Using mean of {len(close_to_median)} diploid chromosomes as baseline: {baseline:.3f}")
+        logger.debug(f"Using mean of {len(close_to_median)} chromosomes close to median as baseline: {baseline:.3f}")
     else:
         baseline = median_conc
         logger.debug(f"Using median as baseline: {baseline:.3f}")
@@ -263,17 +289,28 @@ def detect_aneuploidies(copy_numbers):
     else:
         exp_map = getattr(config, 'EXPECTED_COPY_NUMBERS', getattr(Config, 'EXPECTED_COPY_NUMBERS', {})) or {}
 
-    if hasattr(Config, 'get_aneuploidy_targets') and callable(Config.get_aneuploidy_targets):
-        targets = Config.get_aneuploidy_targets()
-    else:
-        targets = getattr(config, 'ANEUPLOIDY_TARGETS',
-                          getattr(Config, 'ANEUPLOIDY_TARGETS', {'low': 0.75, 'high': 1.25})) or {'low': 0.75, 'high': 1.25}
-
+    # Use new deviation target methods with fallback to legacy methods
     try:
-        low_mult = float(targets.get('low', 0.75))
-        high_mult = float(targets.get('high', 1.25))
+        if hasattr(Config, 'get_lower_deviation_target') and callable(Config.get_lower_deviation_target):
+            low_mult = float(Config.get_lower_deviation_target())
+        elif hasattr(Config, 'get_cnv_loss_ratio') and callable(Config.get_cnv_loss_ratio):
+            low_mult = float(Config.get_cnv_loss_ratio())
+        else:
+            low_mult = float(getattr(config, 'LOWER_DEVIATION_TARGET', 
+                                   getattr(config, 'CNV_LOSS_RATIO', 0.75)))
     except Exception:
-        low_mult, high_mult = 0.75, 1.25
+        low_mult = 0.75
+    
+    try:
+        if hasattr(Config, 'get_upper_deviation_target') and callable(Config.get_upper_deviation_target):
+            high_mult = float(Config.get_upper_deviation_target())
+        elif hasattr(Config, 'get_cnv_gain_ratio') and callable(Config.get_cnv_gain_ratio):
+            high_mult = float(Config.get_cnv_gain_ratio())
+        else:
+            high_mult = float(getattr(config, 'UPPER_DEVIATION_TARGET',
+                                    getattr(config, 'CNV_GAIN_RATIO', 1.25)))
+    except Exception:
+        high_mult = 1.25
 
     abnormal_chromosomes = {}
 
@@ -400,3 +437,5 @@ def calculate_statistics(results):
     logger.debug(f"Overall statistics: abnormal={abnormal_count}/{total_samples}, buffer_zone={buffer_zone_count}/{total_samples}")
     
     return stats
+
+

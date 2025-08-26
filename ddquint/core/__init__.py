@@ -8,7 +8,7 @@ and report generation functionality.
 """
 
 from .clustering import analyze_droplets
-from .copy_number import calculate_copy_numbers, detect_aneuploidies, calculate_statistics
+from .copy_number import calculate_copy_numbers, detect_aneuploidies, calculate_statistics, apply_copy_number_display_multiplier
 from .file_processor import process_csv_file, process_directory
 from .list_report import create_list_report
 
@@ -17,6 +17,7 @@ __all__ = [
     'calculate_copy_numbers', 
     'detect_aneuploidies',
     'calculate_statistics',
+    'apply_copy_number_display_multiplier',
     'process_csv_file',
     'process_directory',
     'create_list_report'

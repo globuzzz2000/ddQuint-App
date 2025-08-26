@@ -63,9 +63,6 @@ class Config:
     # Tolerance for matching clusters to targets
     BASE_TARGET_TOLERANCE = 750
     
-    # Scale factor limits for adaptive tolerance
-    SCALE_FACTOR_MIN = 0.5
-    SCALE_FACTOR_MAX = 1.0
     
 
     #############################################################################
@@ -88,37 +85,44 @@ class Config:
     # Copy number calculation parameters
     MIN_USABLE_DROPLETS = 3000
     COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD = 0.15  # 15% deviation threshold
-    COPY_NUMBER_BASELINE_MIN_CHROMS = 3  # Minimum chromosomes for baseline calc
     
     # Number of chromosomes to analyze (1-10)
     CHROMOSOME_COUNT = 5
     
     # Expected copy number values for each chromosome (baseline for calculations)
     EXPECTED_COPY_NUMBERS = {
-        "Chrom1": 0.9716,
-        "Chrom2": 1.0052,
-        "Chrom3": 1.0278,
-        "Chrom4": 0.9912,
-        "Chrom5": 1.0035
+        "Chrom1": 1.0,
+        "Chrom2": 1.0,
+        "Chrom3": 1.0,
+        "Chrom4": 1.0,
+        "Chrom5": 1.0
     }
     
     # Standard deviation for each chromosome (empirically determined)
     EXPECTED_STANDARD_DEVIATION = {
-        "Chrom1": 0.0312,
-        "Chrom2": 0.0241,
-        "Chrom3": 0.0290,
-        "Chrom4": 0.0242,
-        "Chrom5": 0.0230
+        "Chrom1": 0.03,
+        "Chrom2": 0.03,
+        "Chrom3": 0.03,
+        "Chrom4": 0.03,
+        "Chrom5": 0.03
     }
     
     # Tolerance multiplier for standard deviation-based classification
     TOLERANCE_MULTIPLIER = 3
     
-    # Aneuploidy target multipliers (multiplicative factors for expected values)
-    ANEUPLOIDY_TARGETS = {
-        "low": 0.75,   # Deletion target (expected * 0.75)
-        "high": 1.25   # Duplication target (expected * 1.25)
-    }
+    # Copy number multiplier - applied to all relative copy number results
+    COPY_NUMBER_MULTIPLIER = 4
+    
+    # Copy number analysis control
+    ENABLE_COPY_NUMBER_ANALYSIS = True  # Enable copy number analysis and buffer zone detection
+    CLASSIFY_CNV_DEVIATIONS = True      # Enable copy number deviation classification
+    
+    # Target name customization
+    TARGET_NAMES = {}                   # Custom names for targets (e.g., {"Target1": "BRCA1", "Target2": "TP53"})
+    
+    # Deviation targets (multiplicative factors for expected values)
+    LOWER_DEVIATION_TARGET = 0.75  # Lower deviation target (expected * 0.75)
+    UPPER_DEVIATION_TARGET = 1.25  # Upper deviation target (expected * 1.25)
 
     #############################################################################
     #                           Visualization Settings
@@ -184,38 +188,50 @@ class Config:
     def __init__(self):
         """Initialize Config instance with default values."""
         logger.info("DEBUG: Config.__init__() called")
+        self._well_context = None  # Current well context for parameter switching
+        self._well_parameters = {}  # Well-specific parameter overrides
         self.finalize_colors()
     
     def __getattribute__(self, name):
         """
-        Override attribute access to implement instance-first fallback for per-well parameters.
+        Override attribute access to implement context-aware parameter access.
         
-        For parameter attributes, check instance attributes first, then fall back to class attributes.
+        For parameter attributes, use the context system to get well-specific values.
         This allows per-well parameter customization while maintaining backwards compatibility.
         """
-        # List of parameters that should use instance-first fallback
+        # List of parameters that should use context-aware access
         PARAMETER_ATTRS = {
+            # HDBSCAN clustering parameters
             'HDBSCAN_MIN_CLUSTER_SIZE', 'HDBSCAN_MIN_SAMPLES', 'HDBSCAN_EPSILON',
             'HDBSCAN_METRIC', 'HDBSCAN_CLUSTER_SELECTION_METHOD', 'MIN_POINTS_FOR_CLUSTERING',
+            # Plot/visualization parameters  
             'INDIVIDUAL_PLOT_DPI', 'PLACEHOLDER_PLOT_DPI',
             'X_AXIS_MIN', 'X_AXIS_MAX', 'Y_AXIS_MIN', 'Y_AXIS_MAX',
             'X_GRID_INTERVAL', 'Y_GRID_INTERVAL',
             'COMPOSITE_FIGURE_SIZE', 'INDIVIDUAL_FIGURE_SIZE', 'COMPOSITE_PLOT_SIZE',
-            'BASE_TARGET_TOLERANCE', 'SCALE_FACTOR_MIN', 'SCALE_FACTOR_MAX',
-            'TOLERANCE_MULTIPLIER'
+            # Analysis parameters
+            'BASE_TARGET_TOLERANCE',
+            'TOLERANCE_MULTIPLIER', 'COPY_NUMBER_MULTIPLIER', 'EXPECTED_CENTROIDS', 'EXPECTED_COPY_NUMBERS', 
+            'EXPECTED_STANDARD_DEVIATION', 'CHROMOSOME_COUNT', 'ENABLE_COPY_NUMBER_ANALYSIS', 'CLASSIFY_CNV_DEVIATIONS',
+            'LOWER_DEVIATION_TARGET', 'UPPER_DEVIATION_TARGET', 'CNV_LOSS_RATIO', 'CNV_GAIN_RATIO', 'ANEUPLOIDY_TARGETS', 'TARGET_NAMES',
+            # Additional processing parameters
+            'MIN_USABLE_DROPLETS', 'COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD',
+            'TARGET_COLORS'
         }
         
-        # For parameter attributes, try instance first, then class
+        # For parameter attributes, use context-aware access
         if name in PARAMETER_ATTRS:
             try:
-                # Check if instance has this attribute set
-                value = object.__getattribute__(self, name)
-                logger.info(f"DEBUG __getattribute__: {name} = {value} (from instance)")
+                # Get the context-aware method
+                context_method = object.__getattribute__(self, '_get_parameter_with_context')
+                class_default = getattr(self.__class__, name, None)
+                value = context_method(name, class_default)
+                logger.debug(f"DEBUG __getattribute__: {name} = {value} (context-aware)")
                 return value
             except AttributeError:
-                # Fall back to class attribute
+                # Fall back to class attribute if something goes wrong
                 value = getattr(self.__class__, name)
-                logger.info(f"DEBUG __getattribute__: {name} = {value} (from class)")
+                logger.debug(f"DEBUG __getattribute__: {name} = {value} (fallback)")
                 return value
         
         # For all other attributes, use normal access
@@ -287,6 +303,34 @@ class Config:
             List of labels in processing order
         """
         return ['Negative'] + cls.get_chromosome_keys() + ['Unknown']
+    
+    @classmethod
+    def get_target_labels(cls) -> List[str]:
+        """
+        Get target labels for display (Target1, Target2, etc.) instead of Chrom names.
+        
+        Returns:
+            List of target labels for plotting
+        """
+        chrom_keys = cls.get_chromosome_keys()
+        target_keys = []
+        for chrom in chrom_keys:
+            if chrom.startswith('Chrom'):
+                target_num = chrom.replace('Chrom', '')
+                target_keys.append(f'Target{target_num}')
+            else:
+                target_keys.append(chrom)  # Keep non-Chrom names as-is
+        return target_keys
+    
+    @classmethod
+    def get_ordered_target_labels(cls) -> List[str]:
+        """
+        Get ordered target labels for display purposes.
+        
+        Returns:
+            List of target labels in processing order
+        """
+        return ['Negative'] + cls.get_target_labels() + ['Unknown']
     
     @classmethod
     def get_tolerance_for_chromosome(cls, chrom_name: str) -> float:
@@ -556,22 +600,20 @@ class Config:
     @classmethod
     def get_hdbscan_params(cls) -> Dict[str, Any]:
         """
-        Get HDBSCAN clustering parameters.
+        Get HDBSCAN clustering parameters with well context support.
         
         Returns:
             Dictionary of HDBSCAN parameters ready for clustering
         """
         instance = cls.get_instance()
-        logger.info(f"DEBUG get_hdbscan_params: instance id = {id(instance)}")
-        logger.info(f"DEBUG get_hdbscan_params: instance HDBSCAN_MIN_CLUSTER_SIZE = {getattr(instance, 'HDBSCAN_MIN_CLUSTER_SIZE', 'NOT_SET')}")
-        logger.info(f"DEBUG get_hdbscan_params: class HDBSCAN_MIN_CLUSTER_SIZE = {cls.HDBSCAN_MIN_CLUSTER_SIZE}")
+        logger.info(f"DEBUG get_hdbscan_params: instance id = {id(instance)}, well context = {instance._well_context}")
         
         result = {
-            'min_cluster_size': getattr(instance, 'HDBSCAN_MIN_CLUSTER_SIZE', cls.HDBSCAN_MIN_CLUSTER_SIZE),
-            'min_samples': getattr(instance, 'HDBSCAN_MIN_SAMPLES', cls.HDBSCAN_MIN_SAMPLES),
-            'cluster_selection_epsilon': getattr(instance, 'HDBSCAN_EPSILON', cls.HDBSCAN_EPSILON),
-            'metric': getattr(instance, 'HDBSCAN_METRIC', cls.HDBSCAN_METRIC),
-            'cluster_selection_method': getattr(instance, 'HDBSCAN_CLUSTER_SELECTION_METHOD', cls.HDBSCAN_CLUSTER_SELECTION_METHOD),
+            'min_cluster_size': instance._get_parameter_with_context('HDBSCAN_MIN_CLUSTER_SIZE', cls.HDBSCAN_MIN_CLUSTER_SIZE),
+            'min_samples': instance._get_parameter_with_context('HDBSCAN_MIN_SAMPLES', cls.HDBSCAN_MIN_SAMPLES),
+            'cluster_selection_epsilon': instance._get_parameter_with_context('HDBSCAN_EPSILON', cls.HDBSCAN_EPSILON),
+            'metric': instance._get_parameter_with_context('HDBSCAN_METRIC', cls.HDBSCAN_METRIC),
+            'cluster_selection_method': instance._get_parameter_with_context('HDBSCAN_CLUSTER_SELECTION_METHOD', cls.HDBSCAN_CLUSTER_SELECTION_METHOD),
             'core_dist_n_jobs': 1  # Use single core for reproducibility
         }
         logger.info(f"DEBUG get_hdbscan_params: returning {result}")
@@ -580,38 +622,90 @@ class Config:
     @classmethod
     def get_expected_centroids(cls) -> Dict[str, List[float]]:
         """
-        Get expected centroids with per-instance support like HDBSCAN parameters.
+        Get expected centroids with well context support.
         """
         instance = cls.get_instance()
-        logger.debug(f"DEBUG get_expected_centroids: instance id = {id(instance)}")
-        # Check if instance has custom EXPECTED_CENTROIDS, otherwise use class default
-        instance_centroids = getattr(instance, 'EXPECTED_CENTROIDS', None)
-        expected_centroids = instance_centroids if instance_centroids is not None else cls.EXPECTED_CENTROIDS
-        logger.debug(f"DEBUG get_expected_centroids: instance_centroids = {instance_centroids}")
-        logger.debug(f"DEBUG get_expected_centroids: class_centroids = {cls.EXPECTED_CENTROIDS}")
+        logger.debug(f"DEBUG get_expected_centroids: instance id = {id(instance)}, well context = {instance._well_context}")
+        
+        # Use context-aware parameter access
+        expected_centroids = instance._get_parameter_with_context('EXPECTED_CENTROIDS', cls.EXPECTED_CENTROIDS)
         logger.debug(f"DEBUG get_expected_centroids: returning {expected_centroids}")
         return expected_centroids
 
     @classmethod
     def get_expected_copy_numbers(cls) -> Dict[str, float]:
-        """Instance-first accessor for EXPECTED_COPY_NUMBERS."""
+        """Get expected copy numbers with well context support."""
         instance = cls.get_instance()
-        instance_map = getattr(instance, 'EXPECTED_COPY_NUMBERS', None)
-        return instance_map if isinstance(instance_map, dict) else cls.EXPECTED_COPY_NUMBERS
+        return instance._get_parameter_with_context('EXPECTED_COPY_NUMBERS', cls.EXPECTED_COPY_NUMBERS)
 
     @classmethod
     def get_expected_std_dev(cls) -> Dict[str, float]:
-        """Instance-first accessor for EXPECTED_STANDARD_DEVIATION."""
+        """Get expected standard deviation with well context support."""
         instance = cls.get_instance()
-        instance_map = getattr(instance, 'EXPECTED_STANDARD_DEVIATION', None)
-        return instance_map if isinstance(instance_map, dict) else cls.EXPECTED_STANDARD_DEVIATION
+        return instance._get_parameter_with_context('EXPECTED_STANDARD_DEVIATION', cls.EXPECTED_STANDARD_DEVIATION)
 
     @classmethod
-    def get_aneuploidy_targets(cls) -> Dict[str, float]:
-        """Instance-first accessor for ANEUPLOIDY_TARGETS (low/high multipliers)."""
+    def get_lower_deviation_target(cls) -> float:
+        """Get lower deviation target with well context support."""
         instance = cls.get_instance()
-        instance_map = getattr(instance, 'ANEUPLOIDY_TARGETS', None)
-        return instance_map if isinstance(instance_map, dict) else cls.ANEUPLOIDY_TARGETS
+        return instance._get_parameter_with_context('LOWER_DEVIATION_TARGET', cls.LOWER_DEVIATION_TARGET)
+    
+    @classmethod
+    def get_upper_deviation_target(cls) -> float:
+        """Get upper deviation target with well context support."""
+        instance = cls.get_instance()
+        return instance._get_parameter_with_context('UPPER_DEVIATION_TARGET', cls.UPPER_DEVIATION_TARGET)
+    
+    @classmethod
+    def get_enable_copy_number_analysis(cls) -> bool:
+        """Get copy number analysis enable flag with well context support."""
+        instance = cls.get_instance()
+        return instance._get_parameter_with_context('ENABLE_COPY_NUMBER_ANALYSIS', cls.ENABLE_COPY_NUMBER_ANALYSIS)
+    
+    @classmethod
+    def get_classify_cnv_deviations(cls) -> bool:
+        """Get CNV deviation classification flag with well context support."""
+        instance = cls.get_instance()
+        return instance._get_parameter_with_context('CLASSIFY_CNV_DEVIATIONS', cls.CLASSIFY_CNV_DEVIATIONS)
+    
+    @classmethod
+    def get_cnv_loss_ratio(cls) -> float:
+        """Get CNV loss ratio with well context support (legacy method)."""
+        instance = cls.get_instance()
+        # Use new deviation target for consistency
+        return instance._get_parameter_with_context('LOWER_DEVIATION_TARGET', cls.LOWER_DEVIATION_TARGET)
+    
+    @classmethod
+    def get_cnv_gain_ratio(cls) -> float:
+        """Get CNV gain ratio with well context support (legacy method)."""
+        instance = cls.get_instance()
+        # Use new deviation target for consistency
+        return instance._get_parameter_with_context('UPPER_DEVIATION_TARGET', cls.UPPER_DEVIATION_TARGET)
+    
+    
+    @classmethod
+    def get_copy_number_multiplier(cls) -> float:
+        """Get copy number multiplier with well context support."""
+        instance = cls.get_instance()
+        return instance._get_parameter_with_context('COPY_NUMBER_MULTIPLIER', cls.COPY_NUMBER_MULTIPLIER)
+    
+    @classmethod
+    def get_target_names(cls) -> Dict[str, str]:
+        """Get target names mapping with well context support."""
+        instance = cls.get_instance()
+        result = instance._get_parameter_with_context('TARGET_NAMES', {})
+        print(f"DEBUG: Config.get_target_names() returning: {result}")
+        return result
+    
+    @classmethod
+    def get_aneuploidy_targets(cls) -> Dict[str, float]:
+        """Get aneuploidy targets with well context support (legacy method)."""
+        instance = cls.get_instance()
+        # Build from individual deviation targets for consistency
+        return {
+            'low': instance._get_parameter_with_context('LOWER_DEVIATION_TARGET', cls.LOWER_DEVIATION_TARGET),
+            'high': instance._get_parameter_with_context('UPPER_DEVIATION_TARGET', cls.UPPER_DEVIATION_TARGET)
+        }
     
     @classmethod
     def get_target_tolerance(cls, scale_factor: float = 1.0) -> Dict[str, float]:
@@ -624,8 +718,7 @@ class Config:
         Returns:
             Dictionary of target names to tolerance values
         """
-        # Ensure scale factor is within limits
-        scale_factor = max(cls.SCALE_FACTOR_MIN, min(cls.SCALE_FACTOR_MAX, scale_factor))
+        # Apply scale factor directly (no limits)
         
         # Apply scale factor to base tolerance for all targets
         return {target: cls.BASE_TARGET_TOLERANCE * scale_factor 
@@ -799,3 +892,66 @@ class Config:
         """
         logger.info("DEBUG: finalize_colors() called")
         cls._reconcile_target_colors()
+    
+    # MARK: - Well Parameter Context Management
+    
+    def set_well_context(self, well_id: str, parameters: Dict[str, Any] = None):
+        """
+        Set the current well context with optional parameter overrides.
+        
+        Args:
+            well_id: Well identifier (e.g., 'A01')
+            parameters: Dictionary of parameter overrides for this well
+        """
+        self._well_context = well_id
+        if parameters:
+            self._well_parameters[well_id] = parameters.copy()
+        logger.debug(f"Set well context: {well_id} with {len(parameters or {})} parameter overrides")
+        
+        # Regenerate TARGET_COLORS to include any new chromosomes from the well context
+        self.finalize_colors()
+    
+    def clear_well_context(self):
+        """Clear the current well context, reverting to global parameters."""
+        old_context = self._well_context
+        self._well_context = None
+        logger.debug(f"Cleared well context (was: {old_context})")
+    
+    def get_current_well_context(self) -> str:
+        """Get the current well context identifier."""
+        return self._well_context
+    
+    def _get_parameter_with_context(self, param_name: str, default_value=None):
+        """
+        Get a parameter value considering the current well context.
+        
+        Args:
+            param_name: Name of the parameter
+            default_value: Default value if parameter not found
+            
+        Returns:
+            Parameter value with well context considered
+        """
+        # If we have a well context and well-specific parameters for this well
+        if (self._well_context and 
+            self._well_context in self._well_parameters and 
+            param_name in self._well_parameters[self._well_context]):
+            
+            value = self._well_parameters[self._well_context][param_name]
+            logger.debug(f"Using well-specific {param_name} = {value} for {self._well_context}")
+            return value
+        
+        # Debug: show what parameters ARE available for this well
+        if self._well_context and self._well_context in self._well_parameters:
+            available_params = list(self._well_parameters[self._well_context].keys())
+            logger.debug(f"Well {self._well_context} has parameters: {available_params}, looking for {param_name}")
+        elif self._well_context:
+            logger.debug(f"Well {self._well_context} has no parameters in context")
+        
+        # Fall back to class default
+        if hasattr(self.__class__, param_name):
+            value = getattr(self.__class__, param_name)
+            logger.debug(f"Using default {param_name} = {value}")
+            return value
+            
+        return default_value

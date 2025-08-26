@@ -442,8 +442,69 @@ private func setupConstraints(in contentView: NSView) {
             // Save the parent directory of the selected folder
             setLastURL(url.deletingLastPathComponent(), for: "LastDir.InputFolder")
             selectedFolderURL = url
+            
+            // Check for existing parameters.json and offer to apply it
+            checkForParametersFile(in: url)
+            
             showAnalysisProgress()
             startAnalysis(folderURL: url)
+        }
+    }
+    
+    private func checkForParametersFile(in folderURL: URL) {
+        let parametersURL = folderURL.appendingPathComponent("ddQuint_Parameters.json")
+        
+        // Check if ddQuint_Parameters.json exists in the selected folder
+        guard FileManager.default.fileExists(atPath: parametersURL.path) else {
+            return // No parameters file found, continue normally
+        }
+        
+        // Show alert asking user if they want to apply the parameters
+        let alert = NSAlert()
+        alert.messageText = "Parameters file found"
+        alert.informativeText = "The selected folder contains a 'ddQuint_Parameters.json' file. Would you like to apply these parameters before analysis?"
+        alert.addButton(withTitle: "Apply Parameters")
+        alert.addButton(withTitle: "Skip")
+        alert.alertStyle = .informational
+        
+        let response = alert.runModal()
+        
+        if response == .alertFirstButtonReturn {
+            // User chose to apply parameters
+            applyParametersFromFile(parametersURL)
+        }
+    }
+    
+    private func applyParametersFromFile(_ url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                showError("Invalid parameters file format in selected folder")
+                return
+            }
+            
+            print("📂 Applying parameters from folder: \(url.lastPathComponent)")
+            
+            // Load global parameters (if present)
+            if let globals = obj["global_parameters"] as? [String: Any] {
+                saveParametersToFile(globals)
+                print("✅ Applied \(globals.count) global parameters")
+            }
+            
+            // Load well-specific parameters
+            if let wells = obj["well_parameters"] as? [String: Any] {
+                var map: [String: [String: Any]] = [:]
+                for (well, value) in wells {
+                    if let params = value as? [String: Any] {
+                        map[well] = params
+                    }
+                }
+                wellParametersMap = map
+                print("✅ Applied parameters for \(map.count) wells")
+            }
+            
+        } catch {
+            showError("Failed to load parameters from folder: \(error.localizedDescription)")
         }
     }
     
@@ -658,7 +719,7 @@ private func setupConstraints(in contentView: NSView) {
                         'HDBSCAN_MIN_CLUSTER_SIZE','HDBSCAN_MIN_SAMPLES','HDBSCAN_EPSILON','HDBSCAN_METRIC','HDBSCAN_CLUSTER_SELECTION_METHOD','MIN_POINTS_FOR_CLUSTERING',
                         'INDIVIDUAL_PLOT_DPI','PLACEHOLDER_PLOT_DPI',
                         'X_AXIS_MIN','X_AXIS_MAX','Y_AXIS_MIN','Y_AXIS_MAX','X_GRID_INTERVAL','Y_GRID_INTERVAL',
-                        'BASE_TARGET_TOLERANCE','SCALE_FACTOR_MIN','SCALE_FACTOR_MAX','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','TOLERANCE_MULTIPLIER','CHROMOSOME_COUNT'
+                        'BASE_TARGET_TOLERANCE','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','CNV_LOSS_RATIO','CNV_GAIN_RATIO','LOWER_DEVIATION_TARGET','UPPER_DEVIATION_TARGET','TOLERANCE_MULTIPLIER','COPY_NUMBER_MULTIPLIER','CHROMOSOME_COUNT','ENABLE_COPY_NUMBER_ANALYSIS','CLASSIFY_CNV_DEVIATIONS','TARGET_NAMES'
                     ]
                     
                     for csv_file in csv_files:
@@ -672,7 +733,7 @@ private func setupConstraints(in contentView: NSView) {
                             graphs_dir = os.path.join(temp_base, 'ddquint_analysis_plots')
                             os.makedirs(graphs_dir, exist_ok=True)
                             
-                            # Apply per-well overrides if present (reset instance overrides first)
+                            # Apply per-well overrides using new Config context API
                             try:
                                 # Compute well_id from filename
                                 import re
@@ -684,23 +745,21 @@ private func setupConstraints(in contentView: NSView) {
                                     row_letter = m[-1].group(1).upper()
                                     col_number = int(m[-1].group(2))
                                     well_id = f"{row_letter}{col_number:02d}"
-                                # Reset any instance-set overrides to fallback to class/global defaults
-                                for k in PARAM_KEYS:
-                                    if hasattr(config, k) and k in getattr(config, '__dict__', {}):
-                                        delattr(config, k)
-                                # Apply overrides for this well
+                                
+                                # Set well context with parameters (if any)
                                 if well_id and well_id in WELL_PARAMS:
                                     overrides = WELL_PARAMS.get(well_id, {})
-                                    applied = 0
-                                    for k, v in overrides.items():
-                                        try:
-                                            setattr(config, k, v)
-                                            applied += 1
-                                        except Exception:
-                                            pass
-                                    print(f"Applied {applied} per-well overrides for {well_id}")
+                                    config.set_well_context(well_id, overrides)
+                                    print(f"Set well context for {well_id} with {len(overrides)} parameter overrides")
+                                else:
+                                    # Clear context for wells without custom parameters
+                                    config.clear_well_context()
+                                    if well_id:
+                                        print(f"No custom parameters for {well_id}, using defaults")
                             except Exception as _e:
-                                print(f"Per-well override error: {_e}")
+                                print(f"Well context error: {_e}")
+                                # Ensure context is cleared on error
+                                config.clear_well_context()
 
                             # Process individual file with proper error handling
                             result = process_csv_file(csv_file, graphs_dir, sample_names, verbose=False)
@@ -1573,6 +1632,13 @@ private func setupConstraints(in contentView: NSView) {
         let visualizationView = createVisualizationParametersView(parameters: savedParams)
         visualizationTab.view = visualizationView
         tabView.addTabViewItem(visualizationTab)
+        
+        // Tab 5: General Settings
+        let generalTab = NSTabViewItem(identifier: "general")
+        generalTab.label = "General"
+        let generalView = createGeneralSettingsView(parameters: savedParams)
+        generalTab.view = generalView
+        tabView.addTabViewItem(generalTab)
 
         // Ensure scroll views start at the top for better UX
         DispatchQueue.main.async { [weak self] in
@@ -1580,6 +1646,7 @@ private func setupConstraints(in contentView: NSView) {
             if let scroll = visualizationView as? NSScrollView { self?.scrollToTop(scroll) }
             if let scroll = hdbscanView as? NSScrollView { self?.scrollToTop(scroll) }
             if let scroll = centroidsView as? NSScrollView { self?.scrollToTop(scroll) }
+            if let scroll = generalView as? NSScrollView { self?.scrollToTop(scroll) }
         }
         
         // Create button container
@@ -1820,7 +1887,7 @@ private func setupConstraints(in contentView: NSView) {
         let scrollView = NSScrollView()
         let view = NSView()
         
-        var yPos: CGFloat = 560  // Proper positioning to reduce gap
+        var yPos: CGFloat = 500  // Fixed title position
         let fieldHeight: CGFloat = 24
         let spacing: CGFloat = 30
         
@@ -1874,6 +1941,9 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         chromCountPopup.frame = NSRect(x: 250, y: yPos, width: 80, height: fieldHeight)
+        // Ensure popup is above other elements
+        chromCountPopup.wantsLayer = true
+        chromCountPopup.layer?.zPosition = 100
         chromCountPopup.target = self
         chromCountPopup.action = #selector(chromosomeCountChanged(_:))
         
@@ -1931,9 +2001,7 @@ private func setupConstraints(in contentView: NSView) {
             yPos -= 40
             
             let matchingParams = [
-                ("BASE_TARGET_TOLERANCE", "Base Target Tolerance:", "", "Base tolerance distance for matching detected clusters"),
-                ("SCALE_FACTOR_MIN", "Scale Factor Min:", "", "Minimum scale factor for adaptive tolerance adjustment"),
-                ("SCALE_FACTOR_MAX", "Scale Factor Max:", "", "Maximum scale factor for adaptive tolerance adjustment")
+                ("BASE_TARGET_TOLERANCE", "Target Tolerance:", "", "Base tolerance distance for matching detected clusters")
             ]
             
             for (identifier, label, _, tooltip) in matchingParams {
@@ -1966,7 +2034,7 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         // Set proper view size with padding
-        let finalHeight = max(560 - yPos + 80, 600)  // Calculate from actual content height
+        let finalHeight = max(500 - yPos + 80, 400)  // Calculate from actual content height
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
         
         // Setup scroll view properly
@@ -2011,52 +2079,74 @@ private func setupConstraints(in contentView: NSView) {
         let generalParams = [
             ("MIN_USABLE_DROPLETS", "Min Usable Droplets:", "", "Minimum total droplets required for reliable analysis"),
             ("COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD", "Median Deviation Threshold:", "", "Maximum deviation from median for baseline selection"),
-            ("COPY_NUMBER_BASELINE_MIN_CHROMS", "Baseline Min Chromosomes:", "", "Minimum chromosomes needed for normalization baseline"),
-            ("TOLERANCE_MULTIPLIER", "Tolerance Multiplier:", "", "Multiplier for chromosome standard deviation in classification")
+            ("COPY_NUMBER_MULTIPLIER", "Copy Number Multiplier:", "", "Multiplier applied for displaying relative copy number results")
         ]
         
-        for (identifier, label, _, tooltip) in generalParams {
+        for (identifier, label, paramType, tooltip) in generalParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 220, height: fieldHeight)
             addParameterTooltip(to: paramLabel, identifier: identifier)
             
-            let paramField = NSTextField()
-            paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
-            addParameterTooltip(to: paramField, identifier: identifier)
-            // Use parameter value if available, otherwise leave empty
-            if let paramValue = parameters[identifier] {
-                paramField.stringValue = formatParamValue(paramValue)
-                print("🎯 Set field \(identifier) = \(paramValue)")
-            } else {
-                paramField.stringValue = ""
-                print("⚪ Field \(identifier) has no parameter value, leaving empty")
-            }
-            paramField.frame = NSRect(x: 270, y: yPos, width: 100, height: fieldHeight)
-            paramField.toolTip = tooltip
-            paramField.isEditable = true
-            paramField.isSelectable = true
-            paramField.isBordered = true
-            paramField.bezelStyle = .roundedBezel
-            
             view.addSubview(paramLabel)
-            view.addSubview(paramField)
+            
+            // Handle dropdown parameters differently
+            if paramType == "yes/no" {
+                let dropdown = NSPopUpButton()
+                dropdown.identifier = NSUserInterfaceItemIdentifier(identifier)
+                dropdown.addItems(withTitles: ["Yes", "No"])
+                
+                // Set current value
+                if let paramValue = parameters[identifier] as? Bool {
+                    dropdown.selectItem(at: paramValue ? 0 : 1)
+                } else if let paramValue = parameters[identifier] as? String {
+                    dropdown.selectItem(at: paramValue.lowercased() == "yes" ? 0 : 1)
+                } else {
+                    dropdown.selectItem(at: 0) // Default to Yes
+                }
+                
+                dropdown.frame = NSRect(x: 270, y: yPos, width: 80, height: fieldHeight)
+                addParameterTooltip(to: dropdown, identifier: identifier)
+                view.addSubview(dropdown)
+            } else {
+                let paramField = NSTextField()
+                paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
+                addParameterTooltip(to: paramField, identifier: identifier)
+                // Use parameter value if available, otherwise leave empty
+                if let paramValue = parameters[identifier] {
+                    paramField.stringValue = formatParamValue(paramValue)
+                    print("🎯 Set field \(identifier) = \(paramValue)")
+                } else {
+                    paramField.stringValue = ""
+                    print("⚪ Field \(identifier) has no parameter value, leaving empty")
+                }
+                paramField.frame = NSRect(x: 270, y: yPos, width: 100, height: fieldHeight)
+                paramField.toolTip = tooltip
+                paramField.isEditable = true
+                paramField.isSelectable = true
+                paramField.isBordered = true
+                paramField.bezelStyle = .roundedBezel
+                
+                view.addSubview(paramField)
+            }
+            
             yPos -= spacing
         }
         
-        // Aneuploidy Targets
+        // Expected Copy Number
         yPos -= 20
-        let aneuploidyLabel = NSTextField(labelWithString: "Aneuploidy Target Ratios")
+        let aneuploidyLabel = NSTextField(labelWithString: "Expected Copy Number")
         aneuploidyLabel.font = NSFont.boldSystemFont(ofSize: 14)
         aneuploidyLabel.frame = NSRect(x: 20, y: yPos, width: 200, height: 20)
         view.addSubview(aneuploidyLabel)
         yPos -= 40
         
         let aneuploidyParams = [
-            ("ANEUPLOIDY_TARGETS_LOW", "Chromosomal loss:", "", "Target copy number ratio for chromosome deletions"),
-            ("ANEUPLOIDY_TARGETS_HIGH", "Chromosomal gain:", "", "Target copy number ratio for chromosome duplications")
+            ("TOLERANCE_MULTIPLIER", "Tolerance Multiplier:", "", "Multiplier for target-specific standard deviation in classification"),
+            ("LOWER_DEVIATION_TARGET", "Lower deviation target:", "", "Expected ratio for lower copy number deviation"),
+            ("UPPER_DEVIATION_TARGET", "Upper deviation target:", "", "Expected ratio for upper copy number deviation")
         ]
         
-        for (identifier, label, _, tooltip) in aneuploidyParams {
+        for (identifier, label, paramType, tooltip) in aneuploidyParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 220, height: fieldHeight)
             addParameterTooltip(to: paramLabel, identifier: identifier)
@@ -2064,24 +2154,92 @@ private func setupConstraints(in contentView: NSView) {
             let paramField = NSTextField()
             paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
             addParameterTooltip(to: paramField, identifier: identifier)
-            // Special handling for aneuploidy targets
-            if identifier == "ANEUPLOIDY_TARGETS_LOW" {
+            // Special handling for dropdown and ratio parameters
+            if identifier == "ENABLE_COPY_NUMBER_ANALYSIS" || identifier == "CLASSIFY_CNV_DEVIATIONS" {
+                // Create dropdown for yes/no parameters
+                paramField.removeFromSuperview()
+                let dropdown = NSPopUpButton()
+                dropdown.identifier = NSUserInterfaceItemIdentifier(identifier)
+                dropdown.addItems(withTitles: ["Yes", "No"])
+                
+                // Set current value
+                if let paramValue = parameters[identifier] as? Bool {
+                    dropdown.selectItem(at: paramValue ? 0 : 1)
+                } else if let paramValue = parameters[identifier] as? String {
+                    dropdown.selectItem(at: paramValue.lowercased() == "yes" ? 0 : 1)
+                } else {
+                    dropdown.selectItem(at: 0) // Default to Yes
+                }
+                
+                dropdown.frame = NSRect(x: 270, y: yPos, width: 80, height: fieldHeight)
+                addParameterTooltip(to: dropdown, identifier: identifier)
+                view.addSubview(dropdown)
+                continue
+            } else if identifier == "TOLERANCE_MULTIPLIER" {
+                if let paramValue = parameters[identifier] {
+                    paramField.stringValue = formatParamValue(paramValue)
+                    print("🎯 Set field \(identifier) = \(paramValue)")
+                } else {
+                    paramField.stringValue = ""
+                    print("⚪ Field \(identifier) has no parameter value, leaving empty")
+                }
+            } else if identifier == "LOWER_DEVIATION_TARGET" {
+                // Check both new and old parameter names for backward compatibility
                 if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
                    let value = targets["low"] {
                     paramField.stringValue = String(value)
-                    print("🎯 Set aneuploidy field \(identifier) = \(value)")
+                    print("🎯 Set deviation field \(identifier) = \(value)")
+                } else if let value = parameters["CNV_LOSS_RATIO"] {
+                    paramField.stringValue = formatParamValue(value)
+                    print("🎯 Set deviation field \(identifier) = \(value)")
+                } else if let value = parameters["LOWER_DEVIATION_TARGET"] {
+                    paramField.stringValue = formatParamValue(value)
+                    print("🎯 Set deviation field \(identifier) = \(value)")
                 } else {
                     paramField.stringValue = ""
-                    print("⚪ Aneuploidy field \(identifier) has no parameter value, leaving empty")
+                    print("⚪ Deviation field \(identifier) has no parameter value, leaving empty")
                 }
-            } else if identifier == "ANEUPLOIDY_TARGETS_HIGH" {
+            } else if identifier == "UPPER_DEVIATION_TARGET" {
+                // Check both new and old parameter names for backward compatibility
                 if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
                    let value = targets["high"] {
                     paramField.stringValue = String(value)
-                    print("🎯 Set aneuploidy field \(identifier) = \(value)")
+                    print("🎯 Set deviation field \(identifier) = \(value)")
+                } else if let value = parameters["CNV_GAIN_RATIO"] {
+                    paramField.stringValue = formatParamValue(value)
+                    print("🎯 Set deviation field \(identifier) = \(value)")
+                } else if let value = parameters["UPPER_DEVIATION_TARGET"] {
+                    paramField.stringValue = formatParamValue(value)
+                    print("🎯 Set deviation field \(identifier) = \(value)")
                 } else {
                     paramField.stringValue = ""
-                    print("⚪ Aneuploidy field \(identifier) has no parameter value, leaving empty")
+                    print("⚪ Deviation field \(identifier) has no parameter value, leaving empty")
+                }
+            } else if identifier == "CNV_LOSS_RATIO" {
+                // Check both new and old parameter names for backward compatibility
+                if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
+                   let value = targets["low"] {
+                    paramField.stringValue = String(value)
+                    print("🎯 Set CNV field \(identifier) = \(value)")
+                } else if let value = parameters["CNV_LOSS_RATIO"] {
+                    paramField.stringValue = formatParamValue(value)
+                    print("🎯 Set CNV field \(identifier) = \(value)")
+                } else {
+                    paramField.stringValue = ""
+                    print("⚪ CNV field \(identifier) has no parameter value, leaving empty")
+                }
+            } else if identifier == "CNV_GAIN_RATIO" {
+                // Check both new and old parameter names for backward compatibility
+                if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
+                   let value = targets["high"] {
+                    paramField.stringValue = String(value)
+                    print("🎯 Set CNV field \(identifier) = \(value)")
+                } else if let value = parameters["CNV_GAIN_RATIO"] {
+                    paramField.stringValue = formatParamValue(value)
+                    print("🎯 Set CNV field \(identifier) = \(value)")
+                } else {
+                    paramField.stringValue = ""
+                    print("⚪ CNV field \(identifier) has no parameter value, leaving empty")
                 }
             } else if let paramValue = parameters[identifier] {
                 paramField.stringValue = formatParamValue(paramValue)
@@ -2190,44 +2348,16 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         // Ensure all elements are visible by adjusting if yPos went below safe margin
-        let bottomMargin: CGFloat = 20
-        if yPos < bottomMargin {
-            let offsetNeeded = bottomMargin - yPos
-            print("📏 Copy Number view: yPos = \(yPos), offsetting all elements up by \(offsetNeeded)")
-            
-            // Move all subviews up by the offset
-            for subview in view.subviews {
-                var frame = subview.frame
-                frame.origin.y += offsetNeeded
-                subview.frame = frame
-            }
-            yPos += offsetNeeded
-        }
+        // Automatic offset logic removed - use manual positioning like other parameter screens
         
         // Set proper view size with padding - ensure all content is visible
         let contentHeight = 480 - yPos + 40  // Total content height from top to bottom element
-        let finalHeight = max(contentHeight, 600)  // Ensure sufficient minimum height
+        let finalHeight = max(contentHeight, 500)  // Ensure sufficient minimum height
         print("📏 Copy Number view: final yPos = \(yPos), contentHeight = \(contentHeight), finalHeight = \(finalHeight)")
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
 
-        // Align content towards the top to avoid large empty space above
-        let topMargin: CGFloat = 20
-        var maxSubviewY: CGFloat = 0
-        for subview in view.subviews {
-            maxSubviewY = max(maxSubviewY, subview.frame.maxY)
-        }
-        if maxSubviewY < finalHeight - topMargin {
-            let shift = (finalHeight - topMargin) - maxSubviewY
-            for subview in view.subviews {
-                var f = subview.frame
-                f.origin.y += shift
-                subview.frame = f
-            }
-            // Recompute max Y after shift (for debugging)
-            var newMaxY: CGFloat = 0
-            for subview in view.subviews { newMaxY = max(newMaxY, subview.frame.maxY) }
-            print("📐 Copy Number view: shifted content up by \(shift), newMaxY=\(newMaxY)")
-        }
+        // Content alignment disabled - maintain manual positioning
+        print("📐 Copy Number view: keeping manual title positioning (auto-alignment disabled)")
         
         // Setup scroll view properly
         // Remove explicit frame - let Auto Layout handle it
@@ -2378,6 +2508,128 @@ private func setupConstraints(in contentView: NSView) {
         scrollView.borderType = .noBorder
         
         // Ensure proper scrolling behavior
+        scrollView.verticalScrollElasticity = .allowed
+        scrollView.horizontalScrollElasticity = .none
+        
+        return scrollView
+    }
+    
+    private func createGeneralSettingsView(parameters: [String: Any]) -> NSView {
+        let scrollView = NSScrollView()
+        let view = NSView()
+        
+        var yPos: CGFloat = 500
+        let fieldHeight: CGFloat = 24
+        let spacing: CGFloat = 30
+        
+        // Title
+        let titleLabel = NSTextField(labelWithString: "General Settings")
+        titleLabel.font = NSFont.boldSystemFont(ofSize: 16)
+        titleLabel.frame = NSRect(x: 20, y: yPos, width: 400, height: 20)
+        view.addSubview(titleLabel)
+        yPos -= 40
+        
+        // Instructions
+        let instructionLabel = NSTextField(labelWithString: "Configure general application settings and analysis behavior.")
+        instructionLabel.font = NSFont.systemFont(ofSize: 12)
+        instructionLabel.textColor = .secondaryLabelColor
+        instructionLabel.frame = NSRect(x: 40, y: yPos, width: 500, height: 16)
+        view.addSubview(instructionLabel)
+        yPos -= 40
+        
+        // Analysis Settings
+        let analysisLabel = NSTextField(labelWithString: "Analysis Settings")
+        analysisLabel.font = NSFont.boldSystemFont(ofSize: 14)
+        analysisLabel.frame = NSRect(x: 20, y: yPos, width: 200, height: 20)
+        view.addSubview(analysisLabel)
+        yPos -= 40
+        
+        let analysisParams = [
+            ("ENABLE_COPY_NUMBER_ANALYSIS", "Do copy number analysis?", "yes/no", "Enable or disable copy number analysis and buffer zone detection"),
+            ("CLASSIFY_CNV_DEVIATIONS", "Classify copy number deviations?", "yes/no", "Enable or disable copy number deviation classification")
+        ]
+        
+        for (identifier, label, paramType, tooltip) in analysisParams {
+            let paramLabel = NSTextField(labelWithString: label)
+            paramLabel.frame = NSRect(x: 40, y: yPos, width: 250, height: fieldHeight)
+            addParameterTooltip(to: paramLabel, identifier: identifier)
+            
+            view.addSubview(paramLabel)
+            
+            // Create dropdown for yes/no parameters
+            let dropdown = NSPopUpButton()
+            dropdown.identifier = NSUserInterfaceItemIdentifier(identifier)
+            dropdown.addItems(withTitles: ["Yes", "No"])
+            
+            // Set current value
+            if let paramValue = parameters[identifier] as? Bool {
+                dropdown.selectItem(at: paramValue ? 0 : 1)
+            } else if let paramValue = parameters[identifier] as? String {
+                dropdown.selectItem(at: paramValue.lowercased() == "yes" ? 0 : 1)
+            } else {
+                dropdown.selectItem(at: 0) // Default to Yes
+            }
+            
+            dropdown.frame = NSRect(x: 300, y: yPos, width: 80, height: fieldHeight)
+            addParameterTooltip(to: dropdown, identifier: identifier)
+            view.addSubview(dropdown)
+            
+            yPos -= spacing
+        }
+        
+        // Target Name Customization
+        yPos -= 20
+        let targetNamesLabel = NSTextField(labelWithString: "Target Names")
+        targetNamesLabel.font = NSFont.boldSystemFont(ofSize: 14)
+        targetNamesLabel.frame = NSRect(x: 20, y: yPos, width: 200, height: 20)
+        view.addSubview(targetNamesLabel)
+        yPos -= 40
+        
+        // Get current chromosome count to determine how many target name fields to show
+        var currentChromCount = 5 // Default
+        if let chromCount = parameters["CHROMOSOME_COUNT"] as? Int {
+            currentChromCount = chromCount
+        }
+        
+        // Create target name fields dynamically based on chromosome count
+        for i in 1...currentChromCount {
+            let targetLabel = NSTextField(labelWithString: "Target \(i):")
+            targetLabel.frame = NSRect(x: 40, y: yPos, width: 120, height: fieldHeight)
+            
+            let targetField = NSTextField()
+            targetField.identifier = NSUserInterfaceItemIdentifier("TARGET_NAME_\(i)")
+            
+            // Set current value or default
+            if let targetNames = parameters["TARGET_NAMES"] as? [String: String],
+               let name = targetNames["Target\(i)"] {
+                targetField.stringValue = name
+            } else {
+                targetField.stringValue = "Target\(i)" // Default name
+            }
+            
+            targetField.frame = NSRect(x: 170, y: yPos, width: 150, height: fieldHeight)
+            targetField.toolTip = "Custom name for Target \(i) (leave empty for default)"
+            targetField.isEditable = true
+            targetField.isSelectable = true
+            targetField.isBordered = true
+            targetField.bezelStyle = .roundedBezel
+            
+            view.addSubview(targetLabel)
+            view.addSubview(targetField)
+            yPos -= spacing
+        }
+        
+        // Set proper view size
+        let contentHeight = 500 - yPos + 60
+        let finalHeight = max(contentHeight, 400)
+        view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
+        
+        // Setup scroll view
+        scrollView.documentView = view
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
         scrollView.verticalScrollElasticity = .allowed
         scrollView.horizontalScrollElasticity = .none
         
@@ -2778,13 +3030,49 @@ private func setupConstraints(in contentView: NSView) {
                             // Store as invalid string for validation
                             parameters[identifier] = trimmedValue
                         }
-                    } else if identifier == "ANEUPLOIDY_TARGETS_LOW" || identifier == "ANEUPLOIDY_TARGETS_HIGH" {
+                    } else if identifier.hasPrefix("TARGET_NAME_") {
+                        // Extract target name
+                        let targetIndex = String(identifier.dropFirst("TARGET_NAME_".count))
+                        let targetKey = "Target\(targetIndex)"
+                        
+                        // Initialize TARGET_NAMES dictionary if needed
+                        if parameters["TARGET_NAMES"] == nil {
+                            parameters["TARGET_NAMES"] = [String: String]()
+                        }
+                        var targetNames = parameters["TARGET_NAMES"] as! [String: String]
+                        
+                        let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                        // Store empty string if field is empty (Python will handle default)
+                        targetNames[targetKey] = trimmedValue
+                        parameters["TARGET_NAMES"] = targetNames
+                        print("🔍 TARGET_NAMES set in parameters: \(targetNames)")
+                    } else if identifier == "LOWER_DEVIATION_TARGET" || identifier == "UPPER_DEVIATION_TARGET" || identifier == "COPY_NUMBER_MULTIPLIER" {
                         if let value = Double(textField.stringValue) {
+                            // Store in new format
+                            parameters[identifier] = value
+                            
+                            // Also maintain old formats for backward compatibility
+                            parameters[identifier == "LOWER_DEVIATION_TARGET" ? "CNV_LOSS_RATIO" : "CNV_GAIN_RATIO"] = value
+                            
                             if parameters["ANEUPLOIDY_TARGETS"] == nil {
                                 parameters["ANEUPLOIDY_TARGETS"] = [String: Double]()
                             }
                             var targets = parameters["ANEUPLOIDY_TARGETS"] as! [String: Double]
-                            let key = identifier == "ANEUPLOIDY_TARGETS_LOW" ? "low" : "high"
+                            let key = identifier == "LOWER_DEVIATION_TARGET" ? "low" : "high"
+                            targets[key] = value
+                            parameters["ANEUPLOIDY_TARGETS"] = targets
+                        }
+                    } else if identifier == "CNV_LOSS_RATIO" || identifier == "CNV_GAIN_RATIO" {
+                        if let value = Double(textField.stringValue) {
+                            // Store both in new format and maintain backward compatibility
+                            parameters[identifier] = value
+                            
+                            // Also maintain old ANEUPLOIDY_TARGETS format for backward compatibility
+                            if parameters["ANEUPLOIDY_TARGETS"] == nil {
+                                parameters["ANEUPLOIDY_TARGETS"] = [String: Double]()
+                            }
+                            var targets = parameters["ANEUPLOIDY_TARGETS"] as! [String: Double]
+                            let key = identifier == "CNV_LOSS_RATIO" ? "low" : "high"
                             targets[key] = value
                             parameters["ANEUPLOIDY_TARGETS"] = targets
                         }
@@ -2813,6 +3101,11 @@ private func setupConstraints(in contentView: NSView) {
                         if let title = popup.titleOfSelectedItem, let count = Int(title) {
                             parameters[identifier] = count
                         }
+                    } else if identifier == "ENABLE_COPY_NUMBER_ANALYSIS" || identifier == "CLASSIFY_CNV_DEVIATIONS" {
+                        // Handle yes/no dropdown values as boolean
+                        let selectedTitle = popup.titleOfSelectedItem ?? "Yes"
+                        parameters[identifier] = selectedTitle.lowercased() == "yes"
+                        print("✅ Extracted dropdown \(identifier) = \(selectedTitle) -> \(selectedTitle.lowercased() == "yes")")
                     } else {
                         parameters[identifier] = popup.titleOfSelectedItem ?? ""
                     }
@@ -2843,8 +3136,19 @@ private func setupConstraints(in contentView: NSView) {
             parameters["EXPECTED_STANDARD_DEVIATION"] = [String: Double]()
         }
         
+        // Ensure TARGET_NAMES is always present, even if empty
+        if parameters["TARGET_NAMES"] == nil {
+            parameters["TARGET_NAMES"] = [String: String]()
+            print("🔍 Initialized empty TARGET_NAMES dictionary")
+        }
+        
         print("   Found \(foundFields) UI fields total")
         print("   Extracted \(parameters.count) parameters: \(parameters.keys.sorted())")
+        if let targetNames = parameters["TARGET_NAMES"] {
+            print("🔍 Final TARGET_NAMES in extracted parameters: \(targetNames)")
+        } else {
+            print("🔍 TARGET_NAMES not found in extracted parameters")
+        }
         return parameters
     }
     
@@ -2865,7 +3169,7 @@ private func setupConstraints(in contentView: NSView) {
         let requiredNumericFields = [
             "HDBSCAN_MIN_CLUSTER_SIZE", "HDBSCAN_MIN_SAMPLES", "HDBSCAN_EPSILON", 
             "MIN_POINTS_FOR_CLUSTERING", "BASE_TARGET_TOLERANCE", 
-            "SCALE_FACTOR_MIN", "SCALE_FACTOR_MAX", "TOLERANCE_MULTIPLIER"
+            "TOLERANCE_MULTIPLIER"
         ]
         
         for field in requiredNumericFields {
@@ -2952,18 +3256,33 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         // Second pass: ensure all configured chromosomes have complete configuration
+        // (either from well-specific parameters or global defaults)
+        let globalDefaults = loadGlobalParameters()
+        
         for chrom in configuredChroms {
             let displayName = chrom.replacingOccurrences(of: "Chrom", with: "Target ")
-            if !chromsWithCentroids.contains(chrom) {
-                showError("Missing centroids for \(displayName)")
+            
+            // Check if centroids are available (well-specific OR global default)
+            let hasWellCentroids = chromsWithCentroids.contains(chrom)
+            let hasGlobalCentroids = (globalDefaults["EXPECTED_CENTROIDS"] as? [String: [Double]])?[chrom] != nil
+            if !hasWellCentroids && !hasGlobalCentroids {
+                showError("Missing centroids for \(displayName) - no well-specific or global default available")
                 return false
             }
-            if !chromsWithCopyNumbers.contains(chrom) {
-                showError("Missing copy number for \(displayName)")
+            
+            // Check if copy numbers are available (well-specific OR global default)
+            let hasWellCopyNumbers = chromsWithCopyNumbers.contains(chrom)
+            let hasGlobalCopyNumbers = (globalDefaults["EXPECTED_COPY_NUMBERS"] as? [String: Double])?[chrom] != nil
+            if !hasWellCopyNumbers && !hasGlobalCopyNumbers {
+                showError("Missing copy number for \(displayName) - no well-specific or global default available")
                 return false
             }
-            if !chromsWithStdDevs.contains(chrom) {
-                showError("Missing standard deviation for \(displayName)")
+            
+            // Check if standard deviations are available (well-specific OR global default)
+            let hasWellStdDevs = chromsWithStdDevs.contains(chrom)
+            let hasGlobalStdDevs = (globalDefaults["EXPECTED_STANDARD_DEVIATION"] as? [String: Double])?[chrom] != nil
+            if !hasWellStdDevs && !hasGlobalStdDevs {
+                showError("Missing standard deviation for \(displayName) - no well-specific or global default available")
                 return false
             }
         }
@@ -3019,34 +3338,48 @@ private func setupConstraints(in contentView: NSView) {
         // Validate tolerance parameters if present
         if let tolerance = parameters["BASE_TARGET_TOLERANCE"] as? Int {
             if tolerance < 1 {
-                showError("Base Target Tolerance must be at least 1")
+                showError("Target Tolerance must be at least 1")
                 return false
             }
         }
         
-        // Validate scale factors if present
-        if let scaleMin = parameters["SCALE_FACTOR_MIN"] as? Double {
-            if scaleMin < 0.1 || scaleMin > 1.0 {
-                showError("Scale Factor Min must be between 0.1 and 1.0")
+        
+        // Validate deviation targets if present
+        if let lowerTarget = parameters["LOWER_DEVIATION_TARGET"] as? Double {
+            if lowerTarget < 0.1 || lowerTarget > 1.0 {
+                showError("Lower deviation target must be between 0.1 and 1.0")
+                return false
+            }
+        }
+        if let upperTarget = parameters["UPPER_DEVIATION_TARGET"] as? Double {
+            if upperTarget < 1.0 || upperTarget > 2.0 {
+                showError("Upper deviation target must be between 1.0 and 2.0")
                 return false
             }
         }
         
-        if let scaleMax = parameters["SCALE_FACTOR_MAX"] as? Double {
-            if scaleMax < 1.0 || scaleMax > 2.0 {
-                showError("Scale Factor Max must be between 1.0 and 2.0")
+        // Also validate CNV ratios for backward compatibility
+        if let cnvLoss = parameters["CNV_LOSS_RATIO"] as? Double {
+            if cnvLoss < 0.1 || cnvLoss > 1.0 {
+                showError("Lower deviation target must be between 0.1 and 1.0")
+                return false
+            }
+        }
+        if let cnvGain = parameters["CNV_GAIN_RATIO"] as? Double {
+            if cnvGain < 1.0 || cnvGain > 2.0 {
+                showError("Upper deviation target must be between 1.0 and 2.0")
                 return false
             }
         }
         
-        // Validate aneuploidy targets if present
+        // Also validate old aneuploidy targets format for backward compatibility
         if let aneuploidyTargets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double] {
             if let low = aneuploidyTargets["low"], (low < 0.1 || low > 1.0) {
-                showError("Aneuploidy deletion target must be between 0.1 and 1.0")
+                showError("CNV Loss Ratio must be between 0.1 and 1.0")
                 return false
             }
             if let high = aneuploidyTargets["high"], (high < 1.0 || high > 2.0) {
-                showError("Aneuploidy duplication target must be between 1.0 and 2.0")
+                showError("CNV Gain Ratio must be between 1.0 and 2.0")
                 return false
             }
         }
@@ -3130,8 +3463,6 @@ import re
 # These values are directly extracted from the Config class definition
 defaults = {
     'BASE_TARGET_TOLERANCE': 750,
-    'SCALE_FACTOR_MIN': 0.5,
-    'SCALE_FACTOR_MAX': 1.0,
     'HDBSCAN_MIN_CLUSTER_SIZE': 4,
     'HDBSCAN_MIN_SAMPLES': 70,
     'HDBSCAN_EPSILON': 0.06,
@@ -3140,7 +3471,6 @@ defaults = {
     'MIN_POINTS_FOR_CLUSTERING': 50,
     'MIN_USABLE_DROPLETS': 3000,
     'COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD': 0.15,
-    'COPY_NUMBER_BASELINE_MIN_CHROMS': 3,
     'TOLERANCE_MULTIPLIER': 3,
     'CHROMOSOME_COUNT': 5,
     'EXPECTED_CENTROIDS': {
@@ -3165,6 +3495,13 @@ defaults = {
         'Chrom4': 0.0242,
         'Chrom5': 0.0230
     },
+    'ENABLE_COPY_NUMBER_ANALYSIS': True,
+    'CLASSIFY_CNV_DEVIATIONS': True,
+    'USE_PLOIDY_TERMINOLOGY': False,
+    'LOWER_DEVIATION_TARGET': 0.75,
+    'UPPER_DEVIATION_TARGET': 1.25,
+    'CNV_LOSS_RATIO': 0.75,
+    'CNV_GAIN_RATIO': 1.25,
     'ANEUPLOIDY_TARGETS': {
         'low': 0.75,
         'high': 1.25
@@ -3270,14 +3607,59 @@ print(json.dumps(defaults))
                             restoredFields += 1
                             print("✅ Restored standard deviation \(chrom): \(textField.stringValue)")
                         }
-                    } else if identifier == "ANEUPLOIDY_TARGETS_LOW" {
-                        if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
+                    } else if identifier == "LOWER_DEVIATION_TARGET" {
+                        // Check new format first, then fall back to old formats
+                        if let value = parameters["LOWER_DEVIATION_TARGET"] {
+                            textField.stringValue = String(describing: value)
+                            restoredFields += 1
+                        } else if let value = parameters["CNV_LOSS_RATIO"] {
+                            textField.stringValue = String(describing: value)
+                            restoredFields += 1
+                        } else if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
                            let value = targets["low"] {
                             textField.stringValue = String(value)
                             restoredFields += 1
                         }
-                    } else if identifier == "ANEUPLOIDY_TARGETS_HIGH" {
-                        if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
+                    } else if identifier == "UPPER_DEVIATION_TARGET" {
+                        // Check new format first, then fall back to old formats
+                        if let value = parameters["UPPER_DEVIATION_TARGET"] {
+                            textField.stringValue = String(describing: value)
+                            restoredFields += 1
+                        } else if let value = parameters["CNV_GAIN_RATIO"] {
+                            textField.stringValue = String(describing: value)
+                            restoredFields += 1
+                        } else if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
+                           let value = targets["high"] {
+                            textField.stringValue = String(value)
+                            restoredFields += 1
+                        }
+                    } else if identifier == "ENABLE_COPY_NUMBER_ANALYSIS" || identifier == "CLASSIFY_CNV_DEVIATIONS" {
+                        // Handle dropdown restoration
+                        if let popup = view.subviews.first(where: { $0.identifier?.rawValue == identifier }) as? NSPopUpButton {
+                            if let value = parameters[identifier] as? Bool {
+                                popup.selectItem(at: value ? 0 : 1)
+                                restoredFields += 1
+                            } else if let value = parameters[identifier] as? String {
+                                popup.selectItem(at: value.lowercased() == "yes" ? 0 : 1)
+                                restoredFields += 1
+                            }
+                        }
+                    } else if identifier == "CNV_LOSS_RATIO" {
+                        // Check new format first, then fall back to old format
+                        if let value = parameters["CNV_LOSS_RATIO"] {
+                            textField.stringValue = String(describing: value)
+                            restoredFields += 1
+                        } else if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
+                           let value = targets["low"] {
+                            textField.stringValue = String(value)
+                            restoredFields += 1
+                        }
+                    } else if identifier == "CNV_GAIN_RATIO" {
+                        // Check new format first, then fall back to old format
+                        if let value = parameters["CNV_GAIN_RATIO"] {
+                            textField.stringValue = String(describing: value)
+                            restoredFields += 1
+                        } else if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
                            let value = targets["high"] {
                             textField.stringValue = String(value)
                             restoredFields += 1
@@ -3593,6 +3975,106 @@ print(json.dumps(defaults))
                 }
             }
         }
+        
+        // Also update general settings tab for target names
+        if let tabView = currentParamTabView {
+            for item in tabView.tabViewItems {
+                if item.identifier as? String == "general" {
+                    if let scrollView = item.view as? NSScrollView,
+                       let documentView = scrollView.documentView {
+                        updateGeneralSettingsViewForTargetCount(documentView, targetCount: newCount, parameters: { if let window = currentWellWindow ?? currentGlobalWindow { return extractParametersFromWindow(window, isGlobal: currentWellWindow == nil) } else { return loadGlobalParameters() } }())
+                    }
+                    break
+                }
+            }
+        }
+    }
+    
+    // Update General Settings view target names when chromosome count changes
+    private func updateGeneralSettingsViewForTargetCount(_ view: NSView, targetCount: Int, parameters: [String: Any] = [:]) {
+        let fieldHeight: CGFloat = 24
+        let spacing: CGFloat = 30
+        
+        // Find the base position from existing target name field
+        var baseY: CGFloat?
+        var baseX: CGFloat = 40  // Default X position
+        
+        // Look for existing target name fields to find base position
+        for subview in view.subviews {
+            if let textField = subview as? NSTextField,
+               textField.identifier?.rawValue == "TARGET_NAME_1" {
+                baseY = textField.frame.minY
+                baseX = textField.frame.minX - 130  // Account for label width
+                break
+            }
+        }
+        
+        // If no existing target fields found, try to find the target customization label
+        if baseY == nil {
+            for subview in view.subviews {
+                if let textField = subview as? NSTextField,
+                   textField.stringValue == "Target Name Customization" {
+                    baseY = textField.frame.minY - 40  // Position below the section header
+                    break
+                }
+            }
+        }
+        
+        guard let startY = baseY else {
+            print("Warning: Could not find base position for target name fields")
+            return
+        }
+        
+        // Remove existing target name fields and labels
+        var toRemove: [NSView] = []
+        for subview in view.subviews {
+            if let textField = subview as? NSTextField {
+                if let identifier = textField.identifier?.rawValue,
+                   identifier.hasPrefix("TARGET_NAME_") {
+                    toRemove.append(textField)
+                } else if textField.stringValue.hasPrefix("Target ") && 
+                         textField.stringValue.hasSuffix(":") &&
+                         textField.stringValue != "Target Name Customization" {
+                    // Remove target labels like "Target 1:", "Target 2:", etc.
+                    toRemove.append(textField)
+                }
+            }
+        }
+        
+        for view in toRemove {
+            view.removeFromSuperview()
+        }
+        
+        // Add new target name fields based on target count
+        var currentY = startY
+        for i in 1...targetCount {
+            let targetLabel = NSTextField(labelWithString: "Target \(i):")
+            targetLabel.frame = NSRect(x: baseX, y: currentY, width: 120, height: fieldHeight)
+            
+            let targetField = NSTextField()
+            targetField.identifier = NSUserInterfaceItemIdentifier("TARGET_NAME_\(i)")
+            
+            // Set current value from parameters or default
+            if let targetNames = parameters["TARGET_NAMES"] as? [String: String],
+               let name = targetNames["Target\(i)"], !name.isEmpty {
+                targetField.stringValue = name
+            } else {
+                targetField.stringValue = "" // Empty by default, falls back to "Target X"
+            }
+            
+            targetField.frame = NSRect(x: baseX + 130, y: currentY, width: 150, height: fieldHeight)
+            targetField.toolTip = "Custom name for Target \(i) (leave empty for default 'Target \(i)')"
+            targetField.isEditable = true
+            targetField.isSelectable = true
+            targetField.isBordered = true
+            targetField.bezelStyle = .roundedBezel
+            
+            view.addSubview(targetLabel)
+            view.addSubview(targetField)
+            currentY -= spacing
+        }
+        
+        print("✅ Updated General Settings target names for \(targetCount) targets")
     }
     
     // MARK: - Comprehensive Export
@@ -4717,30 +5199,17 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
                         
                         print(f'Loaded {len(custom_params)} custom parameters: {list(custom_params.keys())}')
                         
-                        # Apply custom parameters to config
+                        # Apply custom parameters using new Config context API
                         print(f'Config instance id: {id(config)}')
-                        applied_count = 0
-                        for key, value in custom_params.items():
-                            if hasattr(config, key):
-                                old_value = getattr(config, key)
-                                setattr(config, key, value)
-                                print(f'Applied parameter: {key} = {value} (was {old_value})')
-                                # Verify the attribute was set
-                                verify_value = getattr(config, key)
-                                print(f'Verification: {key} is now {verify_value}')
-                                
-                                # Special debug for EXPECTED_CENTROIDS
-                                if key == 'EXPECTED_CENTROIDS':
-                                    print(f'DEBUG: EXPECTED_CENTROIDS instance check:')
-                                    print(f'  Instance value: {getattr(config, "EXPECTED_CENTROIDS", "NOT_SET")}')
-                                    print(f'  Class value: {getattr(Config, "EXPECTED_CENTROIDS", "NOT_SET")}')
-                                    print(f'  get_expected_centroids(): {config.get_expected_centroids()}')
-                                
-                                applied_count += 1
-                            else:
-                                print(f'Warning: Config has no attribute {key}')
                         
-                        print(f'Successfully applied {applied_count} out of {len(custom_params)} parameters')
+                        # Extract well ID from the current processing context
+                        well_id = '\(wellName)'
+                        config.set_well_context(well_id, custom_params)
+                        print(f'Set well context for {well_id} with {len(custom_params)} parameter overrides')
+                        
+                        # Debug verification
+                        print(f'Current well context: {config.get_current_well_context()}')
+                        print(f'get_expected_centroids(): {config.get_expected_centroids()}')
                     else:
                         print('No custom parameters file found or file does not exist')
                     

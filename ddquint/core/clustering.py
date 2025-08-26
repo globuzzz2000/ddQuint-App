@@ -123,15 +123,31 @@ def analyze_droplets(df):
     usable_droplets = sum(count for label, count in label_counts.items() 
                          if label != 'Negative' and label != 'Unknown')
     
-    # Calculate relative copy numbers with total droplets for ML estimation
+    # Always calculate relative copy numbers with total droplets for ML estimation
     copy_numbers = calculate_copy_numbers(label_counts, total_droplets)
     logger.debug(f"ML-corrected copy numbers: {copy_numbers}")
     
-    # Classify copy number states using standard deviation-based tolerances
-    copy_number_states, has_aneuploidy, has_buffer_zone = _classify_copy_number_states_std_dev(copy_numbers, config)
+    # Check if copy number analysis (buffer zones) is enabled
+    enable_copy_number = config.get_enable_copy_number_analysis()
+    logger.debug(f"Copy number analysis (buffer zones) enabled: {enable_copy_number}")
     
-    # Detect abnormal chromosomes for detailed reporting
-    _, abnormal_chroms = detect_aneuploidies(copy_numbers)
+    # Check if deviation classification (aneuploidy) is enabled
+    classify_deviations = config.get_classify_cnv_deviations()
+    logger.debug(f"CNV deviation classification (aneuploidy) enabled: {classify_deviations}")
+    
+    if enable_copy_number:
+        # Classify copy number states using standard deviation-based tolerances
+        copy_number_states, has_aneuploidy, has_buffer_zone = _classify_copy_number_states_std_dev(copy_numbers, config, classify_deviations)
+        
+        # Detect abnormal chromosomes for detailed reporting
+        _, abnormal_chroms = detect_aneuploidies(copy_numbers)
+    else:
+        # Copy number analysis disabled - no buffer zones or aneuploidy detection
+        copy_number_states = {chrom: 'euploid' for chrom in copy_numbers.keys()}
+        has_aneuploidy = False
+        has_buffer_zone = False
+        abnormal_chroms = []
+        logger.debug("Copy number analysis disabled - no buffer zones or aneuploidy detection")
     
     logger.debug(f"Final analysis - Aneuploidy: {has_aneuploidy}, Buffer zone: {has_buffer_zone}")
     logger.debug(f"Droplet metrics - Total: {total_droplets}, Usable: {usable_droplets}, Negative: {negative_droplets}")
@@ -195,10 +211,7 @@ def _assign_targets_to_clusters(df_filtered, config):
     y_range = np.ptp(df_filtered['Ch1Amplitude'])
     scale_factor = min(1.0, max(0.5, np.sqrt((x_range * y_range) / 2000000)))
     
-    # Ensure scale factor is within config limits - use instance-aware access
-    scale_min = getattr(config, 'SCALE_FACTOR_MIN', 0.5)
-    scale_max = getattr(config, 'SCALE_FACTOR_MAX', 2.0)
-    scale_factor = max(scale_min, min(scale_max, scale_factor))
+    # Use scale factor directly (no limits)
     logger.debug(f"Calculated scale factor: {scale_factor}")
     
     # Get target tolerance with scale factor
@@ -276,13 +289,14 @@ def _assign_remaining_targets(expected_centroids, cluster_centroids, target_tol,
         else:
             logger.debug(f"Cluster {cl_best} too far from {target} (distance: {d_best:.2f} > tolerance: {target_tol[target]})")
 
-def _classify_copy_number_states_std_dev(copy_numbers, config):
+def _classify_copy_number_states_std_dev(copy_numbers, config, classify_deviations=True):
     """
     Classify copy number states using standard deviation-based tolerances.
     
     Args:
         copy_numbers: Dictionary of chromosome copy numbers
         config: Configuration instance
+        classify_deviations: Whether to classify aneuploidy (if False, only buffer zones)
         
     Returns:
         Tuple of (copy_number_states, has_aneuploidy, has_buffer_zone)
@@ -297,6 +311,21 @@ def _classify_copy_number_states_std_dev(copy_numbers, config):
         if chrom_name.startswith('Chrom'):
             # Use the new standard deviation-based classification
             state = config.classify_copy_number_state(chrom_name, copy_number)
+            
+            # If deviation classification is disabled, reclassify aneuploidy based on buffer zone tolerance
+            if not classify_deviations and state == 'aneuploidy':
+                # Get expected value and tolerance
+                expected_copy_numbers = config.get_expected_copy_numbers()
+                expected = expected_copy_numbers.get(chrom_name, 1.0)
+                tolerance = config.get_tolerance_for_chromosome(chrom_name)
+                
+                # Check if it falls within buffer zone tolerance (±X SDs from expected)
+                deviation = abs(copy_number - expected)
+                if deviation <= tolerance:
+                    state = 'euploid'  # Within tolerance, so normal
+                else:
+                    state = 'buffer_zone'  # Outside tolerance but not classified as aneuploidy
+                
             copy_number_states[chrom_name] = state
             
             # Get tolerance for logging
@@ -320,5 +349,9 @@ def _classify_copy_number_states_std_dev(copy_numbers, config):
     if has_buffer_zone:
         has_aneuploidy = False  # Reset aneuploidy flag when buffer zone is present
         logger.debug("Sample marked as buffer zone (overrides aneuploidy classification)")
+    
+    # Additional logging for classification settings
+    if not classify_deviations:
+        logger.debug("Aneuploidy classification disabled - only buffer zones detected")
     
     return copy_number_states, has_aneuploidy, has_buffer_zone

@@ -339,6 +339,10 @@ def _add_copy_number_annotations(ax, df_filtered, copy_numbers, copy_number_stat
     """Add copy number annotations to cluster centroids."""
     logger.debug("Adding copy number annotations")
     
+    # Apply display multiplier for copy numbers
+    from ..core.copy_number import apply_copy_number_display_multiplier
+    display_copy_numbers = apply_copy_number_display_multiplier(copy_numbers)
+    
     for target, color in label_color_map.items():
         if target not in ['Negative', 'Unknown'] and target in copy_numbers:
             # Get all points for this target
@@ -348,8 +352,8 @@ def _add_copy_number_annotations(ax, df_filtered, copy_numbers, copy_number_stat
                 cx = target_points['Ch2Amplitude'].mean()
                 cy = target_points['Ch1Amplitude'].mean()
                 
-                # Format copy number text
-                cn_value = copy_numbers[target]
+                # Format copy number text (using display multiplier)
+                cn_value = display_copy_numbers[target]
                 cn_text = f"{cn_value:.2f}"
                 
                 # Determine formatting based on state
@@ -377,21 +381,63 @@ def _add_copy_number_annotations(ax, df_filtered, copy_numbers, copy_number_stat
 
 def _add_legend(ax, label_color_map, counts, has_unclustered=False):
     """Add legend for standalone plots."""
-    # Define ordered labels for legend
-    ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
+    # Get dynamic ordered labels from config
+    from ..config import Config
+    try:
+        ordered_labels = Config.get_ordered_labels()
+    except:
+        # Fallback for backward compatibility
+        ordered_labels = ['Negative', 'Chrom1', 'Chrom2', 'Chrom3', 'Chrom4', 'Chrom5']
+    
+    # Get custom target names mapping
+    def get_display_name(internal_name):
+        """Convert internal name to display name using TARGET_NAMES config."""
+        if internal_name == 'Negative':
+            return 'Negative'
+        if internal_name == 'Unknown':
+            return 'Unknown'
+        if internal_name == 'Unclustered':
+            return 'Unclustered'
+            
+        # For chromosome targets, convert Chrom1 -> Target1, etc.
+        if internal_name.startswith('Chrom'):
+            try:
+                chrom_num = internal_name[5:]  # Extract number from 'Chrom1'
+                target_key = f'Target{chrom_num}'
+                
+                # Try to get custom name from TARGET_NAMES using proper config method
+                target_names = Config.get_target_names()
+                print(f"DEBUG: get_display_name for {internal_name} -> {target_key}: got target_names = {target_names}")
+                if target_names and target_key in target_names and target_names[target_key].strip():
+                    print(f"DEBUG: Using custom name '{target_names[target_key].strip()}' for {target_key}")
+                    return target_names[target_key].strip()
+                else:
+                    print(f"DEBUG: Using fallback name '{target_key}' for {internal_name}")
+                    # Fall back to default Target X format
+                    return target_key
+                    
+            except:
+                # Fallback to original name if parsing fails
+                return internal_name
+        
+        return internal_name
+    
     legend_handles = []
     
     for tgt in ordered_labels:
-        # Skip targets with no droplets
-        if tgt not in counts or counts[tgt] == 0:
+        # Skip targets with no droplets or skip "Unknown" (only show "Unclustered")
+        if tgt not in counts or counts[tgt] == 0 or tgt == 'Unknown':
             continue
             
         # Get color for this target
         color = label_color_map[tgt]
         
+        # Get display name for legend
+        display_name = get_display_name(tgt)
+        
         # Create legend handle
         handle = mpl.lines.Line2D([], [], marker='o', linestyle='', markersize=10,
-                               markerfacecolor=color, markeredgecolor='none', label=tgt)
+                               markerfacecolor=color, markeredgecolor='none', label=display_name)
         legend_handles.append(handle)
     
     # Add unclustered points to legend if they exist

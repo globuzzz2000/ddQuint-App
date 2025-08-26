@@ -208,8 +208,32 @@ def setup_headers(ws, chromosome_keys):
     ws.merge_cells(start_row=1, start_column=abs_start, end_row=1, end_column=abs_end)
 
     # Row 2: Chromosome headers for Relative and Absolute Copy Number
+    # Get custom target names from config
+    from ..config import Config
+    
+    def get_target_display_name(chrom_key):
+        """Convert internal chromosome key to display name using TARGET_NAMES config."""
+        try:
+            # Convert Chrom1 -> Target1, etc.
+            if chrom_key.startswith('Chrom'):
+                chrom_num = chrom_key[5:]  # Extract number from 'Chrom1'
+                target_key = f'Target{chrom_num}'
+                
+                # Try to get custom name from TARGET_NAMES using proper config method
+                target_names = Config.get_target_names()
+                if target_names and target_key in target_names and target_names[target_key].strip():
+                    return target_names[target_key].strip()
+                else:
+                    # Fall back to default Target X format
+                    return target_key
+        except:
+            pass
+            
+        # Fallback to original Chr format
+        return f"Chr{chrom_key.replace('Chrom', '')}"
+    
     for i, chrom_key in enumerate(chromosome_keys):
-        chrom_label = f"Chr{chrom_key.replace('Chrom', '')}"
+        chrom_label = get_target_display_name(chrom_key)
         ws.cell(row=2, column=rel_start + i, value=chrom_label)
         ws.cell(row=2, column=abs_start + i, value=chrom_label)
 
@@ -322,10 +346,13 @@ def _fill_chromosome_data(ws, row_idx, rel_start, abs_start, chromosome_keys,
         has_aneuploidy (bool): Whether sample has aneuploidy
         has_error (bool): Whether sample has error
     """
+    # Apply display multiplier for copy numbers in Excel output
+    from .copy_number import apply_copy_number_display_multiplier
+    display_copy_numbers = apply_copy_number_display_multiplier(copy_numbers)
     for i, chrom_key in enumerate(chromosome_keys):
         # Relative copy numbers
         rel_cell = ws.cell(row=row_idx, column=rel_start + i)
-        rel_count = copy_numbers.get(chrom_key)
+        rel_count = display_copy_numbers.get(chrom_key)
         # Show copy numbers even for error cases if they exist (partial analysis)
         if rel_count is not None:
             rel_cell.value = round(rel_count, 2)

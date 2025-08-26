@@ -61,7 +61,10 @@ dist/
 # -----------------------------------------------------------------------------
 # Project-specific ignores
 # -----------------------------------------------------------------------------
-# Legacy / contrib outputs that shouldn’t be versioned unless curated
+# Legacy / contrib outputs that shouldn't be versioned unless curated
 contrib/legacy_swift/dist_legacy/
 contrib/legacy_cli/__pycache__/
 .claude
+
+# Local dependencies cache for faster builds
+local_deps/
