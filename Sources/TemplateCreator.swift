@@ -629,8 +629,9 @@ private func setupUI() {
     static func cellBox(with text: String, centered: Bool = false) -> NSView {
         let box = NSBox()
         box.boxType = .custom
-        box.borderType = .lineBorder
-        box.borderWidth = 1.0
+        box.wantsLayer = true
+        box.layer?.borderWidth = 1.0
+        box.layer?.borderColor = NSColor.controlColor.cgColor
         box.contentViewMargins = NSSize(width: 8, height: 6)
         let label = NSTextField(labelWithString: text)
         if centered {

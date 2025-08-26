@@ -15,9 +15,7 @@ echo "🧹 Cleaning previous builds..."
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-# Reset debug log
-echo "🗑️ Resetting debug log..."
-> "$PROJECT_DIR/debug.log"
+# Debug logs are now saved to ~/.ddQuint/debug.log (no need to reset here)
 
 # Build the executable
 echo "🔨 Building Swift executable..."
@@ -48,7 +46,7 @@ if [ $? -eq 0 ]; then
     echo "🐍 Bundling complete Python environment..."
     ./bundle_python.sh
     
-    # Copy icon if it exists
+    # Copy icon if it exists (needed for dock icon)
     if [ -f "icon.png" ]; then
         cp "icon.png" "$APP_PATH/Contents/Resources/AppIcon.png"
     fi

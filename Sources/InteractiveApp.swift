@@ -1134,7 +1134,7 @@ private func setupConstraints(in contentView: NSView) {
         
         // Determine status from WELL_COMPLETED payload if available; fall back to cache
         var status: WellStatus = .euploid
-        var isEdited = isWellEdited(well)
+        let isEdited = isWellEdited(well)
         if let err = wellInfo["error"] as? String, !err.isEmpty {
             status = .warning
         } else if let hb = wellInfo["has_buffer_zone"] as? Bool, hb {
@@ -1336,7 +1336,7 @@ private func setupConstraints(in contentView: NSView) {
             if let tpl = self?.templateFileURL?.path { env["DDQ_TEMPLATE_PATH"] = tpl }
             process.environment = env
             
-            let escapedFolderPath = folderURL.path.replacingOccurrences(of: "'", with: "\\'")
+            _ = folderURL.path.replacingOccurrences(of: "'", with: "\\'") // unused
             let tempPlotPath = "/tmp/ddquint_plot_\(well).png"
             
             process.arguments = [
@@ -1448,7 +1448,7 @@ private func setupConstraints(in contentView: NSView) {
             // Fallback: try to regenerate this well's plot from CSV if available
             if let folder = selectedFolderURL {
                 let csvFiles = findCSVFiles(in: folder)
-                if let csv = csvFiles.first(where: { $0.lastPathComponent.contains(well) }) {
+                if csvFiles.contains(where: { $0.lastPathComponent.contains(well) }) {
                     statusLabel.stringValue = "Generating plot for \(well)"
                     applyParametersAndRegeneratePlot(wellName: well, parameters: wellParametersMap[well] ?? [:])
                     return
@@ -1738,7 +1738,7 @@ private func setupConstraints(in contentView: NSView) {
         
         // Show window
         paramWindow.makeKeyAndOrderFront(nil)
-        print("🪟 Window created and shown: \(paramWindow.title ?? "No Title")")
+        print("🪟 Window created and shown: \(paramWindow.title)")
         
         // Parameters were already loaded and applied during UI creation above
         
@@ -2138,13 +2138,8 @@ private func setupConstraints(in contentView: NSView) {
             yPos -= spacing
         }
         
-        // Expected Copy Number
+        // Parameters start directly without subheading
         yPos -= 20
-        let aneuploidyLabel = NSTextField(labelWithString: "Expected Copy Number")
-        aneuploidyLabel.font = NSFont.boldSystemFont(ofSize: 14)
-        aneuploidyLabel.frame = NSRect(x: 20, y: yPos, width: 200, height: 20)
-        view.addSubview(aneuploidyLabel)
-        yPos -= 40
         
         let aneuploidyParams = [
             ("TOLERANCE_MULTIPLIER", "Tolerance Multiplier:", "", "Multiplier for target-specific standard deviation in classification"),
@@ -2152,7 +2147,7 @@ private func setupConstraints(in contentView: NSView) {
             ("UPPER_DEVIATION_TARGET", "Upper deviation target:", "", "Expected ratio for upper copy number deviation")
         ]
         
-        for (identifier, label, paramType, tooltip) in aneuploidyParams {
+        for (identifier, label, _, tooltip) in aneuploidyParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 220, height: fieldHeight)
             addParameterTooltip(to: paramLabel, identifier: identifier)
@@ -2555,7 +2550,7 @@ private func setupConstraints(in contentView: NSView) {
             ("CLASSIFY_CNV_DEVIATIONS", "Classify copy number deviations?", "yes/no", "Enable or disable copy number deviation classification")
         ]
         
-        for (identifier, label, paramType, tooltip) in analysisParams {
+        for (identifier, label, _, _) in analysisParams {
             let paramLabel = NSTextField(labelWithString: label)
             paramLabel.frame = NSRect(x: 40, y: yPos, width: 250, height: fieldHeight)
             addParameterTooltip(to: paramLabel, identifier: identifier)
@@ -4103,7 +4098,7 @@ print(json.dumps(defaults))
             
             var exportSuccess = true
             var exportSteps = 0
-            let totalSteps = 3
+            _ = 3 // unused totalSteps
             
             print("📂 Export paths:")
             print("   Excel: \(excelURL.path)")
@@ -4509,7 +4504,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
     
     let fieldHeight: CGFloat = 24
     let rowSpacing: CGFloat = 30
-    let columnSpacing: CGFloat = 30  // Tighter spacing
+    _ = 30  // unused columnSpacing
     let chromsPerColumn = 5
     
     // Find existing first chromosome fields to establish base positions
@@ -5011,8 +5006,17 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
         let timestamp = formatter.string(from: Date())
         let logMessage = "[\(timestamp)] \(message)\n"
         
-        let logPath = "/Users/jakob/Applications/Git/ddQuint-App/debug.log"
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser
+        let ddquintDir = homeDir.appendingPathComponent(".ddQuint")
+        let logPath = ddquintDir.appendingPathComponent("debug.log").path
         let logURL = URL(fileURLWithPath: logPath)
+        
+        // Ensure .ddQuint directory exists
+        do {
+            try FileManager.default.createDirectory(at: ddquintDir, withIntermediateDirectories: true, attributes: nil)
+        } catch {
+            print("Warning: Could not create .ddQuint directory: \(error)")
+        }
         
         if let data = logMessage.data(using: .utf8) {
             if FileManager.default.fileExists(atPath: logPath) {
@@ -5845,7 +5849,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
             if let tpl = self?.templateFileURL?.path { env["DDQ_TEMPLATE_PATH"] = tpl }
             process.environment = env
             
-            let escapedSourcePath = sourceFolder.path.replacingOccurrences(of: "'", with: "\\'")
+            _ = sourceFolder.path.replacingOccurrences(of: "'", with: "\\'") // unused
             let escapedExportPath = exportURL.path.replacingOccurrences(of: "'", with: "\\'")
             let escapedDDQuintPath = ddquintPath.replacingOccurrences(of: "'", with: "\\'")
             
@@ -6635,53 +6639,177 @@ extension InteractiveMainWindowController {
     }
     
     @objc func showLegend() {
-        let pop = NSPopover()
-        pop.behavior = .transient
-        let vc = NSViewController()
+        // Create a proper window instead of popover
+        let helpWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 700),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        helpWindow.title = "ddQuint Help"
+        helpWindow.center()
+        helpWindow.isReleasedWhenClosed = false
         
-        let title = NSTextField(labelWithString: "ddQuint Overview")
-        title.font = NSFont.boldSystemFont(ofSize: 14)
+        let contentView = NSView()
+        helpWindow.contentView = contentView
         
-        let overviewText = """
-        Use the well list to navigate. Select a well to view its plot. Adjust parameters via 'Edit This Well'.
-
-        Indicators next to each well:
-        • White circle: Euploid
-        • Grey circle: Buffer Zone
-        • Purple circle: Aneuploid
-        • Red circle: Warning
-        • Square shape: Edited well (custom parameters)
-
-        Use the filter icon to hide buffer zone samples or warning samples.
-        """
-        let overview = NSTextField(labelWithString: overviewText)
-        overview.lineBreakMode = .byWordWrapping
-        if let cell = overview.cell as? NSTextFieldCell { cell.wraps = true; cell.usesSingleLineMode = false }
+        let title = NSTextField(labelWithString: "ddQuint")
+        title.font = NSFont.boldSystemFont(ofSize: 18)
+        title.isEditable = false
+        title.isBordered = false
+        title.backgroundColor = .clear
+        title.alignment = .center
         
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(title)
-        stack.addArrangedSubview(overview)
+        // Create attributed string with proper formatting
+        let attributedText = NSMutableAttributedString()
         
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
+        let regularFont = NSFont.systemFont(ofSize: 13)
+        let boldFont = NSFont.boldSystemFont(ofSize: 13)
+        let headerFont = NSFont.boldSystemFont(ofSize: 15)
+        let italicFont = NSFontManager.shared.convert(regularFont, toHaveTrait: .italicFontMask)
+        
+        let regularAttrs: [NSAttributedString.Key: Any] = [
+            .font: regularFont,
+            .foregroundColor: NSColor.controlTextColor
+        ]
+        let boldAttrs: [NSAttributedString.Key: Any] = [
+            .font: boldFont,
+            .foregroundColor: NSColor.controlTextColor
+        ]
+        let headerAttrs: [NSAttributedString.Key: Any] = [
+            .font: headerFont,
+            .foregroundColor: NSColor.controlTextColor
+        ]
+        let italicAttrs: [NSAttributedString.Key: Any] = [
+            .font: italicFont,
+            .foregroundColor: NSColor.controlTextColor
+        ]
+        
+        // Welcome paragraph
+        attributedText.append(NSAttributedString(string: "Welcome to ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "ddQuint", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: ", an application for analyzing multiplex ddPCR data.\n\n", attributes: regularAttrs))
+        
+        // Quick Start section
+        attributedText.append(NSAttributedString(string: "\nQuick Start\n", attributes: headerAttrs))
+        attributedText.append(NSAttributedString(string: "1. ", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: "Select Input Folder", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → Choose the folder containing QX Manager ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Amplitude CSVs", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: ".\n2. ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "(Optional) ", attributes: italicAttrs))
+        attributedText.append(NSAttributedString(string: "Load Template", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → Use a QX Manager template (.csv) to auto-assign sample names.\n3. ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Set Parameters", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → Open ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Global Parameters", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " to adjust clustering and classification settings.\n4. ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Analyze", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → The files are then automatically re-analyzed based on updated parameters.\n5. ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Export", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → Save Excel reports, plots, and parameter files.\n\n", attributes: regularAttrs))
+        
+        // Indicators section
+        attributedText.append(NSAttributedString(string: "\nIndicators\n", attributes: headerAttrs))
+        attributedText.append(NSAttributedString(string: "Each well is marked with an indicator:\n", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "• White circle: Euploid (normal copy number)\n• Grey circle: Buffer Zone (uncertain or intermediate)\n• Purple circle: Aneuploid (gain or loss detected)\n• Red circle: Warning (e.g., low droplets or clustering issue)\n• Square shape: Edited well (custom parameters applied)\nUse the filter button to hide buffer zone or warning samples.\n\n", attributes: regularAttrs))
+        
+        // Well-Specific Parameter Editing section
+        attributedText.append(NSAttributedString(string: "Well-Specific Parameter Editing\n", attributes: headerAttrs))
+        attributedText.append(NSAttributedString(string: "• Right-click (or use the context menu) on a well plot and choose ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Edit This Well", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: ".\n• A parameter editor will open with the same settings as Global Parameters, but applied only to that well.\n• After saving, only that well is re-analyzed and updated.\n\n", attributes: regularAttrs))
+        
+        // Export section
+        attributedText.append(NSAttributedString(string: "Export\n", attributes: headerAttrs))
+        attributedText.append(NSAttributedString(string: "• Export everything through the main menu button or individually through the menu bar.\n• ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Excel report", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: ": Copy numbers, classifications, and metadata.\n• ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Plots", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: ": Individual well plots in /Graphs/ directory.\n• ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Parameter files", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: ": Save/load your analysis settings for reproducibility.\n\n", attributes: regularAttrs))
+        
+        // Troubleshooting section
+        attributedText.append(NSAttributedString(string: "Troubleshooting\n", attributes: headerAttrs))
+        attributedText.append(NSAttributedString(string: "• ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "No CSVs found", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → Confirm the input files are QX Manager ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Amplitude", attributes: italicAttrs))
+        attributedText.append(NSAttributedString(string: " exports, that were not renamed.\n• ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Sample names missing", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → Provide a QX Manager template.\n• ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Poor clustering", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → Adjust HDBSCAN parameters or minimum droplet thresholds.\n• ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "Warnings", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: " → Usually low droplet counts; check run quality.\n\n", attributes: regularAttrs))
+        
+        // QX Manager Template Creation section
+        attributedText.append(NSAttributedString(string: "\nQX Manager Template Creation\n", attributes: headerAttrs))
+        attributedText.append(NSAttributedString(string: "The app can generate ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: "QX Manager-compatible template files", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: ":\n• Create a template in-app and save it as ", attributes: regularAttrs))
+        attributedText.append(NSAttributedString(string: ".csv", attributes: boldAttrs))
+        attributedText.append(NSAttributedString(string: ".\n• Import this file into QX Manager to pre-fill your experiment setup with sample names.\n• Reuse the same file in ddQuint during analysis to auto-assign well names in reports and plots.\n\n", attributes: regularAttrs))
+        
+        // GitHub link
+        attributedText.append(NSAttributedString(string: "\nFor advanced details, see the full README on GitHub:\n", attributes: regularAttrs))
+        let linkAttrs: [NSAttributedString.Key: Any] = [
+            .font: regularFont,
+            .foregroundColor: NSColor.linkColor,
+            .link: URL(string: "https://github.com/globuzzz2000/ddQuint-App")!
+        ]
+        attributedText.append(NSAttributedString(string: "https://github.com/globuzzz2000/ddQuint-App", attributes: linkAttrs))
+        
+        let textView = NSTextView()
+        textView.textStorage?.setAttributedString(attributedText)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.backgroundColor = .clear
+        textView.isRichText = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        
+        let scrollView = NSScrollView()
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true  // Hide scrollers but allow scrolling
+        scrollView.scrollerStyle = .overlay    // Use overlay style to hide bars
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        
+        title.translatesAutoresizingMaskIntoConstraints = false
+        
+        contentView.addSubview(title)
+        contentView.addSubview(scrollView)
         
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
-            container.widthAnchor.constraint(equalToConstant: 420)
+            title.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            title.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            
+            scrollView.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 20),
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
         ])
         
-        vc.view = container
-        pop.contentViewController = vc
-        guard let button = legendButton else { return }
-        pop.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+        // Set text view size after the scroll view is laid out
+        DispatchQueue.main.async {
+            textView.frame = scrollView.contentView.bounds
+            textView.sizeToFit()
+            // Ensure the text view is tall enough for all content
+            let textSize = textView.attributedString().boundingRect(
+                with: NSSize(width: textView.frame.width, height: CGFloat.greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            ).size
+            textView.frame = NSRect(x: 0, y: 0, width: textView.frame.width, height: max(textSize.height, scrollView.contentView.bounds.height))
+        }
+        
+        helpWindow.makeKeyAndOrderFront(nil)
     }
 }
 
