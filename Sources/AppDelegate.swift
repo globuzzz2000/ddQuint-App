@@ -13,6 +13,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowController = InteractiveMainWindowController()
         mainWindowController?.showWindow(nil)
         mainWindowController?.window?.makeKeyAndOrderFront(nil)
+        // Early UI log to confirm logging works on startup
+        mainWindowController?.writeDebugLog("[UI] App launched: ddQuint UI initialized and main window shown")
         
         // Make sure app doesn't quit when window is closed
         NSApp.setActivationPolicy(.regular)

@@ -25,39 +25,58 @@ echo "📂 Python bundle path: $PYTHON_BUNDLE_PATH"
 # Create Python bundle directory
 mkdir -p "$PYTHON_BUNDLE_PATH"
 
-# Step 1: Create a minimal Python virtual environment
+# Step 1: Create a minimal Python virtual environment (prefer Python 3.13 for cache compatibility)
 echo "🔧 Creating Python virtual environment..."
-python3 -m venv "$VENV_PATH" --copies
+if command -v python3.13 >/dev/null 2>&1; then
+  PYBIN=python3.13
+else
+  PYBIN=python3
+fi
+echo "Using Python interpreter: $(command -v "$PYBIN")"
+"$PYBIN" -m venv "$VENV_PATH" --copies
 
-# Step 2: Install dependencies in the virtual environment
-echo "📦 Installing ddQuint dependencies..."
-"$VENV_PATH/bin/pip" install --no-cache-dir --upgrade pip
+echo "📦 Installing ddQuint dependencies (offline from local_deps if available)..."
+"$VENV_PATH/bin/pip" install --no-cache-dir --upgrade pip >/dev/null 2>&1 || true
 
-# Install dependencies from pyproject.toml manually
-"$VENV_PATH/bin/pip" install --no-cache-dir \
-    "pandas>=1.0.0" \
-    "numpy>=1.18.0" \
-    "matplotlib>=3.3.0" \
-    "scikit-learn>=0.24.0" \
-    "hdbscan>=0.8.27" \
-    "openpyxl>=3.0.5" \
-    "Send2Trash>=1.8.2" \
-    "colorama>=0.4.4" \
-    "tqdm>=4.60.0"
+# Prefer offline vendored site-packages if Python versions match
+CACHE_SITE_PACKAGES_BASE="$PROJECT_DIR/local_deps/cache_venv/lib"
+VENV_PYVER=$("$VENV_PATH/bin/python" -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')
+VENV_SITE_PACKAGES=$("$VENV_PATH/bin/python" -c 'import site; print(site.getsitepackages()[0])')
+CACHE_SITE_PACKAGES="$CACHE_SITE_PACKAGES_BASE/$VENV_PYVER/site-packages"
 
-# Install macOS-specific dependencies
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "📱 Installing macOS-specific dependencies..."
-    "$VENV_PATH/bin/pip" install --no-cache-dir \
-        "pyobjc-core" \
-        "pyobjc-framework-Cocoa"
+if [ -d "$CACHE_SITE_PACKAGES" ]; then
+    echo "📁 Using cached dependencies from: $CACHE_SITE_PACKAGES"
+    rsync -a --delete "$CACHE_SITE_PACKAGES/" "$VENV_SITE_PACKAGES/"
+else
+    echo "⚠️ No cached site-packages for $VENV_PYVER found at $CACHE_SITE_PACKAGES."
+    echo "   Falling back to minimal install from requirements (may need network)."
+    if [ -f "$PROJECT_DIR/local_deps/requirements.txt" ]; then
+        "$VENV_PATH/bin/pip" install --no-cache-dir -r "$PROJECT_DIR/local_deps/requirements.txt"
+    else
+        "$VENV_PATH/bin/pip" install --no-cache-dir \
+            "pandas>=1.0.0" \
+            "numpy>=1.18.0" \
+            "matplotlib>=3.3.0" \
+            "scikit-learn>=0.24.0" \
+            "hdbscan>=0.8.27" \
+            "openpyxl>=3.0.5" \
+            "Send2Trash>=1.8.2" \
+            "colorama>=0.4.4" \
+            "tqdm>=4.60.0"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            "$VENV_PATH/bin/pip" install --no-cache-dir \
+                "pyobjc-core" \
+                "pyobjc-framework-Cocoa"
+        fi
+    fi
 fi
 
 # Step 2.5: Install ddquint module into the virtual environment
 echo "📦 Installing ddQuint module into virtual environment..."
 # Copy ddquint module to site-packages so it's always available
-SITE_PACKAGES=$(find "$VENV_PATH/lib" -name "site-packages" | head -1)
-cp -r "$PROJECT_DIR/ddquint" "$SITE_PACKAGES/ddquint"
+SITE_PACKAGES=$("$VENV_PATH/bin/python" -c 'import site,sys; print(site.getsitepackages()[0])')
+mkdir -p "$SITE_PACKAGES"
+rsync -a --delete "$PROJECT_DIR/ddquint/" "$SITE_PACKAGES/ddquint/"
 
 # Step 3: Remove unnecessary files to reduce bundle size
 echo "🧹 Cleaning up virtual environment..."
@@ -86,7 +105,8 @@ chmod +x "$PYTHON_BUNDLE_PATH/python_launcher"
 
 # Step 5: Test the bundled environment
 echo "🔍 Testing bundled Python environment..."
-if "$PYTHON_BUNDLE_PATH/python_launcher" -c "
+# Suppress third-party SyntaxWarnings (e.g., hdbscan LaTeX label strings)
+if PYTHONWARNINGS="ignore::SyntaxWarning" "$PYTHON_BUNDLE_PATH/python_launcher" -c "
 import ddquint
 print('✅ ddQuint module loads successfully from:', ddquint.__file__)
 from ddquint.core import analyze_droplets

@@ -106,3 +106,5 @@ class DragDropView: NSView {
         return false
     }
 }
+
+// ParameterDocumentView removed (no longer needed)

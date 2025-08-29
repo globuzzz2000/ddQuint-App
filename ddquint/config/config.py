@@ -117,6 +117,9 @@ class Config:
     ENABLE_COPY_NUMBER_ANALYSIS = True  # Enable copy number analysis and buffer zone detection
     CLASSIFY_CNV_DEVIATIONS = True      # Enable copy number deviation classification
     
+    # Fluorophore/probe mixing control (default enabled = current pipeline)
+    ENABLE_FLUOROPHORE_MIXING = True
+    
     # Target name customization
     TARGET_NAMES = {}                   # Custom names for targets (e.g., {"Target1": "BRCA1", "Target2": "TP53"})
     
@@ -150,6 +153,8 @@ class Config:
     DEFAULT_COLOR_PALETTE = [
         "#f59a23", "#7ec638", "#16d9ff", "#f65352",
         "#82218b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+        "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
     ]
     SPECIAL_COLOR_DEFAULTS = {
         "Negative": "#1f77b4",
@@ -297,12 +302,23 @@ class Config:
     @classmethod
     def get_ordered_labels(cls) -> List[str]:
         """
-        Get ordered labels including all chromosomes.
-        
-        Returns:
-            List of labels in processing order
+        Get ordered labels including all chromosomes and, when mixing is disabled,
+        the combination labels for up to 4-plex.
+        Returns a stable order: Negative, Chrom1..N, then combinations by size (pairs→triplets→quads), then Unknown.
         """
-        return ['Negative'] + cls.get_chromosome_keys() + ['Unknown']
+        chroms = cls.get_chromosome_keys()
+        labels: List[str] = ['Negative'] + chroms
+        try:
+            if not cls.get_enable_fluorophore_mixing():
+                n = min(len(chroms), 4)
+                from itertools import combinations
+                for r in range(2, n + 1):
+                    for subset in combinations(chroms[:n], r):
+                        labels.append('+'.join(subset))
+        except Exception:
+            pass
+        labels.append('Unknown')
+        return labels
     
     @classmethod
     def get_target_labels(cls) -> List[str]:
@@ -667,6 +683,12 @@ class Config:
         """Get CNV deviation classification flag with well context support."""
         instance = cls.get_instance()
         return instance._get_parameter_with_context('CLASSIFY_CNV_DEVIATIONS', cls.CLASSIFY_CNV_DEVIATIONS)
+
+    @classmethod
+    def get_enable_fluorophore_mixing(cls) -> bool:
+        """Get fluorophore/probe mixing enable flag with well context support."""
+        instance = cls.get_instance()
+        return instance._get_parameter_with_context('ENABLE_FLUOROPHORE_MIXING', cls.ENABLE_FLUOROPHORE_MIXING)
     
     @classmethod
     def get_cnv_loss_ratio(cls) -> float:
@@ -824,6 +846,21 @@ class Config:
             if s not in names:
                 names.append(s)
 
+        # If fluorophore mixing is disabled and we have Chrom keys, append combination labels (up to 4-plex)
+        try:
+            if not cls.get_enable_fluorophore_mixing():
+                # Determine N from available Chrom keys; cap at 4
+                chroms = sorted([k for k in names if str(k).startswith('Chrom')], key=lambda x: int(str(x).replace('Chrom','')))
+                n = min(len(chroms), 4)
+                chroms = chroms[:n]
+                from itertools import combinations
+                for r in range(2, n + 1):
+                    for subset in combinations(chroms, r):
+                        label = '+'.join(subset)
+                        if label not in names:
+                            names.append(label)
+        except Exception:
+            pass
         return names
 
     @classmethod

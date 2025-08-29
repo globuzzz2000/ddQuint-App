@@ -46,14 +46,10 @@ if [ $? -eq 0 ]; then
     echo "🐍 Bundling complete Python environment..."
     ./bundle_python.sh
     
-    # Copy icon if it exists (needed for dock icon)
+    # Use legacy icon.png directly (Dock icon)
     if [ -f "icon.png" ]; then
+        echo "🖼️  Using icon.png for app icon"
         cp "icon.png" "$APP_PATH/Contents/Resources/AppIcon.png"
-    fi
-    
-    # Copy Assets.xcassets if it exists
-    if [ -d "Assets.xcassets" ]; then
-        cp -r "Assets.xcassets" "$APP_PATH/Contents/Resources/"
     fi
     
     # Create Info.plist
@@ -90,23 +86,28 @@ EOF
 
     echo "📦 App created at: $APP_PATH"
     
-    # Automatically install to Applications
-    echo "🚀 Installing app to Applications folder..."
-    if [ -d "/Applications/ddQuint.app" ]; then
-        echo "🗑️ Removing existing app..."
-        rm -rf "/Applications/ddQuint.app"
-    fi
-    
-    cp -r "$APP_PATH" /Applications/
-    
-    if [ $? -eq 0 ]; then
-        echo "✅ App successfully installed to /Applications/ddQuint.app"
-        echo ""
-        echo "🎉 You can now launch ddQuint from Applications or run:"
-        echo "  open /Applications/ddQuint.app"
+    # Optionally install to /Applications (skip if SKIP_INSTALL is set)
+    if [ -z "$SKIP_INSTALL" ]; then
+        echo "🚀 Installing app to Applications folder..."
+        if [ -d "/Applications/ddQuint.app" ]; then
+            echo "🗑️ Removing existing app..."
+            rm -rf "/Applications/ddQuint.app"
+        fi
+        
+        cp -r "$APP_PATH" /Applications/
+        
+        if [ $? -eq 0 ]; then
+            echo "✅ App successfully installed to /Applications/ddQuint.app"
+            echo ""
+            echo "🎉 You can now launch ddQuint from Applications or run:"
+            echo "  open /Applications/ddQuint.app"
+        else
+            echo "❌ Failed to install to Applications. Manual installation:"
+            echo "  cp -r '$APP_PATH' /Applications/"
+        fi
     else
-        echo "❌ Failed to install to Applications. Manual installation:"
-        echo "  cp -r '$APP_PATH' /Applications/"
+        echo "⏩ SKIP_INSTALL set; not copying to /Applications."
+        echo "    App bundle is at: $APP_PATH"
     fi
 else
     echo "❌ Build failed!"

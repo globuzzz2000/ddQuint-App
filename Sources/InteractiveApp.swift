@@ -553,7 +553,8 @@ private func setupConstraints(in contentView: NSView) {
                 "MPLBACKEND": "Agg",
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONUNBUFFERED": "1",  // Enable real-time output
-                "TQDM_DISABLE": "1"  // Disable tqdm progress bars for GUI
+                "TQDM_DISABLE": "1",  // Disable tqdm progress bars for GUI
+                "PYTHONWARNINGS": "ignore::SyntaxWarning"
             ]) { _, new in new }
             // Inject template parser settings
             env["DDQ_TEMPLATE_DESC_COUNT"] = String(self?.templateDescriptionCount ?? 4)
@@ -719,7 +720,7 @@ private func setupConstraints(in contentView: NSView) {
                         'HDBSCAN_MIN_CLUSTER_SIZE','HDBSCAN_MIN_SAMPLES','HDBSCAN_EPSILON','HDBSCAN_METRIC','HDBSCAN_CLUSTER_SELECTION_METHOD','MIN_POINTS_FOR_CLUSTERING',
                         'INDIVIDUAL_PLOT_DPI','PLACEHOLDER_PLOT_DPI',
                         'X_AXIS_MIN','X_AXIS_MAX','Y_AXIS_MIN','Y_AXIS_MAX','X_GRID_INTERVAL','Y_GRID_INTERVAL',
-                        'BASE_TARGET_TOLERANCE','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','CNV_LOSS_RATIO','CNV_GAIN_RATIO','LOWER_DEVIATION_TARGET','UPPER_DEVIATION_TARGET','TOLERANCE_MULTIPLIER','COPY_NUMBER_MULTIPLIER','CHROMOSOME_COUNT','ENABLE_COPY_NUMBER_ANALYSIS','CLASSIFY_CNV_DEVIATIONS','TARGET_NAMES'
+                        'BASE_TARGET_TOLERANCE','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','CNV_LOSS_RATIO','CNV_GAIN_RATIO','LOWER_DEVIATION_TARGET','UPPER_DEVIATION_TARGET','TOLERANCE_MULTIPLIER','COPY_NUMBER_MULTIPLIER','CHROMOSOME_COUNT','ENABLE_COPY_NUMBER_ANALYSIS','CLASSIFY_CNV_DEVIATIONS','ENABLE_FLUOROPHORE_MIXING','TARGET_NAMES'
                     ]
                     
                     for csv_file in csv_files:
@@ -1035,7 +1036,6 @@ private func setupConstraints(in contentView: NSView) {
         else if trimmedLine.hasPrefix("DEBUG:") {
             // Log debug messages from Python
             print("🐍 Python: \(trimmedLine)")
-            writeDebugLog("🐍 \(trimmedLine)")
         }
     }
     
@@ -1329,7 +1329,8 @@ private func setupConstraints(in contentView: NSView) {
             // Hide matplotlib windows from dock
             var env = (process.environment ?? ProcessInfo.processInfo.environment).merging([
                 "MPLBACKEND": "Agg",
-                "PYTHONDONTWRITEBYTECODE": "1"
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONWARNINGS": "ignore::SyntaxWarning"
             ]) { _, new in new }
             // Pass template settings to Python
             env["DDQ_TEMPLATE_DESC_COUNT"] = String(self?.templateDescriptionCount ?? 4)
@@ -1912,7 +1913,39 @@ private func setupConstraints(in contentView: NSView) {
         view.addSubview(instructionLabel)
         yPos -= 40
         
-        // Target count selection
+        // Inline Centroid Matching parameter (placed above Number of Targets)
+        do {
+            let identifier = "BASE_TARGET_TOLERANCE"
+            let label = NSTextField(labelWithString: "Target Tolerance:")
+            label.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
+            addParameterTooltip(to: label, identifier: identifier)
+
+            let field = NSTextField()
+            field.identifier = NSUserInterfaceItemIdentifier(identifier)
+            addParameterTooltip(to: field, identifier: identifier)
+            if let paramValue = parameters[identifier] {
+                field.stringValue = formatParamValue(paramValue)
+            } else {
+                field.stringValue = ""
+            }
+            // Keep x at 250
+            field.frame = NSRect(x: 250, y: yPos, width: 100, height: fieldHeight)
+            field.toolTip = "Base tolerance distance for matching detected clusters"
+            field.isEditable = true
+            field.isSelectable = true
+            field.isBordered = true
+            field.bezelStyle = .roundedBezel
+
+            // Demote tolerance layer to ensure popup can sit above if near
+            label.wantsLayer = true; label.layer?.zPosition = -100
+            field.wantsLayer = true; field.layer?.zPosition = -100
+
+            view.addSubview(label)
+            view.addSubview(field)
+            yPos -= spacing
+        }
+
+        // Target count selection (moved below Target Tolerance)
         let chromCountLabel = NSTextField(labelWithString: "Number of Targets:")
         chromCountLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
         addParameterTooltip(to: chromCountLabel, identifier: "CHROMOSOME_COUNT")
@@ -1921,6 +1954,13 @@ private func setupConstraints(in contentView: NSView) {
         chromCountPopup.identifier = NSUserInterfaceItemIdentifier("CHROMOSOME_COUNT")
         addParameterTooltip(to: chromCountPopup, identifier: "CHROMOSOME_COUNT")
         chromCountPopup.addItems(withTitles: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+
+        // If fluorophore mixing is disabled in current parameters, limit to 1..4 immediately
+        if let mixing = parameters["ENABLE_FLUOROPHORE_MIXING"] as? Bool, mixing == false {
+            chromCountPopup.removeAllItems()
+            chromCountPopup.addItems(withTitles: ["1", "2", "3", "4"])
+            chromCountPopup.isEnabled = true
+        }
         
         // Determine current chromosome count from existing data - check CHROMOSOME_COUNT parameter first
         var currentChromCount = 5 // Default
@@ -1942,20 +1982,37 @@ private func setupConstraints(in contentView: NSView) {
         }
         
         // Set the popup to current count
-        if currentChromCount >= 1 && currentChromCount <= 10 {
-            chromCountPopup.selectItem(at: currentChromCount - 1)
+        let titles = chromCountPopup.itemTitles
+        if !titles.isEmpty {
+            let allowedMax = (titles.contains("10") ? 10 : 4)
+            let sel = min(max(currentChromCount, 1), allowedMax)
+            chromCountPopup.selectItem(withTitle: String(sel))
+            writeDebugLog("[UI] Created CHROMOSOME_COUNT with items: \(titles.joined(separator: ",")), selected: \(sel)")
         }
         
         chromCountPopup.frame = NSRect(x: 250, y: yPos, width: 80, height: fieldHeight)
-        // Ensure popup is above other elements
         chromCountPopup.wantsLayer = true
         chromCountPopup.layer?.zPosition = 100
         chromCountPopup.target = self
         chromCountPopup.action = #selector(chromosomeCountChanged(_:))
-        
+
         view.addSubview(chromCountLabel)
         view.addSubview(chromCountPopup)
-        yPos -= 50
+        // Ensure popup and label are last in subview order for hit-testing
+        view.addSubview(chromCountPopup, positioned: .above, relativeTo: nil)
+        view.addSubview(chromCountLabel, positioned: .above, relativeTo: chromCountPopup)
+        yPos -= spacing
+
+        // Section: Expected Centroid Position
+        do {
+            // Match section spacing used elsewhere: 20 before header, 40 after header
+            yPos -= 20
+            let sectionLabel = NSTextField(labelWithString: "Expected Centroid Position")
+            sectionLabel.font = NSFont.boldSystemFont(ofSize: 14)
+            sectionLabel.frame = NSRect(x: 20, y: yPos, width: 300, height: 20)
+            view.addSubview(sectionLabel)
+            yPos -= 40
+        }
         
         // Centroid entries - dynamically create based on chromosome count
         var targets = ["Negative"]
@@ -1967,8 +2024,7 @@ private func setupConstraints(in contentView: NSView) {
             let displayLabel = target == "Negative" ? "Negative:" : "Target \(index):"
             let targetLabel = NSTextField(labelWithString: displayLabel)
             targetLabel.frame = NSRect(x: 40, y: yPos, width: 120, height: fieldHeight)
-            targetLabel.wantsLayer = true
-            targetLabel.layer?.zPosition = 10000  // Ensure label is clickable
+            // Keep default layering to avoid covering other controls
             addParameterTooltip(to: targetLabel, identifier: "EXPECTED_CENTROIDS_\(target)")
             
             let targetField = NSTextField()
@@ -1989,60 +2045,39 @@ private func setupConstraints(in contentView: NSView) {
             targetField.isBordered = true
             targetField.bezelStyle = .roundedBezel
             targetField.backgroundColor = NSColor.textBackgroundColor
-            targetField.wantsLayer = true
-            targetField.layer?.zPosition = 10000  // Ensure field is above other UI elements
             
             view.addSubview(targetLabel)
             view.addSubview(targetField)
             yPos -= spacing
         }
         
-        // Centroid Matching Parameters (shown for both global and well-specific to match layout)
-        do {
-            yPos -= 20
-            let matchingLabel = NSTextField(labelWithString: "Centroid Matching Parameters")
-            matchingLabel.font = NSFont.boldSystemFont(ofSize: 14)
-            matchingLabel.frame = NSRect(x: 20, y: yPos, width: 300, height: 20)
-            view.addSubview(matchingLabel)
-            yPos -= 40
-            
-            let matchingParams = [
-                ("BASE_TARGET_TOLERANCE", "Target Tolerance:", "", "Base tolerance distance for matching detected clusters")
-            ]
-            
-            for (identifier, label, _, tooltip) in matchingParams {
-                let paramLabel = NSTextField(labelWithString: label)
-                paramLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
-                addParameterTooltip(to: paramLabel, identifier: identifier)
-                
-                let paramField = NSTextField()
-                paramField.identifier = NSUserInterfaceItemIdentifier(identifier)
-                addParameterTooltip(to: paramField, identifier: identifier)
-                // Use parameter value if available, otherwise leave empty
-                if let paramValue = parameters[identifier] {
-                    paramField.stringValue = formatParamValue(paramValue)
-                    print("🎯 Set field \(identifier) = \(paramValue)")
-                } else {
-                    paramField.stringValue = ""
-                    print("⚪ Field \(identifier) has no parameter value, leaving empty")
+        // Matching parameters section removed; now placed inline above
+
+
+        // Safety: ensure no subview overlaps the Number of Targets popup hit area
+        if let popup = view.subviews.first(where: { ($0 as? NSPopUpButton)?.identifier?.rawValue == "CHROMOSOME_COUNT" }) as? NSPopUpButton {
+            let popupFrame = popup.frame.insetBy(dx: -2, dy: -2)
+            for sub in view.subviews where sub !== popup {
+                if sub.frame.intersects(popupFrame) {
+                    let delta = (popupFrame.maxY - sub.frame.minY) + 4
+                    sub.setFrameOrigin(NSPoint(x: sub.frame.minX, y: sub.frame.minY - delta))
                 }
-                paramField.frame = NSRect(x: 250, y: yPos, width: 100, height: fieldHeight)
-                paramField.toolTip = tooltip
-                paramField.isEditable = true
-                paramField.isSelectable = true
-                paramField.isBordered = true
-                paramField.bezelStyle = .roundedBezel
-                
-                view.addSubview(paramLabel)
-                view.addSubview(paramField)
-                yPos -= spacing
             }
         }
-        
+
         // Set proper view size with padding
         let finalHeight = max(500 - yPos + 80, 400)  // Calculate from actual content height
         view.frame = NSRect(x: 0, y: 0, width: 620, height: finalHeight)
+
+        // Ensure the Number of Targets popup is topmost and clearly above any siblings
+        if let popup = view.subviews.first(where: { ($0 as? NSPopUpButton)?.identifier?.rawValue == "CHROMOSOME_COUNT" }) {
+            popup.wantsLayer = true
+            popup.layer?.zPosition = 100000
+            view.addSubview(popup) // make it the last subview for hit-testing
+        }
+
         
+
         // Setup scroll view properly
         // Remove explicit frame - let Auto Layout handle it
         scrollView.documentView = view
@@ -2050,10 +2085,18 @@ private func setupConstraints(in contentView: NSView) {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
-        
+
         // Ensure proper scrolling behavior
         scrollView.verticalScrollElasticity = .allowed
         scrollView.horizontalScrollElasticity = .none
+
+        // Nudge first responder to the popup after window presentation, to confirm interactivity
+        DispatchQueue.main.async { [weak self, weak chromCountPopup] in
+            guard let self = self, let popup = chromCountPopup else { return }
+            if let window = self.currentWellWindow ?? self.currentGlobalWindow {
+                window.makeFirstResponder(popup)
+            }
+        }
         
         return scrollView
     }
@@ -2546,6 +2589,7 @@ private func setupConstraints(in contentView: NSView) {
         yPos -= 40
         
         let analysisParams = [
+            ("ENABLE_FLUOROPHORE_MIXING", "Enable Fluorophore Mixing", "yes/no", "Enable or disable modeling for fluorophore/probe mixing in 4-plex assays"),
             ("ENABLE_COPY_NUMBER_ANALYSIS", "Do copy number analysis?", "yes/no", "Enable or disable copy number analysis and buffer zone detection"),
             ("CLASSIFY_CNV_DEVIATIONS", "Classify copy number deviations?", "yes/no", "Enable or disable copy number deviation classification")
         ]
@@ -2573,6 +2617,11 @@ private func setupConstraints(in contentView: NSView) {
             
             dropdown.frame = NSRect(x: 300, y: yPos, width: 80, height: fieldHeight)
             addParameterTooltip(to: dropdown, identifier: identifier)
+            if identifier == "ENABLE_FLUOROPHORE_MIXING" {
+                dropdown.target = self
+                dropdown.action = #selector(fluorMixingToggled(_:))
+                writeDebugLog("[UI] Created mixing toggle (ENABLE_FLUOROPHORE_MIXING) with value: \(dropdown.titleOfSelectedItem ?? "?")")
+            }
             view.addSubview(dropdown)
             
             yPos -= spacing
@@ -2635,6 +2684,123 @@ private func setupConstraints(in contentView: NSView) {
         scrollView.horizontalScrollElasticity = .none
         
         return scrollView
+    }
+
+    @objc private func fluorMixingToggled(_ sender: NSPopUpButton) {
+        let selectedNo = (sender.titleOfSelectedItem ?? "Yes").lowercased() == "no"
+        print("[DEBUG] fluorMixingToggled → disabled? \(selectedNo)")
+        writeDebugLog("[UI] fluorMixingToggled → disabled? \(selectedNo)")
+        if selectedNo {
+            let alert = NSAlert()
+            alert.messageText = "Disable Fluorophore Mixing?"
+            alert.informativeText = "Non-mixing mode limits targets to 1-4. It assumes that targets are detected through a single fluorophore each and that all combinations can be deconvoluted"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Proceed")
+            alert.addButton(withTitle: "Cancel")
+            let resp = alert.runModal()
+            if resp != .alertFirstButtonReturn {
+                // Revert to Yes
+                sender.selectItem(at: 0)
+                return
+            }
+            // Clamp chromosome count to ≤4: rebuild items [1..4], select 4, and trigger updates
+            let forcedCount = 4
+            if let chromPopup = getChromosomeCountPopup() {
+                print("[DEBUG] Found CHROMOSOME_COUNT popup. Rebuilding items to [1..4].")
+                writeDebugLog("[UI] Found CHROMOSOME_COUNT popup. Rebuilding to [1..4]")
+                chromPopup.removeAllItems()
+                chromPopup.addItems(withTitles: ["1","2","3","4"])
+                chromPopup.selectItem(withTitle: "4")
+                chromosomeCountChanged(chromPopup)
+            } else {
+                print("[DEBUG] CHROMOSOME_COUNT popup not found during mixing disable toggle.")
+                writeDebugLog("[UI] CHROMOSOME_COUNT popup not found during mixing disable toggle")
+            }
+            // Force update views even if popup wasn't found
+            if let window = currentWellWindow ?? currentGlobalWindow, let tabView = currentParamTabView {
+                let params = extractParametersFromWindow(window, isGlobal: currentWellWindow == nil)
+                for item in tabView.tabViewItems {
+                    if item.identifier as? String == "centroids", let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
+                        updateCentroidsViewForTargetCount(doc, targetCount: forcedCount, parameters: params)
+                    } else if item.identifier as? String == "copynumber", let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
+                        updateCopyNumberViewForTargetCount(doc, targetCount: forcedCount, parameters: params)
+                    } else if item.identifier as? String == "general", let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
+                        updateGeneralSettingsViewForTargetCount(doc, targetCount: forcedCount, parameters: params)
+                    }
+                }
+            }
+        } else {
+            // Show warning when enabling mixing mode
+            do {
+                let alert = NSAlert()
+                alert.messageText = "Enable Fluorophore Mixing?"
+                alert.informativeText = "Mixing mode enables detection of multiple targets. It assumes that targets are detected through unique fluorophore mixes and will only consider single-target positive droplets. Multi-target positive droplets can not be deconvoluted"
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Proceed")
+                alert.addButton(withTitle: "Cancel")
+                let resp = alert.runModal()
+                if resp != .alertFirstButtonReturn {
+                    // Revert to No
+                    sender.selectItem(at: 1)
+                    return
+                }
+            }
+            // Restore full range 1..10 if mixing is re-enabled
+            var restoredCount: Int = 5
+            if let chromPopup = getChromosomeCountPopup() {
+                print("[DEBUG] Found CHROMOSOME_COUNT popup. Restoring items to [1..10].")
+                writeDebugLog("[UI] Found CHROMOSOME_COUNT popup. Restoring to [1..10]")
+                let previous = chromPopup.titleOfSelectedItem
+                chromPopup.removeAllItems()
+                chromPopup.addItems(withTitles: ["1","2","3","4","5","6","7","8","9","10"])
+                if let p = previous, chromPopup.itemTitles.contains(p) {
+                    chromPopup.selectItem(withTitle: p); restoredCount = Int(p) ?? 5
+                } else {
+                    chromPopup.selectItem(withTitle: "5"); restoredCount = 5
+                }
+                chromosomeCountChanged(chromPopup)
+            } else {
+                print("[DEBUG] CHROMOSOME_COUNT popup not found during mixing enable toggle.")
+            }
+            // Force update views with restored count
+            if let window = currentWellWindow ?? currentGlobalWindow, let tabView = currentParamTabView {
+                let params = extractParametersFromWindow(window, isGlobal: currentWellWindow == nil)
+                for item in tabView.tabViewItems {
+                    if item.identifier as? String == "centroids", let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
+                        updateCentroidsViewForTargetCount(doc, targetCount: restoredCount, parameters: params)
+                    } else if item.identifier as? String == "copynumber", let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
+                        updateCopyNumberViewForTargetCount(doc, targetCount: restoredCount, parameters: params)
+                    } else if item.identifier as? String == "general", let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
+                        updateGeneralSettingsViewForTargetCount(doc, targetCount: restoredCount, parameters: params)
+                    }
+                }
+            }
+        }
+    }
+
+    private func findPopup(in view: NSView, identifier: String) -> NSPopUpButton? {
+        for sub in view.subviews {
+            if let popup = sub as? NSPopUpButton, popup.identifier?.rawValue == identifier { return popup }
+            if let found = findPopup(in: sub, identifier: identifier) { return found }
+        }
+        return nil
+    }
+
+    // Robustly get the chromosome count popup from the Centroids tab (falls back to recursive search)
+    private func getChromosomeCountPopup() -> NSPopUpButton? {
+        guard let tabView = currentParamTabView else { return nil }
+        for item in tabView.tabViewItems {
+            if item.identifier as? String == "centroids" {
+                if let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
+                    if let popup = findPopup(in: doc, identifier: "CHROMOSOME_COUNT") { return popup }
+                }
+            }
+        }
+        // Fallback: search current parameter window content view (not main window)
+        if let paramWindow = currentGlobalWindow ?? currentWellWindow, let content = paramWindow.contentView { 
+            return findPopup(in: content, identifier: "CHROMOSOME_COUNT") 
+        }
+        return nil
     }
     
     // MARK: - Parameter Window Actions
@@ -2914,8 +3080,8 @@ private func setupConstraints(in contentView: NSView) {
         }
         print("✅ Global parameter validation passed")
         
-        // Only show processing indicator after validation passes
-        showProcessingIndicator("Saving global parameters and re-processing all wells...")
+        // Show unobtrusive corner spinner only (no modal processing window)
+        showCornerSpinner()
         
         // Save parameters to file for persistence
         saveParametersToFile(parameters)
@@ -3102,7 +3268,7 @@ private func setupConstraints(in contentView: NSView) {
                         if let title = popup.titleOfSelectedItem, let count = Int(title) {
                             parameters[identifier] = count
                         }
-                    } else if identifier == "ENABLE_COPY_NUMBER_ANALYSIS" || identifier == "CLASSIFY_CNV_DEVIATIONS" {
+                    } else if identifier == "ENABLE_COPY_NUMBER_ANALYSIS" || identifier == "CLASSIFY_CNV_DEVIATIONS" || identifier == "ENABLE_FLUOROPHORE_MIXING" {
                         // Handle yes/no dropdown values as boolean
                         let selectedTitle = popup.titleOfSelectedItem ?? "Yes"
                         parameters[identifier] = selectedTitle.lowercased() == "yes"
@@ -3385,6 +3551,14 @@ private func setupConstraints(in contentView: NSView) {
             }
         }
         
+        // Enforce 1–4 target limit when fluorophore mixing is disabled
+        if let mixing = parameters["ENABLE_FLUOROPHORE_MIXING"] as? Bool, mixing == false {
+            if let chromCount = parameters["CHROMOSOME_COUNT"] as? Int, chromCount > 4 {
+                showError("With Fluorophore Mixing disabled, the number of targets must be between 1 and 4.")
+                return false
+            }
+        }
+        
         return true
     }
     
@@ -3513,6 +3687,7 @@ defaults = {
     'Y_AXIS_MAX': 5000,
     'X_GRID_INTERVAL': 500,
     'Y_GRID_INTERVAL': 1000,
+    'ENABLE_FLUOROPHORE_MIXING': True,
     'INDIVIDUAL_PLOT_DPI': 300,
     'PLACEHOLDER_PLOT_DPI': 150,
     'COMPOSITE_FIGURE_SIZE': [16, 11],
@@ -3634,7 +3809,7 @@ print(json.dumps(defaults))
                             textField.stringValue = String(value)
                             restoredFields += 1
                         }
-                    } else if identifier == "ENABLE_COPY_NUMBER_ANALYSIS" || identifier == "CLASSIFY_CNV_DEVIATIONS" {
+                    } else if identifier == "ENABLE_COPY_NUMBER_ANALYSIS" || identifier == "CLASSIFY_CNV_DEVIATIONS" || identifier == "ENABLE_FLUOROPHORE_MIXING" {
                         // Handle dropdown restoration
                         if let popup = view.subviews.first(where: { $0.identifier?.rawValue == identifier }) as? NSPopUpButton {
                             if let value = parameters[identifier] as? Bool {
@@ -3664,6 +3839,14 @@ print(json.dumps(defaults))
                            let value = targets["high"] {
                             textField.stringValue = String(value)
                             restoredFields += 1
+                        }
+                    } else if identifier.hasPrefix("TARGET_NAME_") {
+                        // Restore default target names to "Target X"
+                        let idxStr = String(identifier.dropFirst("TARGET_NAME_".count))
+                        if let idx = Int(idxStr) {
+                            textField.stringValue = "Target \(idx)"
+                            restoredFields += 1
+                            print("✅ Restored \(identifier) -> Target \(idx)")
                         }
                     } else if let value = parameters[identifier] {
                         let oldValue = textField.stringValue
@@ -3946,9 +4129,20 @@ print(json.dumps(defaults))
     @objc private func chromosomeCountChanged(_ sender: NSPopUpButton) {
         // Get the new chromosome count
         guard let selectedTitle = sender.titleOfSelectedItem,
-              let newCount = Int(selectedTitle) else { return }
+              var newCount = Int(selectedTitle) else { return }
+        // If mixing is disabled, hard clamp to ≤4 regardless of popup content
+        if let window = currentGlobalWindow ?? currentWellWindow, let content = window.contentView,
+           let mixingPopup = findPopup(in: content, identifier: "ENABLE_FLUOROPHORE_MIXING") {
+            let mixingDisabled = (mixingPopup.titleOfSelectedItem ?? "Yes").lowercased() == "no"
+            if mixingDisabled && newCount > 4 {
+                print("[DEBUG] chromosomeCountChanged clamping from \(newCount) to 4 because mixing disabled")
+                sender.selectItem(withTitle: "4")
+                newCount = 4
+            }
+        }
         
         print("🔄 Chromosome count changed to: \(newCount)")
+        writeDebugLog("[UI] Chromosome count changed to: \(newCount)")
         
         // Find the current tab view and update the centroids view dynamically
         if let tabView = currentParamTabView {
@@ -4010,11 +4204,11 @@ print(json.dumps(defaults))
             }
         }
         
-        // If no existing target fields found, try to find the target customization label
+        // If no existing target fields found, try to find the Target Names section label
         if baseY == nil {
             for subview in view.subviews {
                 if let textField = subview as? NSTextField,
-                   textField.stringValue == "Target Name Customization" {
+                   textField.stringValue == "Target Names" {
                     baseY = textField.frame.minY - 40  // Position below the section header
                     break
                 }
@@ -4372,7 +4566,7 @@ print(json.dumps(defaults))
             return false
         }
     }
-    
+
 private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int, parameters: [String: Any] = [:]) {
     // Column-based layout: first 5 chromosomes go in column 1, next 5 in column 2, etc.
     
@@ -4411,7 +4605,9 @@ private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int,
         return
     }
     
-    // Remove existing Chrom* fields AND labels we created for additional columns only
+    // Matching parameters section removed; no anchor management needed
+
+    // Remove existing Chrom* fields AND any Target labels with index > targetCount
     var toRemove: [NSView] = []
     for s in view.subviews {
         guard let tf = s as? NSTextField else { continue }
@@ -4420,11 +4616,10 @@ private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int,
                 toRemove.append(tf)
             }
         } else {
-            // Only remove labels for Target 6 and above (additional columns)
+            // Remove any labels like "Target X:" where X > targetCount
             if tf.stringValue.hasPrefix("Target ") && tf.stringValue.hasSuffix(":") {
-                // Extract target number from "Target X:"
-                let targetStr = tf.stringValue.dropFirst(7).dropLast(1)  // Remove "Target " and ":"
-                if let targetNum = Int(targetStr), targetNum > 5 {
+                let targetStr = tf.stringValue.dropFirst(7).dropLast(1)
+                if let targetNum = Int(targetStr), targetNum > targetCount {
                     toRemove.append(tf)
                 }
             }
@@ -4462,24 +4657,23 @@ private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int,
         field.isBordered = true
         field.bezelStyle = .roundedBezel
         field.backgroundColor = NSColor.textBackgroundColor
-        field.wantsLayer = true
-        field.layer?.zPosition = 10000
         view.addSubview(field)
-        
-        // Only add label for chromosomes in additional columns (first column uses existing labels)
-        if columnIndex > 0 {
-            let labelX = columnX - 130  // Consistent spacing with first column
-            let label = NSTextField(labelWithString: "Target \(idx):")
+
+        // Ensure a "Target X:" label exists for this row (first column labels can be missing after decreases)
+        let expectedLabelText = "Target \(idx):"
+        let labelExists = view.subviews.contains { sub in
+            if let tf = sub as? NSTextField { return tf.stringValue == expectedLabelText && abs(tf.frame.minY - fieldY) < 1.0 }
+            return false
+        }
+        if !labelExists {
+            let labelX = columnX - 130  // place left of the field
+            let label = NSTextField(labelWithString: expectedLabelText)
             label.frame = NSRect(x: labelX, y: fieldY, width: 120, height: fieldHeight)
-            // Match the font and style of original labels
-            if let existingLabel = view.subviews.first(where: { 
-                ($0 as? NSTextField)?.stringValue == "Negative:" 
-            }) as? NSTextField {
+            if let existingLabel = view.subviews.first(where: { ($0 as? NSTextField)?.stringValue == "Negative:" }) as? NSTextField {
                 label.font = existingLabel.font
                 label.textColor = existingLabel.textColor
             }
-            label.wantsLayer = true
-            label.layer?.zPosition = 10000
+            // Default layering; do not elevate labels
             view.addSubview(label)
         }
     }
@@ -4494,7 +4688,27 @@ private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int,
             view.frame = f
         }
     }
+
+    // Matching parameters section removed; no re-anchoring needed
+
+
+    // Safety: ensure no subview overlaps the Number of Targets popup hit area
+    if let popup = view.subviews.first(where: { ($0 as? NSPopUpButton)?.identifier?.rawValue == "CHROMOSOME_COUNT" }) as? NSPopUpButton {
+        let popupFrame = popup.frame.insetBy(dx: -2, dy: -2)
+        for sub in view.subviews where sub !== popup {
+            if sub.frame.intersects(popupFrame) {
+                let delta = (popupFrame.maxY - sub.frame.minY) + 4
+                sub.setFrameOrigin(NSPoint(x: sub.frame.minX, y: sub.frame.minY - delta))
+            }
+        }
+        // Keep popup topmost
+        popup.wantsLayer = true
+        popup.layer?.zPosition = 100000
+        view.addSubview(popup)
+    }
+
     
+
     view.needsDisplay = true
 }
     
@@ -4538,11 +4752,11 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
                 toRemove.append(tf)
             }
         } else {
-            // Remove Target labels for additional columns (6+) and ALL SD labels
+            // Remove Target labels beyond current targetCount and ALL SD labels
             if tf.stringValue.hasPrefix("Target ") && tf.stringValue.hasSuffix(":") {
                 // Extract target number from "Target X:"
                 let targetStr = tf.stringValue.dropFirst(7).dropLast(1)  // Remove "Target " and ":"
-                if let targetNum = Int(targetStr), targetNum > 5 {
+                if let targetNum = Int(targetStr), targetNum > targetCount {
                     toRemove.append(tf)
                 }
             } else if tf.stringValue.hasPrefix("SD ") || tf.stringValue == "SD:" || tf.stringValue == "SD" {
@@ -4619,29 +4833,32 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
             view.addSubview(sdLabel)
         }
         
-        // Add row labels for second column chromosomes using "Target X" format
-        if cnColumnIndex > 0 {
-            let labelX = cnFieldX - 85  // Consistent spacing with first column
-            let label = NSTextField(labelWithString: "Target \(idx):")
-            label.frame = NSRect(x: labelX, y: fieldY, width: 75, height: fieldHeight)
-            // Match the font and style of existing Target labels
-            if let existingLabel = view.subviews.first(where: { 
-                ($0 as? NSTextField)?.stringValue.hasPrefix("Target ") ?? false 
-            }) as? NSTextField {
-                label.font = existingLabel.font
-                label.textColor = existingLabel.textColor
+        // Ensure a "Target X:" label exists for this row in either column
+        do {
+            let expectedLabelText = "Target \(idx):"
+            let labelExists = view.subviews.contains { sub in
+                if let tf = sub as? NSTextField { return tf.stringValue == expectedLabelText && abs(tf.frame.minY - fieldY) < 1.0 }
+                return false
             }
-            view.addSubview(label)
-            
-            // Add "SD X:" label for each SD field in second column (proper row labels, not headers)
-            let sdLabelX = sdFieldX - 60  // 50px gap between label and textbox
+            if !labelExists {
+                let labelX = cnFieldX - 85  // Consistent spacing
+                let label = NSTextField(labelWithString: expectedLabelText)
+                label.frame = NSRect(x: labelX, y: fieldY, width: 75, height: fieldHeight)
+                if let existingLabel = view.subviews.first(where: { ($0 as? NSTextField)?.stringValue.hasPrefix("Target ") ?? false }) as? NSTextField {
+                    label.font = existingLabel.font
+                    label.textColor = existingLabel.textColor
+                }
+                view.addSubview(label)
+            }
+        }
+
+        // Add "SD X:" labels for SD fields in second column as row labels
+        if cnColumnIndex > 0 {
+            let sdLabelX = sdFieldX - 60
             let sdLabel = NSTextField(labelWithString: "SD \(idx):")
             sdLabel.frame = NSRect(x: sdLabelX, y: fieldY, width: 55, height: fieldHeight)
-            sdLabel.alignment = .left  // Change to left alignment to see if gap changes
-            // Match the font and style of existing Target labels
-            if let existingLabel = view.subviews.first(where: { 
-                ($0 as? NSTextField)?.stringValue.hasPrefix("Target ") ?? false 
-            }) as? NSTextField {
+            sdLabel.alignment = .left
+            if let existingLabel = view.subviews.first(where: { ($0 as? NSTextField)?.stringValue.hasPrefix("Target ") ?? false }) as? NSTextField {
                 sdLabel.font = existingLabel.font
                 sdLabel.textColor = existingLabel.textColor
             }
@@ -4765,7 +4982,6 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
             } else if line.hasPrefix("DEBUG:") {
                 // Log debug messages from Python
                 print("🐍 Python: \(line)")
-                writeDebugLog("🐍 \(line)")
             }
         }
     }
@@ -5008,17 +5224,39 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
         
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
         let ddquintDir = homeDir.appendingPathComponent(".ddQuint")
-        let logPath = ddquintDir.appendingPathComponent("debug.log").path
-        let logURL = URL(fileURLWithPath: logPath)
+        let logsDir = ddquintDir.appendingPathComponent("logs")
+        let logURL = logsDir.appendingPathComponent("debug.log")
+        let logPath = logURL.path
         
-        // Ensure .ddQuint directory exists
+        // Ensure .ddQuint/logs directory exists
         do {
-            try FileManager.default.createDirectory(at: ddquintDir, withIntermediateDirectories: true, attributes: nil)
+            try FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true, attributes: nil)
         } catch {
-            print("Warning: Could not create .ddQuint directory: \(error)")
+            print("Warning: Could not create logs directory: \(error)")
         }
         
         if let data = logMessage.data(using: .utf8) {
+            // Rotate if file grows too large (> 2 MB) and enforce retention (keep last 5 rotated files)
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: logPath),
+               let size = attrs[.size] as? NSNumber, size.intValue > 2_000_000 {
+                let df = DateFormatter()
+                df.dateFormat = "yyyyMMdd_HHmmss"
+                let stamp = df.string(from: Date())
+                let rotatedURL = logsDir.appendingPathComponent("debug_\(stamp).log")
+                try? FileManager.default.moveItem(at: logURL, to: rotatedURL)
+                // Retention: keep only 5 most recent rotated debug_*.log
+                if let files = try? FileManager.default.contentsOfDirectory(at: logsDir, includingPropertiesForKeys: [.creationDateKey], options: .skipsHiddenFiles) {
+                    let rotated = files.filter { $0.lastPathComponent.hasPrefix("debug_") && $0.pathExtension == "log" }
+                    let sorted = rotated.sorted { (a, b) -> Bool in
+                        let aDate = (try? a.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date.distantPast
+                        let bDate = (try? b.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date.distantPast
+                        return aDate > bDate // newest first
+                    }
+                    if sorted.count > 5 {
+                        for url in sorted.dropFirst(5) { try? FileManager.default.removeItem(at: url) }
+                    }
+                }
+            }
             if FileManager.default.fileExists(atPath: logPath) {
                 if let fileHandle = try? FileHandle(forWritingTo: logURL) {
                     fileHandle.seekToEndOfFile()
@@ -5028,6 +5266,8 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
             } else {
                 try? data.write(to: logURL)
             }
+
+            // No mirroring to Python logs; keep Swift UI logs only in ~/.ddQuint/logs/debug.log
         }
     }
     
@@ -5149,7 +5389,8 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
             var env = (process.environment ?? ProcessInfo.processInfo.environment).merging([
                 "MPLBACKEND": "Agg",
                 "PYTHONDONTWRITEBYTECODE": "1",
-                "PYTHONUNBUFFERED": "1"  // Enable real-time output to prevent pipe buffer deadlock
+                "PYTHONUNBUFFERED": "1",  // Enable real-time output to prevent pipe buffer deadlock
+                "PYTHONWARNINGS": "ignore::SyntaxWarning"
             ]) { _, new in new }
             env["DDQ_TEMPLATE_DESC_COUNT"] = String(self?.templateDescriptionCount ?? 4)
             if let tpl = self?.templateFileURL?.path { env["DDQ_TEMPLATE_PATH"] = tpl }
@@ -5654,7 +5895,8 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
         
         process.environment = (process.environment ?? ProcessInfo.processInfo.environment).merging([
             "MPLBACKEND": "Agg",
-            "PYTHONDONTWRITEBYTECODE": "1"
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONWARNINGS": "ignore::SyntaxWarning"
         ]) { _, new in new }
         
         let escapedSavePath = saveURL.path.replacingOccurrences(of: "'", with: "\\'")
@@ -6646,19 +6888,29 @@ extension InteractiveMainWindowController {
             backing: .buffered,
             defer: false
         )
-        helpWindow.title = "ddQuint Help"
+        helpWindow.title = "Help"
+        helpWindow.titleVisibility = .hidden
+        helpWindow.titlebarAppearsTransparent = true
         helpWindow.center()
         helpWindow.isReleasedWhenClosed = false
         
         let contentView = NSView()
         helpWindow.contentView = contentView
         
-        let title = NSTextField(labelWithString: "ddQuint")
-        title.font = NSFont.boldSystemFont(ofSize: 18)
-        title.isEditable = false
-        title.isBordered = false
-        title.backgroundColor = .clear
-        title.alignment = .center
+        // Header with visual effect and app icon + "Help" label (no ddQuint as title)
+        let headerView = NSVisualEffectView()
+        headerView.material = .headerView
+        headerView.blendingMode = .withinWindow
+        headerView.state = .active
+        headerView.translatesAutoresizingMaskIntoConstraints = false
+        
+        let headerLabel = NSTextField(labelWithString: "Help")
+        headerLabel.font = NSFont.systemFont(ofSize: 16, weight: .semibold)
+        headerLabel.textColor = .labelColor
+        headerLabel.alignment = .natural
+        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+        
+        headerView.addSubview(headerLabel)
         
         // Create attributed string with proper formatting
         let attributedText = NSMutableAttributedString()
@@ -6708,6 +6960,7 @@ extension InteractiveMainWindowController {
         attributedText.append(NSAttributedString(string: " → The files are then automatically re-analyzed based on updated parameters.\n5. ", attributes: regularAttrs))
         attributedText.append(NSAttributedString(string: "Export", attributes: boldAttrs))
         attributedText.append(NSAttributedString(string: " → Save Excel reports, plots, and parameter files.\n\n", attributes: regularAttrs))
+        
         
         // Indicators section
         attributedText.append(NSAttributedString(string: "\nIndicators\n", attributes: headerAttrs))
@@ -6771,6 +7024,7 @@ extension InteractiveMainWindowController {
         textView.isHorizontallyResizable = false
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.heightTracksTextView = false
+        textView.textContainerInset = NSSize(width: 10, height: 12)
         textView.translatesAutoresizingMaskIntoConstraints = false
         
         let scrollView = NSScrollView()
@@ -6782,31 +7036,54 @@ extension InteractiveMainWindowController {
         scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         
-        title.translatesAutoresizingMaskIntoConstraints = false
         
-        contentView.addSubview(title)
-        contentView.addSubview(scrollView)
+        // Subtle container to reduce flat look
+        let container = NSBox()
+        container.boxType = .custom
+        container.cornerRadius = 8
+        container.borderWidth = 1
+        container.borderColor = NSColor.separatorColor
+        container.fillColor = NSColor.controlBackgroundColor
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.contentViewMargins = NSSize(width: 0, height: 0)
+        
+        contentView.addSubview(headerView)
+        contentView.addSubview(container)
+        container.addSubview(scrollView)
         
         NSLayoutConstraint.activate([
-            title.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
-            title.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            // Header
+            headerView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            headerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            headerView.heightAnchor.constraint(equalToConstant: 56),
             
-            scrollView.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 20),
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
+            headerLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            headerLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            headerLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -16),
+            
+            // Container below header
+            container.topAnchor.constraint(equalTo: headerView.bottomAnchor, constant: 12),
+            container.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            container.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            container.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+            
+            // ScrollView inside container
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
         ])
         
-        // Set text view size after the scroll view is laid out
+        // Set text view size after the scroll view is laid out (avoid bottom cut-off)
         DispatchQueue.main.async {
             textView.frame = scrollView.contentView.bounds
-            textView.sizeToFit()
-            // Ensure the text view is tall enough for all content
-            let textSize = textView.attributedString().boundingRect(
-                with: NSSize(width: textView.frame.width, height: CGFloat.greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading]
-            ).size
-            textView.frame = NSRect(x: 0, y: 0, width: textView.frame.width, height: max(textSize.height, scrollView.contentView.bounds.height))
+            textView.textContainer?.containerSize = NSSize(width: scrollView.contentView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
+            textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+            let used = textView.layoutManager?.usedRect(for: textView.textContainer!) ?? .zero
+            let padding = textView.textContainerInset.height * 2 + 8
+            let contentHeight = ceil(used.height) + padding
+            textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentView.bounds.width, height: max(contentHeight, scrollView.contentView.bounds.height))
         }
         
         helpWindow.makeKeyAndOrderFront(nil)
@@ -6898,7 +7175,6 @@ class OverviewLayout {
     let rows: Int = 8  // A-H
     let cols: Int
     let requiredHeight: CGFloat
-    
     init(maxCols: Int = 12) {
         thumbnailHeight = thumbnailSize * 0.75  // Back to original format
         rowHeight = wellLabelHeight + thumbnailHeight  // Label + plot

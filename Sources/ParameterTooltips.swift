@@ -138,8 +138,8 @@ Use to adjust the scale of copy number values relative to the default of 1.
     "ENABLE_COPY_NUMBER_ANALYSIS": """
 Do Copy Number Analysis?
 
-Enable or disable copy number analysis and buffer zone detection.
-When disabled, only droplet clustering is performed.
+Enable or disable copy number buffer zone detection.
+When disabled, relative copy numbers are not classified.
 """,
     
     "CLASSIFY_CNV_DEVIATIONS": """
@@ -147,6 +147,13 @@ Classify Copy Number Deviations?
 
 Enable or disable copy number deviation classification.
 When disabled, removes aneuploidy identification and associated formatting.
+""",
+
+    "ENABLE_FLUOROPHORE_MIXING": """
+Enable Fluorophore/Probe Mixing
+
+Enable or disable modeling for fluorophore/probe mixing in 4-plex assays.
+When disabled, dye channels are treated as independent.
 """,
     
     "LOWER_DEVIATION_TARGET": """

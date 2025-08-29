@@ -103,7 +103,11 @@ def create_list_report(results, output_path, max_chromosomes=None):
         
         # Apply formatting
         apply_formatting(ws, len(sorted_results), chromosome_keys)
-        
+
+        # If non-mixing subset counts exist, add dedicated sheet
+        if any(('subset_counts' in r and isinstance(r.get('subset_counts'), dict) and r.get('subset_counts')) for r in sorted_results):
+            add_non_mixing_sheet(wb, sorted_results)
+
         # Save the workbook
         wb.save(output_path)
         logger.debug(f"List report saved successfully to {output_path}")
@@ -461,3 +465,59 @@ def apply_formatting(ws, num_results, chromosome_keys):
     
     # Freeze panes (freeze top 2 rows and first 2 columns)
     ws.freeze_panes = ws.cell(row=3, column=3)
+
+def _order_subset_labels(all_labels):
+    """Order subset labels: Negative, Chrom1..N, then combinations by size, then Unknown."""
+    import re
+    def key(label: str):
+        if label == 'Negative':
+            return (0, 0, [])
+        if label == 'Unknown':
+            return (99, 0, [])
+        parts = label.split('+')
+        nums = []
+        for p in parts:
+            m = re.match(r'Chrom(\d+)$', p)
+            if m:
+                nums.append(int(m.group(1)))
+            else:
+                return (50, len(parts), [p])
+        if len(nums) == 1:
+            return (1, 1, nums)
+        return (2, len(nums), nums)
+    return sorted(all_labels, key=key)
+
+def add_non_mixing_sheet(wb, results):
+    """Add a sheet with non-mixing subset counts if available."""
+    ws = wb.create_sheet(title="Non-mixing 4-plex")
+    # Gather all labels seen across wells
+    all_labels = set()
+    for r in results:
+        sc = r.get('subset_counts') or {}
+        for k in sc.keys():
+            all_labels.add(k)
+    if not all_labels:
+        return ws
+    labels = _order_subset_labels(all_labels)
+
+    # Headers
+    ws.cell(row=1, column=1, value="Well")
+    ws.cell(row=1, column=2, value="Sample")
+    for i, lab in enumerate(labels):
+        ws.cell(row=1, column=3 + i, value=lab)
+
+    # Rows
+    sorted_results = sorted(results, key=lambda x: parse_well_id_column_first(x.get('well', '')))
+    row = 2
+    for r in sorted_results:
+        well = r.get('well', '')
+        filename = r.get('filename', '')
+        sample = r.get('sample_name') or (os.path.splitext(filename)[0] if filename else well)
+        ws.cell(row=row, column=1, value=well)
+        ws.cell(row=row, column=2, value=sample)
+        sc = r.get('subset_counts') or {}
+        for i, lab in enumerate(labels):
+            val = sc.get(lab, 0)
+            ws.cell(row=row, column=3 + i, value=val if val > 0 else "")
+        row += 1
+    return ws

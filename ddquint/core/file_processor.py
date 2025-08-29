@@ -19,6 +19,7 @@ import logging
 
 from ..utils import extract_well_coordinate
 from ..core import analyze_droplets
+from ..pipelines.non_mixing_4plex import analyze_non_mixing_4plex
 from ..visualization import create_well_plot
 from ..config import Config, FileProcessingError, WellProcessingError
 
@@ -95,7 +96,13 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         
         # Analyze the droplets - this might fail at copy number step
         try:
-            clustering_results = analyze_droplets(df_clean)
+            # Ensure colors reflect current mode (adds combination labels when non-mixing)
+            Config.finalize_colors()
+            # Switch pipeline based on fluorophore mixing flag
+            if not Config.get_enable_fluorophore_mixing():
+                clustering_results = analyze_non_mixing_4plex(df_clean)
+            else:
+                clustering_results = analyze_droplets(df_clean)
         except Exception as clustering_error:
             # Clustering failed - try to preserve any partial clustering data
             total_droplets = len(df_clean)
