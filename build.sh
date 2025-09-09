@@ -9,10 +9,12 @@ echo "============================================================"
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIST_DIR="$PROJECT_DIR/dist"
+TEMP_DIR="$PROJECT_DIR/temp_build"
 
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
 rm -rf "$DIST_DIR"
+rm -rf "$TEMP_DIR"
 mkdir -p "$DIST_DIR"
 
 # Debug logs are now saved to ~/.ddQuint/debug.log (no need to reset here)

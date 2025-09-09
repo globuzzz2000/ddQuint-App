@@ -15,7 +15,7 @@ A native **macOS application** for analyzing multiplex digital droplet PCR (ddPC
 - **Poisson correction for multiplex ddPCR:** Corrects for undetectable mixed‑target droplets in multiplex assays.
 - **Copy number analysis:** Relative/absolute copy numbers with robust normalization.
 - **Aneuploidy detection:** Automatic detection of copy number deviations with customizable thresholds.
-- **Visualization:** Individual well plots and a composite plate overview.
+- **Visualization:** Individual well plots.
 - **Fast iteration:** Change parameters and re‑analyze single wells or full sets.
 - **Export:** Save an **Excel** report and high‑resolution plots from within the app.
 
@@ -77,7 +77,7 @@ You can use the filter icon above the results pane to hide buffer zone or warnin
 4. **Target Assignment** → Map clusters to expected centroids (5 targets + negative).
 5. **Poisson‑Aware Copy Number** → Compute λ per target from exclusive positives and empties.
 6. **Classification** → Euploid / Aneuploid / Buffer Zone.
-7. **Visualization** → Per‑well plots, composite plate overview.
+7. **Visualization** → Per‑well plots.
 8. **Reporting** → Export Excel + plots.
 
 
@@ -115,7 +115,7 @@ Use **Edit This Well** to adjust clustering and analysis parameters for a single
   - Sample metadata (from template, if provided)
   - Copy numbers per chromosome
   - Deviation classifications
-- **Plot images** for each well and a composite **plate overview**.
+- **Plot images** for each well.
 - **Parameter Files**
 
 

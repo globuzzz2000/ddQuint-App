@@ -156,6 +156,18 @@ Enable or disable modeling for fluorophore/probe mixing in 4-plex assays.
 When disabled, dye channels are treated as independent.
 """,
     
+    "AMPLITUDE_NON_LINEARITY": """
+Amplitude Non-linearity
+
+Scaling factor for combination centroid distances in non-mixing mode.
+Applied progressively to double/triple/quad combinations.
+
+💡 Tips:
+• 1.0 = Perfect linear amplitude addition (default)
+• < 1.0 = Combinations closer to negative (sublinear)
+• > 1.0 = Combinations further from negative (superlinear)
+""",
+    
     "LOWER_DEVIATION_TARGET": """
 Lower Deviation Target
 
@@ -170,67 +182,18 @@ Expected ratio for upper copy number deviation.
 Relative to detected reference.
 """,
     
-    "USE_PLOIDY_TERMINOLOGY": """
-Use Ploidy Detection Terminology?
-
-Use ploidy-specific terminology in reports and displays.
-When enabled, uses terms like "monosomy" and "trisomy".
-""",
     
-    "CNV_LOSS_RATIO": """
-CNV Loss Ratio
-
-Target copy number ratio for deletions.
-Relative to expected copy number.
-""",
+    // Legacy CNV/aneuploidy target tooltips removed
     
-    "CNV_GAIN_RATIO": """
-CNV Gain Ratio
+    "COPY_NUMBER_SPEC": """
+Copy Number Expectations
 
-Target copy number ratio for duplications.
-Relative to expected copy number.
-""",
-    
-    "ANEUPLOIDY_TARGETS_LOW": """
-CNV Loss Ratio
-
-Target copy number ratio for deletions.
-Relative to expected copy number.
-
-💡 Tips:
-• 0.75 = 75% of expected
-• Adjust based on your assay design
-""",
-    
-    "ANEUPLOIDY_TARGETS_HIGH": """
-CNV Gain Ratio
-
-Target copy number ratio for duplications.
-Relative to expected copy number.
-
-💡 Tips:
-• 1.25 = 125% of expected
-• Adjust based on your assay design
-""",
-    
-    "EXPECTED_COPY_NUMBERS": """
-Expected Copy Numbers
-
-Baseline copy number values for each target. Used for normalization and classification thresholds.
+Per-target baseline copy number and standard deviation values.
+Used for normalization and standard deviation based classification.
 
 💡 Tips:
 • Measure from known control samples
-• Update in case of systematic target specific deviation
-""",
-    
-    "EXPECTED_STANDARD_DEVIATION": """
-Expected Standard Deviation
-
-Standard deviation for each target's copy number.
-Used with tolerance multiplier to set classification ranges.
-
-💡 Tips:
-• Measure from known control samples
+• Keep std dev representative for your assay
 """,
     
     "CHROMOSOME_COUNT": """
@@ -303,10 +266,11 @@ These are typically droplets with low fluorescence in both channels.
 • Format: FAM_value, HEX_value (e.g., 1500, 2200)
 """
         }
-    } else if identifier.hasPrefix("EXPECTED_COPY_NUMBERS_") {
-        tooltipKey = "EXPECTED_COPY_NUMBERS"
+    } else if identifier.hasPrefix("COPY_NUMBER_SPEC_") && identifier.hasSuffix("_expected") {
+        tooltipKey = "COPY_NUMBER_SPEC"
         // Extract the target name and customize the tooltip
-        let target = String(identifier.dropFirst("EXPECTED_COPY_NUMBERS_".count))
+        let fullTarget = String(identifier.dropFirst("COPY_NUMBER_SPEC_".count))
+        let target = String(fullTarget.dropLast("_expected".count))
         if target.hasPrefix("Chrom") {
             let chromNumber = target.replacingOccurrences(of: "Chrom", with: "")
             customTooltipText = """
@@ -320,10 +284,11 @@ Used for normalization and classification thresholds.
 • Update in case of systematic target specific deviation
 """
         }
-    } else if identifier.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
-        tooltipKey = "EXPECTED_STANDARD_DEVIATION"
+    } else if identifier.hasPrefix("COPY_NUMBER_SPEC_") && identifier.hasSuffix("_std_dev") {
+        tooltipKey = "COPY_NUMBER_SPEC"
         // Extract the target name and customize the tooltip
-        let target = String(identifier.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
+        let fullTarget = String(identifier.dropFirst("COPY_NUMBER_SPEC_".count))
+        let target = String(fullTarget.dropLast("_std_dev".count))
         if target.hasPrefix("Chrom") {
             let chromNumber = target.replacingOccurrences(of: "Chrom", with: "")
             customTooltipText = """

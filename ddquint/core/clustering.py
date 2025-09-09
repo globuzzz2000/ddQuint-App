@@ -206,16 +206,8 @@ def _assign_targets_to_clusters(df_filtered, config):
     
     logger.debug(f"Expected centroids: {expected_centroids}")
     
-    # Calculate overall scale factor based on data range
-    x_range = np.ptp(df_filtered['Ch2Amplitude'])
-    y_range = np.ptp(df_filtered['Ch1Amplitude'])
-    scale_factor = min(1.0, max(0.5, np.sqrt((x_range * y_range) / 2000000)))
-    
-    # Use scale factor directly (no limits)
-    logger.debug(f"Calculated scale factor: {scale_factor}")
-    
-    # Get target tolerance with scale factor
-    target_tol = config.get_target_tolerance(scale_factor)
+    # Get fixed per-target tolerance
+    target_tol = config.get_target_tolerance()
     logger.debug(f"Target tolerance: {target_tol}")
     
     # Calculate centroids for each cluster

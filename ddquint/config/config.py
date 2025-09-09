@@ -89,23 +89,15 @@ class Config:
     # Number of chromosomes to analyze (1-10)
     CHROMOSOME_COUNT = 5
     
-    # Expected copy number values for each chromosome (baseline for calculations)
-    EXPECTED_COPY_NUMBERS = {
-        "Chrom1": 1.0,
-        "Chrom2": 1.0,
-        "Chrom3": 1.0,
-        "Chrom4": 1.0,
-        "Chrom5": 1.0
-    }
-    
-    # Standard deviation for each chromosome (empirically determined)
-    EXPECTED_STANDARD_DEVIATION = {
-        "Chrom1": 0.03,
-        "Chrom2": 0.03,
-        "Chrom3": 0.03,
-        "Chrom4": 0.03,
-        "Chrom5": 0.03
-    }
+    # Per-chromosome copy number expectations as a list of entries
+    # Each entry: {"chrom": "Chrom1", "expected": 1.0, "std_dev": 0.03}
+    COPY_NUMBER_SPEC = [
+        {"chrom": "Chrom1", "expected": 1.0, "std_dev": 0.03},
+        {"chrom": "Chrom2", "expected": 1.0, "std_dev": 0.03},
+        {"chrom": "Chrom3", "expected": 1.0, "std_dev": 0.03},
+        {"chrom": "Chrom4", "expected": 1.0, "std_dev": 0.03},
+        {"chrom": "Chrom5", "expected": 1.0, "std_dev": 0.03},
+    ]
     
     # Tolerance multiplier for standard deviation-based classification
     TOLERANCE_MULTIPLIER = 3
@@ -120,6 +112,9 @@ class Config:
     # Fluorophore/probe mixing control (default enabled = current pipeline)
     ENABLE_FLUOROPHORE_MIXING = True
     
+    # Amplitude non-linearity factor for non-mixing mode combinations
+    AMPLITUDE_NON_LINEARITY = 1.0
+    
     # Target name customization
     TARGET_NAMES = {}                   # Custom names for targets (e.g., {"Target1": "BRCA1", "Target2": "TP53"})
     
@@ -131,9 +126,7 @@ class Config:
     #                           Visualization Settings
     #############################################################################
     # Plot dimensions and settings
-    COMPOSITE_FIGURE_SIZE = (16, 11)
     INDIVIDUAL_FIGURE_SIZE = (6, 5)
-    COMPOSITE_PLOT_SIZE = (5, 5)
     
     # DPI settings for different plot types
     INDIVIDUAL_PLOT_DPI = 300      # High resolution for standalone plots
@@ -172,7 +165,6 @@ class Config:
     #############################################################################
     # Default output directories
     GRAPHS_DIR_NAME = "Graphs"
-    COMPOSITE_IMAGE_FILENAME = "Graph_Overview.png"
     CSV_EXTENSION = '.csv'        # File name patterns
     
     #############################################################################
@@ -213,12 +205,12 @@ class Config:
             'INDIVIDUAL_PLOT_DPI', 'PLACEHOLDER_PLOT_DPI',
             'X_AXIS_MIN', 'X_AXIS_MAX', 'Y_AXIS_MIN', 'Y_AXIS_MAX',
             'X_GRID_INTERVAL', 'Y_GRID_INTERVAL',
-            'COMPOSITE_FIGURE_SIZE', 'INDIVIDUAL_FIGURE_SIZE', 'COMPOSITE_PLOT_SIZE',
+            'INDIVIDUAL_FIGURE_SIZE',
             # Analysis parameters
             'BASE_TARGET_TOLERANCE',
-            'TOLERANCE_MULTIPLIER', 'COPY_NUMBER_MULTIPLIER', 'EXPECTED_CENTROIDS', 'EXPECTED_COPY_NUMBERS', 
-            'EXPECTED_STANDARD_DEVIATION', 'CHROMOSOME_COUNT', 'ENABLE_COPY_NUMBER_ANALYSIS', 'CLASSIFY_CNV_DEVIATIONS',
-            'LOWER_DEVIATION_TARGET', 'UPPER_DEVIATION_TARGET', 'CNV_LOSS_RATIO', 'CNV_GAIN_RATIO', 'ANEUPLOIDY_TARGETS', 'TARGET_NAMES',
+            'TOLERANCE_MULTIPLIER', 'COPY_NUMBER_MULTIPLIER', 'EXPECTED_CENTROIDS', 'COPY_NUMBER_SPEC',
+            'CHROMOSOME_COUNT', 'ENABLE_COPY_NUMBER_ANALYSIS', 'CLASSIFY_CNV_DEVIATIONS',
+            'LOWER_DEVIATION_TARGET', 'UPPER_DEVIATION_TARGET', 'TARGET_NAMES', 'AMPLITUDE_NON_LINEARITY',
             # Additional processing parameters
             'MIN_USABLE_DROPLETS', 'COPY_NUMBER_MEDIAN_DEVIATION_THRESHOLD',
             'TARGET_COLORS'
@@ -357,7 +349,7 @@ class Config:
         if chrom_name not in std_map:
             error_msg = f"Unknown chromosome for standard deviation: {chrom_name}"
             logger.error(error_msg)
-            raise ConfigError(error_msg, config_key="EXPECTED_STANDARD_DEVIATION")
+            raise ConfigError(error_msg, config_key="COPY_NUMBER_SPEC")
         std_dev = std_map[chrom_name]
         # TOLERANCE_MULTIPLIER may be overridden on the instance via __getattribute__
         multiplier = getattr(cls.get_instance(), 'TOLERANCE_MULTIPLIER', cls.TOLERANCE_MULTIPLIER)
@@ -374,12 +366,12 @@ class Config:
         if chrom_name not in exp_map:
             error_msg = f"Unknown chromosome: {chrom_name}"
             logger.error(error_msg)
-            raise ConfigError(error_msg, config_key="EXPECTED_COPY_NUMBERS")
+            raise ConfigError(error_msg, config_key="COPY_NUMBER_SPEC")
         expected = exp_map[chrom_name]
         tolerance = cls.get_tolerance_for_chromosome(chrom_name)
-        targets = cls.get_aneuploidy_targets()
-        deletion_target = expected * targets.get("low", 0.75)
-        duplication_target = expected * targets.get("high", 1.25)
+        # Use deviation targets directly
+        deletion_target = expected * float(cls.get_lower_deviation_target())
+        duplication_target = expected * float(cls.get_upper_deviation_target())
 
         # Define euploid range using chromosome-specific tolerance
         euploid_min = expected - tolerance
@@ -421,12 +413,11 @@ class Config:
         if chrom_name not in exp_map:
             error_msg = f"Unknown chromosome: {chrom_name}"
             logger.error(error_msg)
-            raise ConfigError(error_msg, config_key="EXPECTED_COPY_NUMBERS")
+            raise ConfigError(error_msg, config_key="COPY_NUMBER_SPEC")
         expected = exp_map[chrom_name]
         tolerance = cls.get_tolerance_for_chromosome(chrom_name)
-        targets = cls.get_aneuploidy_targets()
-        deletion_target = expected * targets.get("low", 0.75)
-        duplication_target = expected * targets.get("high", 1.25)
+        deletion_target = expected * float(cls.get_lower_deviation_target())
+        duplication_target = expected * float(cls.get_upper_deviation_target())
 
         # Calculate ranges using chromosome-specific tolerance
         euploid_range = (
@@ -453,7 +444,7 @@ class Config:
         Get DPI setting for different plot types.
         
         Args:
-            plot_type: Type of plot ('individual', 'composite', or 'placeholder')
+            plot_type: Type of plot ('individual' or 'placeholder')
             
         Returns:
             DPI value for the specified plot type
@@ -463,9 +454,9 @@ class Config:
             
         Example:
             >>> config = Config.get_instance()
-            >>> dpi = config.get_plot_dpi('composite')
+            >>> dpi = config.get_plot_dpi('individual')
             >>> dpi
-            200
+            300
         """
         instance = cls.get_instance()
         dpi_mapping = {
@@ -650,15 +641,37 @@ class Config:
 
     @classmethod
     def get_expected_copy_numbers(cls) -> Dict[str, float]:
-        """Get expected copy numbers with well context support."""
+        """Get expected copy numbers, built from COPY_NUMBER_SPEC with well context support."""
         instance = cls.get_instance()
-        return instance._get_parameter_with_context('EXPECTED_COPY_NUMBERS', cls.EXPECTED_COPY_NUMBERS)
+        spec = instance._get_parameter_with_context('COPY_NUMBER_SPEC', cls.COPY_NUMBER_SPEC)
+        result: Dict[str, float] = {}
+        if isinstance(spec, list):
+            for entry in spec:
+                try:
+                    chrom = entry.get('chrom') if isinstance(entry, dict) else None
+                    expected = float(entry.get('expected')) if isinstance(entry, dict) else None
+                    if chrom and expected is not None:
+                        result[str(chrom)] = expected
+                except Exception:
+                    continue
+        return result
 
     @classmethod
     def get_expected_std_dev(cls) -> Dict[str, float]:
-        """Get expected standard deviation with well context support."""
+        """Get expected standard deviations, built from COPY_NUMBER_SPEC with well context support."""
         instance = cls.get_instance()
-        return instance._get_parameter_with_context('EXPECTED_STANDARD_DEVIATION', cls.EXPECTED_STANDARD_DEVIATION)
+        spec = instance._get_parameter_with_context('COPY_NUMBER_SPEC', cls.COPY_NUMBER_SPEC)
+        result: Dict[str, float] = {}
+        if isinstance(spec, list):
+            for entry in spec:
+                try:
+                    chrom = entry.get('chrom') if isinstance(entry, dict) else None
+                    std_dev = float(entry.get('std_dev')) if isinstance(entry, dict) else None
+                    if chrom and std_dev is not None:
+                        result[str(chrom)] = std_dev
+                except Exception:
+                    continue
+        return result
 
     @classmethod
     def get_lower_deviation_target(cls) -> float:
@@ -691,19 +704,12 @@ class Config:
         return instance._get_parameter_with_context('ENABLE_FLUOROPHORE_MIXING', cls.ENABLE_FLUOROPHORE_MIXING)
     
     @classmethod
-    def get_cnv_loss_ratio(cls) -> float:
-        """Get CNV loss ratio with well context support (legacy method)."""
+    def get_amplitude_non_linearity(cls) -> float:
+        """Get amplitude non-linearity factor for non-mixing mode combinations."""
         instance = cls.get_instance()
-        # Use new deviation target for consistency
-        return instance._get_parameter_with_context('LOWER_DEVIATION_TARGET', cls.LOWER_DEVIATION_TARGET)
+        return instance._get_parameter_with_context('AMPLITUDE_NON_LINEARITY', cls.AMPLITUDE_NON_LINEARITY)
     
-    @classmethod
-    def get_cnv_gain_ratio(cls) -> float:
-        """Get CNV gain ratio with well context support (legacy method)."""
-        instance = cls.get_instance()
-        # Use new deviation target for consistency
-        return instance._get_parameter_with_context('UPPER_DEVIATION_TARGET', cls.UPPER_DEVIATION_TARGET)
-    
+    # Legacy CNV ratio and aneuploidy targets removed
     
     @classmethod
     def get_copy_number_multiplier(cls) -> float:
@@ -719,49 +725,23 @@ class Config:
         print(f"DEBUG: Config.get_target_names() returning: {result}")
         return result
     
-    @classmethod
-    def get_aneuploidy_targets(cls) -> Dict[str, float]:
-        """Get aneuploidy targets with well context support (legacy method)."""
-        instance = cls.get_instance()
-        # Build from individual deviation targets for consistency
-        return {
-            'low': instance._get_parameter_with_context('LOWER_DEVIATION_TARGET', cls.LOWER_DEVIATION_TARGET),
-            'high': instance._get_parameter_with_context('UPPER_DEVIATION_TARGET', cls.UPPER_DEVIATION_TARGET)
-        }
+    # Legacy aneuploidy target mapping removed
     
     @classmethod
-    def get_target_tolerance(cls, scale_factor: float = 1.0) -> Dict[str, float]:
-        """
-        Get target tolerance values with scale factor applied.
-        
-        Args:
-            scale_factor: Scale factor to apply to base tolerance
-            
-        Returns:
-            Dictionary of target names to tolerance values
-        """
-        # Apply scale factor directly (no limits)
-        
-        # Apply scale factor to base tolerance for all targets
-        return {target: cls.BASE_TARGET_TOLERANCE * scale_factor 
-                for target in cls.get_expected_centroids().keys()}
+    def get_target_tolerance(cls) -> Dict[str, float]:
+        """Get per-target centroid tolerance values using BASE_TARGET_TOLERANCE."""
+        return {target: cls.BASE_TARGET_TOLERANCE for target in cls.get_expected_centroids().keys()}
     
     @classmethod
-    def get_plot_dimensions(cls, for_composite: bool = False) -> tuple:
+    def get_plot_dimensions(cls) -> tuple:
         """
         Get plot dimension settings.
-        
-        Args:
-            for_composite: Whether to get dimensions for composite plot
             
         Returns:
             Figure size as (width, height) tuple
         """
         instance = cls.get_instance()
-        if for_composite:
-            return getattr(instance, 'COMPOSITE_PLOT_SIZE', cls.COMPOSITE_PLOT_SIZE)
-        else:
-            return getattr(instance, 'INDIVIDUAL_FIGURE_SIZE', cls.INDIVIDUAL_FIGURE_SIZE)
+        return getattr(instance, 'INDIVIDUAL_FIGURE_SIZE', cls.INDIVIDUAL_FIGURE_SIZE)
     
     @classmethod
     def get_axis_limits(cls) -> Dict[str, tuple]:
@@ -821,7 +801,7 @@ class Config:
     def _get_target_names(cls):
         """
         Return the current list of target names.
-        Tries instance-aware EXPECTED_COPY_NUMBERS first, then EXPECTED_CENTROIDS.
+        Tries instance-aware COPY_NUMBER_SPEC (via expected copy numbers) first, then EXPECTED_CENTROIDS.
         Always includes special names present in cls.SPECIAL_COLOR_DEFAULTS.
         """
         names = []

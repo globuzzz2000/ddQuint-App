@@ -3,14 +3,12 @@
 """
 Non-mixing (Amplitude Multiplex) 4-plex pipeline.
 
-Classifies droplets by nearest expected combination centroid derived from
-user-provided single-target centroids and the negative centroid. Produces
-per-subset counts, per-target positive rates, and a plotting-compatible
-result structure to integrate with existing visualization and exports.
+Relocated from ddquint.pipelines.non_mixing_4plex to ddquint.utils.fourplex.
+The function name and behavior remain the same for callers in the app.
 """
 
-from itertools import combinations
 from typing import Dict, List, Tuple
+from itertools import combinations
 import numpy as np
 import pandas as pd
 
@@ -19,17 +17,24 @@ from sklearn.preprocessing import StandardScaler
 from hdbscan import HDBSCAN
 
 
-def _subset_centroid(neg: np.ndarray, singles: Dict[str, np.ndarray], subset: Tuple[str, ...]) -> np.ndarray:
-    # C_S = sum(C_i) - (|S|-1) * C_neg
+def _subset_centroid(neg: np.ndarray, singles: Dict[str, np.ndarray], subset: Tuple[str, ...], non_linearity_factor: float = 1.0) -> np.ndarray:
     s = np.sum([singles[k] for k in subset], axis=0)
-    return s - (len(subset) - 1) * neg
+    base_centroid = s - (len(subset) - 1) * neg
+    
+    # Apply non-linearity scaling for combinations (not singles)
+    if len(subset) > 1:
+        # Gentler scaling: square root approach instead of full exponential
+        # This reduces the aggressiveness while still accounting for combination complexity
+        power = (len(subset) - 1) * 0.5  # Half the exponential power for gentler scaling
+        scaling = non_linearity_factor ** power
+        return neg + (base_centroid - neg) * scaling
+    return base_centroid
 
 
-def _build_expected_combo_centroids(expected: Dict[str, List[float]], n: int) -> Dict[str, np.ndarray]:
+def _build_expected_combo_centroids(expected: Dict[str, List[float]], n: int, non_linearity_factor: float = 1.0) -> Dict[str, np.ndarray]:
     if 'Negative' not in expected:
         raise ConfigError("Negative centroid required for non-mixing mode", config_key='EXPECTED_CENTROIDS')
     neg = np.array(expected['Negative'], dtype=float)
-    # Collect single-target centroids
     singles: Dict[str, np.ndarray] = {}
     chrom_keys = [f'Chrom{i}' for i in range(1, n + 1)]
     for k in chrom_keys:
@@ -37,48 +42,31 @@ def _build_expected_combo_centroids(expected: Dict[str, List[float]], n: int) ->
             raise ConfigError(f"Missing centroid for {k}", config_key='EXPECTED_CENTROIDS')
         singles[k] = np.array(expected[k], dtype=float)
 
-    # Include Negative as a class
     combo: Dict[str, np.ndarray] = {'Negative': neg}
-    # All non-empty subsets
     for r in range(1, n + 1):
         for subset in combinations(chrom_keys, r):
             label = '+'.join(subset) if r > 1 else subset[0]
-            combo[label] = _subset_centroid(neg, singles, subset)
+            combo[label] = _subset_centroid(neg, singles, subset, non_linearity_factor)
     return combo
-
-
-def _compute_scale_and_tol(df: pd.DataFrame) -> float:
-    # Approximate scale as in clustering module
-    x_range = np.ptp(df['Ch2Amplitude'].values)
-    y_range = np.ptp(df['Ch1Amplitude'].values)
-    scale_factor = min(1.0, max(0.5, np.sqrt((x_range * y_range) / 2000000)))
-    return scale_factor
 
 
 def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
     """
     Analyze droplets using non-mixing amplitude multiplex model (N<=4).
-
-    Args:
-        df: DataFrame with columns 'Ch1Amplitude', 'Ch2Amplitude'
-
-    Returns:
-        dict compatible with existing plotting/export paths.
     """
     config = Config.get_instance()
     n = int(getattr(config, 'CHROMOSOME_COUNT', 4))
     if n > 4:
-        n = 4  # hard cap in this mode
+        n = 4
 
     expected = Config.get_expected_centroids()
-    combos = _build_expected_combo_centroids(expected, n)
+    non_linearity_factor = Config.get_amplitude_non_linearity()
+    combos = _build_expected_combo_centroids(expected, n, non_linearity_factor)
 
     df_copy = df[['Ch1Amplitude', 'Ch2Amplitude']].copy()
-    scale = _compute_scale_and_tol(df_copy)
-    tol_map = Config.get_target_tolerance(scale)
+    tol_map = Config.get_target_tolerance()
     base_tol = float(next(iter(tol_map.values()))) if tol_map else 750.0
 
-    # HDBSCAN clustering on scaled amplitudes
     X = df_copy[['Ch1Amplitude', 'Ch2Amplitude']].values.astype(float)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -87,7 +75,6 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
     cluster_labels = clusterer.fit_predict(X_scaled)
     df_copy['cluster'] = cluster_labels
 
-    # Compute observed centroids in original amplitude space for non-noise clusters
     observed_centroids: Dict[int, np.ndarray] = {}
     for cl in np.unique(cluster_labels):
         if cl == -1:
@@ -97,17 +84,15 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
             continue
         observed_centroids[cl] = pts.mean(axis=0)
 
-    # Map observed clusters to expected combination centroids
     combo_labels = list(combos.keys())
     combo_centroids = np.stack([combos[k] for k in combo_labels], axis=0)
 
     cluster_to_label: Dict[int, str] = {}
     for cl, cen in observed_centroids.items():
-        diffs = cen[None, :] - combo_centroids  # (C,2)
+        diffs = cen[None, :] - combo_centroids
         dists = np.sqrt(np.sum(diffs**2, axis=1))
         idx = int(np.argmin(dists))
         label = combo_labels[idx]
-        # Size-aware tolerance
         if label == 'Negative':
             tol = base_tol
         else:
@@ -115,13 +100,11 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
             tol = base_tol * (1.0 + 0.10 * (k - 1))
         cluster_to_label[cl] = label if dists[idx] <= tol else 'Unknown'
 
-    # Assign droplet labels from cluster mapping; fallback for noise points
     assigned = []
     for i, cl in enumerate(cluster_labels):
         if cl != -1:
             assigned.append(cluster_to_label.get(cl, 'Unknown'))
         else:
-            # Fallback: nearest expected centroid with tolerance
             diffs = X[i][None, :] - combo_centroids
             dists = np.sqrt(np.sum(diffs**2, axis=1))
             idx = int(np.argmin(dists))
@@ -135,7 +118,6 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
 
     df_copy['TargetLabel'] = assigned
 
-    # Per-subset counts
     subset_counts: Dict[str, int] = {lab: 0 for lab in combo_labels}
     subset_counts.update({'Unknown': 0})
     for lab in df_copy['TargetLabel']:
@@ -144,7 +126,6 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
     total = len(df_copy)
     neg = subset_counts.get('Negative', 0)
 
-    # Per-target positives (sum of subsets containing that target)
     chrom_keys = [f'Chrom{i}' for i in range(1, n + 1)]
     per_target_positive = {ck: 0 for ck in chrom_keys}
     for lab, cnt in subset_counts.items():
@@ -152,16 +133,12 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
             if ck != 'Negative' and ck in lab.split('+'):
                 per_target_positive[ck] += cnt
 
-    # Construct counts compatible with existing summaries: Negative + each ChromX
     counts = {'Negative': neg}
     counts.update(per_target_positive)
 
-    # Non-Poisson per-target rate (fraction of droplets containing target)
-    # Relative copy numbers normalized to each other (median baseline)
     copy_numbers = {}
     if total > 0:
         rates = {ck: (pos / total) for ck, pos in per_target_positive.items()}
-        # Use median of non-zero rates as baseline to normalize targets to ~1.0 diploid scale
         non_zero = [v for v in rates.values() if v > 0]
         baseline = float(np.median(non_zero)) if non_zero else 1.0
         if baseline <= 0:
@@ -169,7 +146,6 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
         for ck, r in rates.items():
             copy_numbers[ck] = r / baseline if baseline > 0 else 0.0
 
-    # Optional classification: buffer zone and aneuploidy
     copy_number_states: Dict[str, str] = {}
     has_aneuploidy = False
     has_buffer_zone = False
@@ -188,13 +164,12 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
                 if state == 'buffer_zone':
                     has_buffer_zone = True
     except Exception:
-        # Fallback silently if classification not available
         copy_number_states = {}
         has_aneuploidy = False
         has_buffer_zone = False
 
     return {
-        'clusters': np.zeros((total,), dtype=int),  # placeholder
+        'clusters': np.zeros((total,), dtype=int),
         'df_filtered': df_copy,
         'counts': counts,
         'copy_numbers': copy_numbers,
@@ -208,3 +183,4 @@ def analyze_non_mixing_4plex(df: pd.DataFrame) -> Dict:
         'negative_droplets': neg,
         'subset_counts': subset_counts,
     }
+

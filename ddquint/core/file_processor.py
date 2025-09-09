@@ -19,8 +19,8 @@ import logging
 
 from ..utils import extract_well_coordinate
 from ..core import analyze_droplets
-from ..pipelines.non_mixing_4plex import analyze_non_mixing_4plex
-from ..visualization import create_well_plot
+from ..utils.fourplex import analyze_non_mixing_4plex
+from .plotting import create_well_plot
 from ..config import Config, FileProcessingError, WellProcessingError
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ def process_csv_file(file_path, graphs_dir, sample_names=None, verbose=False):
         
         # Create standard plot for individual viewing with sample name
         create_well_plot(df_clean, clustering_results, well_coord, 
-                        standard_plot_path, for_composite=False, 
+                        standard_plot_path, 
                         sample_name=template_name)
         
         # Return the analysis results with droplet metrics
@@ -336,7 +336,7 @@ def create_error_result(well_coord, filename, error_message, graphs_dir,
         
         # Use the unified plot creation system with raw data if available
         create_well_plot(df_clean, error_clustering_results, well_coord or filename, 
-                        save_path, for_composite=False, sample_name=template_name)
+                        save_path, sample_name=template_name)
         
         logger.debug(f"Created error plot: {save_path}")
         

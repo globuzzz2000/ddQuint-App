@@ -44,6 +44,10 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     private let userDefaultsDescCountKey = "DDQ.SampleDescriptionCount"
     private var templateDesigner: TemplateCreatorWindowController?
     
+    // Processing state tracking
+    private var isProcessing = false
+    private var currentProcess: Process?
+    
     // Parameter storage - well parameters stored per well ID, reset on app close
     var wellParametersMap: [String: [String: Any]] = [:]
     private var activelyAdjustedParameters: [String: Set<String>] = [:] // Tracks which parameters per well were actively changed
@@ -53,8 +57,6 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
     private var cacheKey: String?
     private var cacheTimestamp: Date?
     
-    // Composite overview
-    private var compositeImagePath: String?
     
     convenience init() {
         let window = NSWindow(
@@ -246,15 +248,63 @@ class InteractiveMainWindowController: NSWindowController, NSWindowDelegate {
 
     private func formatParamValue(_ value: Any) -> String {
         if let d = value as? Double {
-            // Round to 6 decimals then trim trailing zeros and dot
-            let s = String(format: "%.6f", d)
-            var trimmed = s
-            while trimmed.contains(".") && (trimmed.hasSuffix("0") || trimmed.hasSuffix(".")) {
-                trimmed.removeLast()
+            // Handle floating-point precision issues by using a smarter approach
+            // First try to format with up to 6 significant decimal places
+            let formatter = NumberFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.numberStyle = .decimal
+            formatter.usesGroupingSeparator = false
+            formatter.minimumFractionDigits = 0
+            formatter.maximumFractionDigits = 6
+            formatter.usesSignificantDigits = false
+            
+            if let formatted = formatter.string(from: NSNumber(value: d)) {
+                return formatted
+            } else {
+                // Fallback: use string formatting and manual cleanup
+                let s = String(format: "%.6f", d)
+                var trimmed = s
+                // Remove trailing zeros after decimal point
+                while trimmed.contains(".") && trimmed.hasSuffix("0") {
+                    trimmed.removeLast()
+                }
+                // Remove decimal point if no fractional part remains
+                if trimmed.hasSuffix(".") {
+                    trimmed.removeLast()
+                }
+                return trimmed
             }
-            return trimmed
         }
         return String(describing: value)
+    }
+
+    // Prepare values for JSON: round Doubles deterministically and use NSDecimalNumber to avoid long binary tails
+    private func sanitizeForJSON(_ value: Any, maxFractionDigits: Int = 6) -> Any {
+        // Keep Bool and Int as-is
+        if let b = value as? Bool { return b }
+        if let i = value as? Int { return i }
+        // Round Double using Decimal to avoid binary float artifacts, then wrap in NSDecimalNumber
+        if let d = value as? Double {
+            var dec = Decimal(d)
+            var rounded = Decimal()
+            NSDecimalRound(&rounded, &dec, maxFractionDigits, .plain)
+            return NSDecimalNumber(decimal: rounded)
+        }
+        // Recursively sanitize dictionaries
+        if let dict = value as? [String: Any] {
+            var out: [String: Any] = [:]
+            for (k, v) in dict {
+                // For known copy-number fields, keep 6 digits by default; can be tweaked per-key if needed
+                out[k] = sanitizeForJSON(v, maxFractionDigits: maxFractionDigits)
+            }
+            return out
+        }
+        // Recursively sanitize arrays
+        if let arr = value as? [Any] {
+            return arr.map { sanitizeForJSON($0, maxFractionDigits: maxFractionDigits) }
+        }
+        // Pass through strings and other types
+        return value
     }
 
     private func lastURL(for key: String) -> URL? {
@@ -487,6 +537,7 @@ private func setupConstraints(in contentView: NSView) {
             
             // Load global parameters (if present)
             if let globals = obj["global_parameters"] as? [String: Any] {
+                // Save exactly what is provided by the imported file
                 saveParametersToFile(globals)
                 print("✅ Applied \(globals.count) global parameters")
             }
@@ -530,6 +581,9 @@ private func setupConstraints(in contentView: NSView) {
     }
     
     private func startAnalysis(folderURL: URL) {
+        // Set processing state
+        isProcessing = true
+        
         // Start corner spinner
         showCornerSpinner()
         
@@ -541,6 +595,7 @@ private func setupConstraints(in contentView: NSView) {
         guard let pythonPath = findPython(),
               let ddquintPath = findDDQuint() else {
             showError("Python or ddQuint not found")
+            isProcessing = false
             return
         }
         
@@ -572,10 +627,12 @@ private func setupConstraints(in contentView: NSView) {
             let templateCount = self?.templateDescriptionCount ?? 4
             let escapedTemplatePath = self?.templateFileURL?.path.replacingOccurrences(of: "'", with: "\\'") ?? ""
 
-            // Serialize well-specific parameters for batch application
+            // Serialize well-specific parameters for batch application (sanitized to avoid float tails)
             let wellParamsJSON: String = {
                 do {
-                    let data = try JSONSerialization.data(withJSONObject: self?.wellParametersMap ?? [:], options: [])
+                    let raw = self?.wellParametersMap ?? [:]
+                    let sanitized = self?.sanitizeForJSON(raw) as? [String: Any] ?? [:]
+                    let data = try JSONSerialization.data(withJSONObject: sanitized, options: [])
                     return String(data: data, encoding: .utf8) ?? "{}"
                 } catch {
                     return "{}"
@@ -720,7 +777,7 @@ private func setupConstraints(in contentView: NSView) {
                         'HDBSCAN_MIN_CLUSTER_SIZE','HDBSCAN_MIN_SAMPLES','HDBSCAN_EPSILON','HDBSCAN_METRIC','HDBSCAN_CLUSTER_SELECTION_METHOD','MIN_POINTS_FOR_CLUSTERING',
                         'INDIVIDUAL_PLOT_DPI','PLACEHOLDER_PLOT_DPI',
                         'X_AXIS_MIN','X_AXIS_MAX','Y_AXIS_MIN','Y_AXIS_MAX','X_GRID_INTERVAL','Y_GRID_INTERVAL',
-                        'BASE_TARGET_TOLERANCE','EXPECTED_CENTROIDS','EXPECTED_COPY_NUMBERS','EXPECTED_STANDARD_DEVIATION','ANEUPLOIDY_TARGETS','CNV_LOSS_RATIO','CNV_GAIN_RATIO','LOWER_DEVIATION_TARGET','UPPER_DEVIATION_TARGET','TOLERANCE_MULTIPLIER','COPY_NUMBER_MULTIPLIER','CHROMOSOME_COUNT','ENABLE_COPY_NUMBER_ANALYSIS','CLASSIFY_CNV_DEVIATIONS','ENABLE_FLUOROPHORE_MIXING','TARGET_NAMES'
+                        'BASE_TARGET_TOLERANCE','EXPECTED_CENTROIDS','COPY_NUMBER_SPEC','LOWER_DEVIATION_TARGET','UPPER_DEVIATION_TARGET','TOLERANCE_MULTIPLIER','COPY_NUMBER_MULTIPLIER','CHROMOSOME_COUNT','ENABLE_COPY_NUMBER_ANALYSIS','CLASSIFY_CNV_DEVIATIONS','ENABLE_FLUOROPHORE_MIXING','AMPLITUDE_NON_LINEARITY','TARGET_NAMES'
                     ]
                     
                     for csv_file in csv_files:
@@ -893,6 +950,9 @@ private func setupConstraints(in contentView: NSView) {
                 """
             ]
             
+            // Store process reference for cancellation
+            self?.currentProcess = process
+            
             do {
                 try process.run()
                 
@@ -939,8 +999,14 @@ private func setupConstraints(in contentView: NSView) {
                 }
                 
                 // Wait for process completion
-                DispatchQueue.global().async {
+                DispatchQueue.global().async { [weak self] in
                     process.waitUntilExit()
+                    
+                    // Check if this process was cancelled
+                    guard self?.currentProcess === process else {
+                        print("DEBUG: Process was cancelled, skipping result processing")
+                        return
+                    }
                     
                     // Clean up handlers
                     outputHandle.readabilityHandler = nil
@@ -965,6 +1031,9 @@ private func setupConstraints(in contentView: NSView) {
                 }
             } catch {
                 DispatchQueue.main.async {
+                    self?.isProcessing = false
+                    self?.currentProcess = nil
+                    self?.hideCornerSpinner()
                     self?.showError("Failed to run analysis: \(error)")
                 }
             }
@@ -1027,7 +1096,7 @@ private func setupConstraints(in contentView: NSView) {
                                               isEdited: edited)
                     applyFilters()
                     if let filteredIdx = filteredWellData.firstIndex(where: { $0.well == wellName }) {
-                        let tableRow = (compositeImagePath != nil) ? filteredIdx + 1 : filteredIdx
+                        let tableRow = filteredIdx
                         wellListView.reloadData(forRowIndexes: IndexSet(integer: tableRow), columnIndexes: IndexSet(integer: 0))
                     }
                 }
@@ -1040,6 +1109,10 @@ private func setupConstraints(in contentView: NSView) {
     }
     
     private func processAnalysisResults(output: String, error: String, exitCode: Int32) {
+        // Clear processing state
+        isProcessing = false
+        currentProcess = nil
+        
         // Hide processing indicators when analysis completes
         hideProcessingIndicator()
         hideCornerSpinner()
@@ -1183,17 +1256,8 @@ private func setupConstraints(in contentView: NSView) {
         // Capture current selection
         let selectedRow = wellListView.selectedRow
         var selectedWellId: String? = nil
-        var selectedIsOverview = false
-        if selectedRow >= 0 {
-            if compositeImagePath != nil && selectedRow == 0 {
-                selectedIsOverview = true
-            } else {
-                var dataIndex = selectedRow
-                if compositeImagePath != nil { dataIndex -= 1 }
-                if dataIndex >= 0 && dataIndex < wellData.count {
-                    selectedWellId = wellData[dataIndex].well
-                }
-            }
+        if selectedRow >= 0 && selectedRow < wellData.count {
+            selectedWellId = wellData[selectedRow].well
         }
         
         // Sort wells by column-first
@@ -1207,11 +1271,8 @@ private func setupConstraints(in contentView: NSView) {
         wellListView.reloadData()
         
         // Restore selection
-        if selectedIsOverview, compositeImagePath != nil {
-            wellListView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        } else if let id = selectedWellId, let idx = wellData.firstIndex(where: { $0.well == id }) {
-            let tableRow = (compositeImagePath != nil) ? idx + 1 : idx
-            wellListView.selectRowIndexes(IndexSet(integer: tableRow), byExtendingSelection: false)
+        if let id = selectedWellId, let idx = wellData.firstIndex(where: { $0.well == id }) {
+            wellListView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
         }
     }
     
@@ -1973,11 +2034,11 @@ private func setupConstraints(in contentView: NSView) {
                 currentChromCount = chromKeys.count
                 print("🎯 Inferred chromosome count from centroids: \(chromKeys.count)")
             }
-        } else if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double] {
-            let chromKeys = copyNumbers.keys.filter { $0.starts(with: "Chrom") }
+        } else if let specList = parameters["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+            let chromKeys = specList.compactMap { $0["chrom"] as? String }.filter { $0.starts(with: "Chrom") }
             if !chromKeys.isEmpty {
                 currentChromCount = chromKeys.count
-                print("🎯 Inferred chromosome count from copy numbers: \(chromKeys.count)")
+                print("🎯 Inferred chromosome count from COPY_NUMBER_SPEC: \(chromKeys.count)")
             }
         }
         
@@ -2002,11 +2063,40 @@ private func setupConstraints(in contentView: NSView) {
         view.addSubview(chromCountPopup, positioned: .above, relativeTo: nil)
         view.addSubview(chromCountLabel, positioned: .above, relativeTo: chromCountPopup)
         yPos -= spacing
+        
+        // Amplitude Non-linearity parameter (only shown when fluorophore mixing is disabled)
+        if let mixing = parameters["ENABLE_FLUOROPHORE_MIXING"] as? Bool, mixing == false {
+            let nonLinearityLabel = NSTextField(labelWithString: "Amplitude Non-linearity:")
+            nonLinearityLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
+            addParameterTooltip(to: nonLinearityLabel, identifier: "AMPLITUDE_NON_LINEARITY")
+            
+            let nonLinearityField = NSTextField()
+            nonLinearityField.identifier = NSUserInterfaceItemIdentifier("AMPLITUDE_NON_LINEARITY")
+            addParameterTooltip(to: nonLinearityField, identifier: "AMPLITUDE_NON_LINEARITY")
+            if let paramValue = parameters["AMPLITUDE_NON_LINEARITY"] {
+                nonLinearityField.stringValue = formatParamValue(paramValue)
+            } else {
+                nonLinearityField.stringValue = "1.0"  // Default value
+            }
+            nonLinearityField.frame = NSRect(x: 250, y: yPos, width: 100, height: fieldHeight)
+            nonLinearityField.isEditable = true
+            nonLinearityField.isSelectable = true
+            nonLinearityField.isBordered = true
+            nonLinearityField.bezelStyle = .roundedBezel
+            
+            view.addSubview(nonLinearityLabel)
+            view.addSubview(nonLinearityField)
+            yPos -= spacing
+        }
 
-        // Section: Expected Centroid Position
+        // Section: Expected Centroid Position (positioned lower only if amplitude parameter wasn't created)
         do {
-            // Match section spacing used elsewhere: 20 before header, 40 after header
-            yPos -= 20
+            // If amplitude parameter was created above, use normal spacing. Otherwise, add extra space.
+            let mixingEnabled = parameters["ENABLE_FLUOROPHORE_MIXING"] as? Bool ?? true
+            let amplitudeParamExists = !mixingEnabled
+            let extraSpacing: CGFloat = amplitudeParamExists ? 20.0 : 50.0  // Normal spacing if param exists, extra if not
+            
+            yPos -= extraSpacing
             let sectionLabel = NSTextField(labelWithString: "Expected Centroid Position")
             sectionLabel.font = NSFont.boldSystemFont(ofSize: 14)
             sectionLabel.frame = NSRect(x: 20, y: yPos, width: 300, height: 20)
@@ -2228,15 +2318,7 @@ private func setupConstraints(in contentView: NSView) {
                     print("⚪ Field \(identifier) has no parameter value, leaving empty")
                 }
             } else if identifier == "LOWER_DEVIATION_TARGET" {
-                // Check both new and old parameter names for backward compatibility
-                if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
-                   let value = targets["low"] {
-                    paramField.stringValue = String(value)
-                    print("🎯 Set deviation field \(identifier) = \(value)")
-                } else if let value = parameters["CNV_LOSS_RATIO"] {
-                    paramField.stringValue = formatParamValue(value)
-                    print("🎯 Set deviation field \(identifier) = \(value)")
-                } else if let value = parameters["LOWER_DEVIATION_TARGET"] {
+                if let value = parameters["LOWER_DEVIATION_TARGET"] {
                     paramField.stringValue = formatParamValue(value)
                     print("🎯 Set deviation field \(identifier) = \(value)")
                 } else {
@@ -2244,47 +2326,14 @@ private func setupConstraints(in contentView: NSView) {
                     print("⚪ Deviation field \(identifier) has no parameter value, leaving empty")
                 }
             } else if identifier == "UPPER_DEVIATION_TARGET" {
-                // Check both new and old parameter names for backward compatibility
-                if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
-                   let value = targets["high"] {
-                    paramField.stringValue = String(value)
-                    print("🎯 Set deviation field \(identifier) = \(value)")
-                } else if let value = parameters["CNV_GAIN_RATIO"] {
-                    paramField.stringValue = formatParamValue(value)
-                    print("🎯 Set deviation field \(identifier) = \(value)")
-                } else if let value = parameters["UPPER_DEVIATION_TARGET"] {
+                if let value = parameters["UPPER_DEVIATION_TARGET"] {
                     paramField.stringValue = formatParamValue(value)
                     print("🎯 Set deviation field \(identifier) = \(value)")
                 } else {
                     paramField.stringValue = ""
                     print("⚪ Deviation field \(identifier) has no parameter value, leaving empty")
                 }
-            } else if identifier == "CNV_LOSS_RATIO" {
-                // Check both new and old parameter names for backward compatibility
-                if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
-                   let value = targets["low"] {
-                    paramField.stringValue = String(value)
-                    print("🎯 Set CNV field \(identifier) = \(value)")
-                } else if let value = parameters["CNV_LOSS_RATIO"] {
-                    paramField.stringValue = formatParamValue(value)
-                    print("🎯 Set CNV field \(identifier) = \(value)")
-                } else {
-                    paramField.stringValue = ""
-                    print("⚪ CNV field \(identifier) has no parameter value, leaving empty")
-                }
-            } else if identifier == "CNV_GAIN_RATIO" {
-                // Check both new and old parameter names for backward compatibility
-                if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
-                   let value = targets["high"] {
-                    paramField.stringValue = String(value)
-                    print("🎯 Set CNV field \(identifier) = \(value)")
-                } else if let value = parameters["CNV_GAIN_RATIO"] {
-                    paramField.stringValue = formatParamValue(value)
-                    print("🎯 Set CNV field \(identifier) = \(value)")
-                } else {
-                    paramField.stringValue = ""
-                    print("⚪ CNV field \(identifier) has no parameter value, leaving empty")
-                }
+            
             } else if let paramValue = parameters[identifier] {
                 paramField.stringValue = formatParamValue(paramValue)
                 print("🎯 Set field \(identifier) = \(paramValue)")
@@ -2309,7 +2358,7 @@ private func setupConstraints(in contentView: NSView) {
         let copyNumLabel = NSTextField(labelWithString: "Expected Copy Numbers by Chromosome")
         copyNumLabel.font = NSFont.boldSystemFont(ofSize: 14)
         copyNumLabel.frame = NSRect(x: 20, y: yPos, width: 300, height: 20)
-        addParameterTooltip(to: copyNumLabel, identifier: "EXPECTED_COPY_NUMBERS")
+        addParameterTooltip(to: copyNumLabel, identifier: "COPY_NUMBER_SPEC")
         view.addSubview(copyNumLabel)
         yPos -= 40
         
@@ -2318,11 +2367,11 @@ private func setupConstraints(in contentView: NSView) {
         if let chromCount = parameters["CHROMOSOME_COUNT"] as? Int {
             currentChromCount = chromCount
             print("🎯 Copy numbers view using CHROMOSOME_COUNT parameter: \(chromCount)")
-        } else if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double] {
-            let chromKeys = copyNumbers.keys.filter { $0.starts(with: "Chrom") }
+        } else if let specList = parameters["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+            let chromKeys = specList.compactMap { $0["chrom"] as? String }.filter { $0.starts(with: "Chrom") }
             if !chromKeys.isEmpty {
                 currentChromCount = chromKeys.count
-                print("🎯 Copy numbers view inferred from copy numbers: \(chromKeys.count)")
+                print("🎯 Copy numbers view inferred from COPY_NUMBER_SPEC: \(chromKeys.count)")
             }
         } else if let centroids = parameters["EXPECTED_CENTROIDS"] as? [String: [Double]] {
             let chromKeys = centroids.keys.filter { $0.starts(with: "Chrom") }
@@ -2343,12 +2392,17 @@ private func setupConstraints(in contentView: NSView) {
             chromLabel.frame = NSRect(x: 40, y: yPos, width: 80, height: fieldHeight)
             
             let copyNumField = NSTextField()
-            copyNumField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_COPY_NUMBERS_\(chrom)")
-            addParameterTooltip(to: copyNumField, identifier: "EXPECTED_COPY_NUMBERS_\(chrom)")
+            copyNumField.identifier = NSUserInterfaceItemIdentifier("COPY_NUMBER_SPEC_\(chrom)_expected")
+            addParameterTooltip(to: copyNumField, identifier: "COPY_NUMBER_SPEC_\(chrom)_expected")
             // Use parameter value if available, otherwise leave empty
-            if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double],
-               let value = copyNumbers[chrom] {
-                copyNumField.stringValue = String(value)
+            let cnValue: Double? = {
+                if let specList = parameters["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+                    return specList.first(where: { ($0["chrom"] as? String) == chrom })?["expected"] as? Double
+                }
+                return nil
+            }()
+            if let value = cnValue {
+                copyNumField.stringValue = formatParamValue(value)
                 print("🎯 Set copy number field \(chrom) = \(value)")
             } else {
                 copyNumField.stringValue = ""
@@ -2366,12 +2420,17 @@ private func setupConstraints(in contentView: NSView) {
             stdDevLabel.alignment = .left  // Match update method alignment
             
             let stdDevField = NSTextField()
-            stdDevField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_STANDARD_DEVIATION_\(chrom)")
-            addParameterTooltip(to: stdDevField, identifier: "EXPECTED_STANDARD_DEVIATION_\(chrom)")
+            stdDevField.identifier = NSUserInterfaceItemIdentifier("COPY_NUMBER_SPEC_\(chrom)_std_dev")
+            addParameterTooltip(to: stdDevField, identifier: "COPY_NUMBER_SPEC_\(chrom)_std_dev")
             // Use parameter value if available, otherwise leave empty
-            if let stdDevs = parameters["EXPECTED_STANDARD_DEVIATION"] as? [String: Double],
-               let value = stdDevs[chrom] {
-                stdDevField.stringValue = String(value)
+            let sdValue: Double? = {
+                if let specList = parameters["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+                    return specList.first(where: { ($0["chrom"] as? String) == chrom })?["std_dev"] as? Double
+                }
+                return nil
+            }()
+            if let value = sdValue {
+                stdDevField.stringValue = formatParamValue(value)
                 print("🎯 Set std dev field \(chrom) = \(value)")
             } else {
                 stdDevField.stringValue = ""
@@ -2718,7 +2777,8 @@ private func setupConstraints(in contentView: NSView) {
             }
             // Force update views even if popup wasn't found
             if let window = currentWellWindow ?? currentGlobalWindow, let tabView = currentParamTabView {
-                let params = extractParametersFromWindow(window, isGlobal: currentWellWindow == nil)
+                var params = extractParametersFromWindow(window, isGlobal: currentWellWindow == nil)
+                params["ENABLE_FLUOROPHORE_MIXING"] = false  // Update the parameter to reflect the change
                 for item in tabView.tabViewItems {
                     if item.identifier as? String == "centroids", let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
                         updateCentroidsViewForTargetCount(doc, targetCount: forcedCount, parameters: params)
@@ -2764,7 +2824,8 @@ private func setupConstraints(in contentView: NSView) {
             }
             // Force update views with restored count
             if let window = currentWellWindow ?? currentGlobalWindow, let tabView = currentParamTabView {
-                let params = extractParametersFromWindow(window, isGlobal: currentWellWindow == nil)
+                var params = extractParametersFromWindow(window, isGlobal: currentWellWindow == nil)
+                params["ENABLE_FLUOROPHORE_MIXING"] = true  // Update the parameter to reflect the change
                 for item in tabView.tabViewItems {
                     if item.identifier as? String == "centroids", let scroll = item.view as? NSScrollView, let doc = scroll.documentView {
                         updateCentroidsViewForTargetCount(doc, targetCount: restoredCount, parameters: params)
@@ -3099,7 +3160,7 @@ private func setupConstraints(in contentView: NSView) {
     private func areParameterValuesEqual(_ value1: Any, _ value2: Any) -> Bool {
         // Handle different types of parameter values
         if let dict1 = value1 as? [String: Any], let dict2 = value2 as? [String: Any] {
-            // Compare dictionaries (like EXPECTED_CENTROIDS, EXPECTED_COPY_NUMBERS)
+            // Compare dictionaries (like EXPECTED_CENTROIDS)
             if dict1.count != dict2.count { return false }
             for (key, val1) in dict1 {
                 guard let val2 = dict2[key] else { return false }
@@ -3159,42 +3220,43 @@ private func setupConstraints(in contentView: NSView) {
                                 parameters[identifier] = trimmedValue
                             }
                         }
-                    } else if identifier.hasPrefix("EXPECTED_COPY_NUMBERS_") {
-                        let chrom = String(identifier.dropFirst("EXPECTED_COPY_NUMBERS_".count))
+                    } else if identifier.hasPrefix("COPY_NUMBER_SPEC_") && identifier.hasSuffix("_expected") {
+                        let fullChrom = String(identifier.dropFirst("COPY_NUMBER_SPEC_".count))
+                        let chrom = String(fullChrom.dropLast("_expected".count))
                         let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
                         if trimmedValue.isEmpty {
-                            // Store as empty string to detect missing required fields
-                            parameters[identifier] = ""
+                            // Skip empty values - they won't be included in final COPY_NUMBER_SPEC
                         } else if let value = Double(trimmedValue) {
-                            if parameters["EXPECTED_COPY_NUMBERS"] == nil {
-                                parameters["EXPECTED_COPY_NUMBERS"] = [String: Double]()
+                            // Build combined spec map and finalize later
+                            if parameters["__CN_SPEC_MAP"] == nil {
+                                parameters["__CN_SPEC_MAP"] = [String: [String: Any]]()
                             }
-                            var copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as! [String: Double]
-                            copyNumbers[chrom] = value
-                            parameters["EXPECTED_COPY_NUMBERS"] = copyNumbers
-                            // Also store individual parameter for consistency
-                            parameters[identifier] = value
+                            var specMap = parameters["__CN_SPEC_MAP"] as! [String: [String: Any]]
+                            var entry = specMap[chrom] ?? ["chrom": chrom]
+                            entry["expected"] = value
+                            specMap[chrom] = entry
+                            parameters["__CN_SPEC_MAP"] = specMap
                         } else {
-                            // Store as invalid string for validation
+                            // Store invalid value for validation error handling
                             parameters[identifier] = trimmedValue
                         }
-                    } else if identifier.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
-                        let chrom = String(identifier.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
+                    } else if identifier.hasPrefix("COPY_NUMBER_SPEC_") && identifier.hasSuffix("_std_dev") {
+                        let fullChrom = String(identifier.dropFirst("COPY_NUMBER_SPEC_".count))
+                        let chrom = String(fullChrom.dropLast("_std_dev".count))
                         let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
                         if trimmedValue.isEmpty {
-                            // Store as empty string to detect missing required fields
-                            parameters[identifier] = ""
+                            // Skip empty values - they won't be included in final COPY_NUMBER_SPEC
                         } else if let value = Double(trimmedValue) {
-                            if parameters["EXPECTED_STANDARD_DEVIATION"] == nil {
-                                parameters["EXPECTED_STANDARD_DEVIATION"] = [String: Double]()
+                            if parameters["__CN_SPEC_MAP"] == nil {
+                                parameters["__CN_SPEC_MAP"] = [String: [String: Any]]()
                             }
-                            var stdDevs = parameters["EXPECTED_STANDARD_DEVIATION"] as! [String: Double]
-                            stdDevs[chrom] = value
-                            parameters["EXPECTED_STANDARD_DEVIATION"] = stdDevs
-                            // Also store individual parameter for consistency
-                            parameters[identifier] = value
+                            var specMap = parameters["__CN_SPEC_MAP"] as! [String: [String: Any]]
+                            var entry = specMap[chrom] ?? ["chrom": chrom]
+                            entry["std_dev"] = value
+                            specMap[chrom] = entry
+                            parameters["__CN_SPEC_MAP"] = specMap
                         } else {
-                            // Store as invalid string for validation
+                            // Store invalid value for validation error handling
                             parameters[identifier] = trimmedValue
                         }
                     } else if identifier.hasPrefix("TARGET_NAME_") {
@@ -3215,34 +3277,10 @@ private func setupConstraints(in contentView: NSView) {
                         print("🔍 TARGET_NAMES set in parameters: \(targetNames)")
                     } else if identifier == "LOWER_DEVIATION_TARGET" || identifier == "UPPER_DEVIATION_TARGET" || identifier == "COPY_NUMBER_MULTIPLIER" {
                         if let value = Double(textField.stringValue) {
-                            // Store in new format
+                            // Store current format
                             parameters[identifier] = value
-                            
-                            // Also maintain old formats for backward compatibility
-                            parameters[identifier == "LOWER_DEVIATION_TARGET" ? "CNV_LOSS_RATIO" : "CNV_GAIN_RATIO"] = value
-                            
-                            if parameters["ANEUPLOIDY_TARGETS"] == nil {
-                                parameters["ANEUPLOIDY_TARGETS"] = [String: Double]()
-                            }
-                            var targets = parameters["ANEUPLOIDY_TARGETS"] as! [String: Double]
-                            let key = identifier == "LOWER_DEVIATION_TARGET" ? "low" : "high"
-                            targets[key] = value
-                            parameters["ANEUPLOIDY_TARGETS"] = targets
                         }
-                    } else if identifier == "CNV_LOSS_RATIO" || identifier == "CNV_GAIN_RATIO" {
-                        if let value = Double(textField.stringValue) {
-                            // Store both in new format and maintain backward compatibility
-                            parameters[identifier] = value
-                            
-                            // Also maintain old ANEUPLOIDY_TARGETS format for backward compatibility
-                            if parameters["ANEUPLOIDY_TARGETS"] == nil {
-                                parameters["ANEUPLOIDY_TARGETS"] = [String: Double]()
-                            }
-                            var targets = parameters["ANEUPLOIDY_TARGETS"] as! [String: Double]
-                            let key = identifier == "CNV_LOSS_RATIO" ? "low" : "high"
-                            targets[key] = value
-                            parameters["ANEUPLOIDY_TARGETS"] = targets
-                        }
+                    
                     } else {
                         // Handle other numeric parameters - check for empty values
                         let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3292,15 +3330,27 @@ private func setupConstraints(in contentView: NSView) {
             }
         }
         
-        // Ensure all chromosome dictionaries are properly formed if any individual fields exist
-        let hasCopyNumberFields = parameters.keys.contains { $0.hasPrefix("EXPECTED_COPY_NUMBERS_") }
-        let hasStdDevFields = parameters.keys.contains { $0.hasPrefix("EXPECTED_STANDARD_DEVIATION_") }
-        
-        if hasCopyNumberFields && parameters["EXPECTED_COPY_NUMBERS"] == nil {
-            parameters["EXPECTED_COPY_NUMBERS"] = [String: Double]()
-        }
-        if hasStdDevFields && parameters["EXPECTED_STANDARD_DEVIATION"] == nil {
-            parameters["EXPECTED_STANDARD_DEVIATION"] = [String: Double]()
+        // Finalize COPY_NUMBER_SPEC from temp map
+        if let specMap = parameters["__CN_SPEC_MAP"] as? [String: [String: Any]] {
+            let orderedKeys = specMap.keys.sorted { (a, b) in
+                func idx(_ s: String) -> Int { Int(s.replacingOccurrences(of: "Chrom", with: "")) ?? 0 }
+                return idx(a) < idx(b)
+            }
+            let specList: [[String: Any]] = orderedKeys.map { key in
+                var entry = specMap[key] ?? ["chrom": key]
+                entry["chrom"] = key
+                return entry
+            }
+            parameters["COPY_NUMBER_SPEC"] = specList
+            parameters.removeValue(forKey: "__CN_SPEC_MAP")
+            
+            // Remove individual field entries to ensure only unified structure is saved
+            let keysToRemove = parameters.keys.filter { key in
+                key.hasPrefix("COPY_NUMBER_SPEC_") && (key.hasSuffix("_expected") || key.hasSuffix("_std_dev"))
+            }
+            for key in keysToRemove {
+                parameters.removeValue(forKey: key)
+            }
         }
         
         // Ensure TARGET_NAMES is always present, even if empty
@@ -3376,8 +3426,9 @@ private func setupConstraints(in contentView: NSView) {
                     }
                 }
             }
-            if key.hasPrefix("EXPECTED_COPY_NUMBERS_") {
-                let chromName = String(key.dropFirst("EXPECTED_COPY_NUMBERS_".count))
+            if key.hasPrefix("COPY_NUMBER_SPEC_") && key.hasSuffix("_expected") {
+                let fullChrom = String(key.dropFirst("COPY_NUMBER_SPEC_".count))
+                let chromName = String(fullChrom.dropLast("_expected".count))
                 configuredChroms.insert(chromName)
                 if let stringValue = value as? String, stringValue.isEmpty {
                     let displayName = chromName.replacingOccurrences(of: "Chrom", with: "Target ")
@@ -3387,8 +3438,9 @@ private func setupConstraints(in contentView: NSView) {
                     chromsWithCopyNumbers.insert(chromName)
                 }
             }
-            if key.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
-                let chromName = String(key.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
+            if key.hasPrefix("COPY_NUMBER_SPEC_") && key.hasSuffix("_std_dev") {
+                let fullChrom = String(key.dropFirst("COPY_NUMBER_SPEC_".count))
+                let chromName = String(fullChrom.dropLast("_std_dev".count))
                 configuredChroms.insert(chromName)
                 if let stringValue = value as? String, stringValue.isEmpty {
                     let displayName = chromName.replacingOccurrences(of: "Chrom", with: "Target ")
@@ -3409,16 +3461,13 @@ private func setupConstraints(in contentView: NSView) {
                 }
             }
         }
-        if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double] {
-            for chrom in copyNumbers.keys {
-                configuredChroms.insert(chrom)
-                chromsWithCopyNumbers.insert(chrom)
-            }
-        }
-        if let stdDevs = parameters["EXPECTED_STANDARD_DEVIATION"] as? [String: Double] {
-            for chrom in stdDevs.keys {
-                configuredChroms.insert(chrom)
-                chromsWithStdDevs.insert(chrom)
+        if let specList = parameters["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+            for entry in specList {
+                if let chrom = entry["chrom"] as? String {
+                    configuredChroms.insert(chrom)
+                    if entry["expected"] != nil { chromsWithCopyNumbers.insert(chrom) }
+                    if entry["std_dev"] != nil { chromsWithStdDevs.insert(chrom) }
+                }
             }
         }
         
@@ -3439,7 +3488,12 @@ private func setupConstraints(in contentView: NSView) {
             
             // Check if copy numbers are available (well-specific OR global default)
             let hasWellCopyNumbers = chromsWithCopyNumbers.contains(chrom)
-            let hasGlobalCopyNumbers = (globalDefaults["EXPECTED_COPY_NUMBERS"] as? [String: Double])?[chrom] != nil
+            let hasGlobalCopyNumbers: Bool = {
+                if let specList = globalDefaults["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+                    return specList.contains(where: { ($0["chrom"] as? String) == chrom && $0["expected"] != nil })
+                }
+                return false
+            }()
             if !hasWellCopyNumbers && !hasGlobalCopyNumbers {
                 showError("Missing copy number for \(displayName) - no well-specific or global default available")
                 return false
@@ -3447,7 +3501,12 @@ private func setupConstraints(in contentView: NSView) {
             
             // Check if standard deviations are available (well-specific OR global default)
             let hasWellStdDevs = chromsWithStdDevs.contains(chrom)
-            let hasGlobalStdDevs = (globalDefaults["EXPECTED_STANDARD_DEVIATION"] as? [String: Double])?[chrom] != nil
+            let hasGlobalStdDevs: Bool = {
+                if let specList = globalDefaults["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+                    return specList.contains(where: { ($0["chrom"] as? String) == chrom && $0["std_dev"] != nil })
+                }
+                return false
+            }()
             if !hasWellStdDevs && !hasGlobalStdDevs {
                 showError("Missing standard deviation for \(displayName) - no well-specific or global default available")
                 return false
@@ -3464,9 +3523,9 @@ private func setupConstraints(in contentView: NSView) {
             }
         }
         
-        if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double] {
-            for (target, value) in copyNumbers {
-                if value <= 0 {
+        if let specList = parameters["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+            for entry in specList {
+                if let target = entry["chrom"] as? String, let value = entry["expected"] as? Double, value <= 0 {
                     showError("Expected copy number for \(target) must be greater than 0")
                     return false
                 }
@@ -3525,31 +3584,7 @@ private func setupConstraints(in contentView: NSView) {
             }
         }
         
-        // Also validate CNV ratios for backward compatibility
-        if let cnvLoss = parameters["CNV_LOSS_RATIO"] as? Double {
-            if cnvLoss < 0.1 || cnvLoss > 1.0 {
-                showError("Lower deviation target must be between 0.1 and 1.0")
-                return false
-            }
-        }
-        if let cnvGain = parameters["CNV_GAIN_RATIO"] as? Double {
-            if cnvGain < 1.0 || cnvGain > 2.0 {
-                showError("Upper deviation target must be between 1.0 and 2.0")
-                return false
-            }
-        }
-        
-        // Also validate old aneuploidy targets format for backward compatibility
-        if let aneuploidyTargets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double] {
-            if let low = aneuploidyTargets["low"], (low < 0.1 || low > 1.0) {
-                showError("CNV Loss Ratio must be between 0.1 and 1.0")
-                return false
-            }
-            if let high = aneuploidyTargets["high"], (high < 1.0 || high > 2.0) {
-                showError("CNV Gain Ratio must be between 1.0 and 2.0")
-                return false
-            }
-        }
+        // Legacy CNV ratio and aneuploidy targets removed
         
         // Enforce 1–4 target limit when fluorophore mixing is disabled
         if let mixing = parameters["ENABLE_FLUOROPHORE_MIXING"] as? Bool, mixing == false {
@@ -3601,11 +3636,13 @@ private func setupConstraints(in contentView: NSView) {
                 mergedParameters[key] = value
                 print("   🔄 Updated parameter: \(key)")
             }
+            // No legacy cleanup: write exactly what the current UI provides
             
             print("   💾 Final parameter count: \(mergedParameters.count)")
             
-            // Save merged parameters as JSON
-            let jsonData = try JSONSerialization.data(withJSONObject: mergedParameters, options: .prettyPrinted)
+            // Save merged parameters as JSON (sanitize to avoid long binary floats)
+            let sanitized = sanitizeForJSON(mergedParameters) as? [String: Any] ?? mergedParameters
+            let jsonData = try JSONSerialization.data(withJSONObject: sanitized, options: .prettyPrinted)
             print("   JSON data size: \(jsonData.count) bytes")
             
             try jsonData.write(to: parametersFile)
@@ -3656,31 +3693,17 @@ defaults = {
         'Chrom4': [3100, 1300],
         'Chrom5': [3500, 900]
     },
-    'EXPECTED_COPY_NUMBERS': {
-        'Chrom1': 0.9716,
-        'Chrom2': 1.0052,
-        'Chrom3': 1.0278,
-        'Chrom4': 0.9912,
-        'Chrom5': 1.0035
-    },
-    'EXPECTED_STANDARD_DEVIATION': {
-        'Chrom1': 0.0312,
-        'Chrom2': 0.0241,
-        'Chrom3': 0.0290,
-        'Chrom4': 0.0242,
-        'Chrom5': 0.0230
-    },
+    'COPY_NUMBER_SPEC': [
+        {'chrom': 'Chrom1', 'expected': 0.9716, 'std_dev': 0.0312},
+        {'chrom': 'Chrom2', 'expected': 1.0052, 'std_dev': 0.0241},
+        {'chrom': 'Chrom3', 'expected': 1.0278, 'std_dev': 0.0290},
+        {'chrom': 'Chrom4', 'expected': 0.9912, 'std_dev': 0.0242},
+        {'chrom': 'Chrom5', 'expected': 1.0035, 'std_dev': 0.0230},
+    ],
     'ENABLE_COPY_NUMBER_ANALYSIS': True,
     'CLASSIFY_CNV_DEVIATIONS': True,
-    'USE_PLOIDY_TERMINOLOGY': False,
     'LOWER_DEVIATION_TARGET': 0.75,
     'UPPER_DEVIATION_TARGET': 1.25,
-    'CNV_LOSS_RATIO': 0.75,
-    'CNV_GAIN_RATIO': 1.25,
-    'ANEUPLOIDY_TARGETS': {
-        'low': 0.75,
-        'high': 1.25
-    },
     'X_AXIS_MIN': 0,
     'X_AXIS_MAX': 3000,
     'Y_AXIS_MIN': 0,
@@ -3688,11 +3711,10 @@ defaults = {
     'X_GRID_INTERVAL': 500,
     'Y_GRID_INTERVAL': 1000,
     'ENABLE_FLUOROPHORE_MIXING': True,
+    'AMPLITUDE_NON_LINEARITY': 1.0,
     'INDIVIDUAL_PLOT_DPI': 300,
     'PLACEHOLDER_PLOT_DPI': 150,
-    'COMPOSITE_FIGURE_SIZE': [16, 11],
-    'INDIVIDUAL_FIGURE_SIZE': [6, 5],
-    'COMPOSITE_PLOT_SIZE': [5, 5]
+    'INDIVIDUAL_FIGURE_SIZE': [6, 5]
 }
 
 print(json.dumps(defaults))
@@ -3767,46 +3789,34 @@ print(json.dumps(defaults))
                             restoredFields += 1
                             print("✅ Restored centroid \(target): \(textField.stringValue)")
                         }
-                    } else if identifier.hasPrefix("EXPECTED_COPY_NUMBERS_") {
-                        let chrom = String(identifier.dropFirst("EXPECTED_COPY_NUMBERS_".count))
-                        if let copyNumbers = parameters["EXPECTED_COPY_NUMBERS"] as? [String: Double],
-                           let value = copyNumbers[chrom] {
-                            textField.stringValue = String(value)
+                    } else if identifier.hasPrefix("COPY_NUMBER_SPEC_") && identifier.hasSuffix("_expected") {
+                        let fullChrom = String(identifier.dropFirst("COPY_NUMBER_SPEC_".count))
+                        let chrom = String(fullChrom.dropLast("_expected".count))
+                        if let list = parameters["COPY_NUMBER_SPEC"] as? [[String: Any]],
+                           let entry = list.first(where: { ($0["chrom"] as? String) == chrom }),
+                           let value = entry["expected"] as? Double {
+                            textField.stringValue = formatParamValue(value)
                             restoredFields += 1
                             print("✅ Restored copy number \(chrom): \(textField.stringValue)")
                         }
-                    } else if identifier.hasPrefix("EXPECTED_STANDARD_DEVIATION_") {
-                        let chrom = String(identifier.dropFirst("EXPECTED_STANDARD_DEVIATION_".count))
-                        if let stdDevs = parameters["EXPECTED_STANDARD_DEVIATION"] as? [String: Double],
-                           let value = stdDevs[chrom] {
-                            textField.stringValue = String(value)
+                    } else if identifier.hasPrefix("COPY_NUMBER_SPEC_") && identifier.hasSuffix("_std_dev") {
+                        let fullChrom = String(identifier.dropFirst("COPY_NUMBER_SPEC_".count))
+                        let chrom = String(fullChrom.dropLast("_std_dev".count))
+                        if let list = parameters["COPY_NUMBER_SPEC"] as? [[String: Any]],
+                           let entry = list.first(where: { ($0["chrom"] as? String) == chrom }),
+                           let value = entry["std_dev"] as? Double {
+                            textField.stringValue = formatParamValue(value)
                             restoredFields += 1
                             print("✅ Restored standard deviation \(chrom): \(textField.stringValue)")
                         }
                     } else if identifier == "LOWER_DEVIATION_TARGET" {
-                        // Check new format first, then fall back to old formats
                         if let value = parameters["LOWER_DEVIATION_TARGET"] {
-                            textField.stringValue = String(describing: value)
-                            restoredFields += 1
-                        } else if let value = parameters["CNV_LOSS_RATIO"] {
-                            textField.stringValue = String(describing: value)
-                            restoredFields += 1
-                        } else if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
-                           let value = targets["low"] {
-                            textField.stringValue = String(value)
+                            textField.stringValue = formatParamValue(value)
                             restoredFields += 1
                         }
                     } else if identifier == "UPPER_DEVIATION_TARGET" {
-                        // Check new format first, then fall back to old formats
                         if let value = parameters["UPPER_DEVIATION_TARGET"] {
-                            textField.stringValue = String(describing: value)
-                            restoredFields += 1
-                        } else if let value = parameters["CNV_GAIN_RATIO"] {
-                            textField.stringValue = String(describing: value)
-                            restoredFields += 1
-                        } else if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
-                           let value = targets["high"] {
-                            textField.stringValue = String(value)
+                            textField.stringValue = formatParamValue(value)
                             restoredFields += 1
                         }
                     } else if identifier == "ENABLE_COPY_NUMBER_ANALYSIS" || identifier == "CLASSIFY_CNV_DEVIATIONS" || identifier == "ENABLE_FLUOROPHORE_MIXING" {
@@ -3820,26 +3830,7 @@ print(json.dumps(defaults))
                                 restoredFields += 1
                             }
                         }
-                    } else if identifier == "CNV_LOSS_RATIO" {
-                        // Check new format first, then fall back to old format
-                        if let value = parameters["CNV_LOSS_RATIO"] {
-                            textField.stringValue = String(describing: value)
-                            restoredFields += 1
-                        } else if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
-                           let value = targets["low"] {
-                            textField.stringValue = String(value)
-                            restoredFields += 1
-                        }
-                    } else if identifier == "CNV_GAIN_RATIO" {
-                        // Check new format first, then fall back to old format
-                        if let value = parameters["CNV_GAIN_RATIO"] {
-                            textField.stringValue = String(describing: value)
-                            restoredFields += 1
-                        } else if let targets = parameters["ANEUPLOIDY_TARGETS"] as? [String: Double],
-                           let value = targets["high"] {
-                            textField.stringValue = String(value)
-                            restoredFields += 1
-                        }
+                    
                     } else if identifier.hasPrefix("TARGET_NAME_") {
                         // Restore default target names to "Target X"
                         let idxStr = String(identifier.dropFirst("TARGET_NAME_".count))
@@ -3931,7 +3922,8 @@ print(json.dumps(defaults))
         let tempFile = "\(tempDir)/ddquint_well_params_\(wellName).json"
         
         do {
-            let jsonData = try JSONSerialization.data(withJSONObject: parameters, options: .prettyPrinted)
+            let sanitized = sanitizeForJSON(parameters) as? [String: Any] ?? parameters
+            let jsonData = try JSONSerialization.data(withJSONObject: sanitized, options: .prettyPrinted)
             try jsonData.write(to: URL(fileURLWithPath: tempFile))
             print("✅ Saved well parameters to: \(tempFile)")
             return tempFile
@@ -4037,6 +4029,55 @@ print(json.dumps(defaults))
     // Exposed for menu action: open a new input folder and start analysis
     @objc func openInputFolder() {
         selectFolderAndAnalyze()
+    }
+    
+    // Exposed for menu action: clear currently analyzed files
+    @objc func clearAnalyzedFiles() {
+        // Cancel any running processing
+        if isProcessing, let process = currentProcess {
+            process.terminate()
+            isProcessing = false
+            currentProcess = nil
+            hideProcessingIndicator()
+            hideCornerSpinner()
+            statusLabel.stringValue = "Processing cancelled"
+        }
+        
+        // Clear all current data
+        wellData.removeAll()
+        filteredWellData.removeAll()
+        wellListView.reloadData()
+        
+        // Clear analysis results and cache
+        analysisResults.removeAll()
+        invalidateCache()
+        
+        // Reset UI state
+        selectedFolderURL = nil
+        selectedWellIndex = -1
+        isAnalysisComplete = false
+        
+        // Clear well parameters
+        wellParametersMap.removeAll()
+        
+        // Reset UI elements
+        statusLabel.stringValue = "No folder selected"
+        editWellButton.isEnabled = false
+        globalParamsButton.isEnabled = false
+        overviewButton.isEnabled = false
+        
+        // Show placeholder image
+        showPlaceholderImage()
+        
+        // Show folder selection prompt again
+        showFolderSelectionPrompt()
+        
+        writeDebugLog("[UI] Analyzed files cleared via menu")
+    }
+    
+    // Exposed for menu action: show help window (same as legend)
+    @objc func showHelp() {
+        showLegend()
     }
 
     @objc private func editWellParameters() {
@@ -4382,15 +4423,15 @@ print(json.dumps(defaults))
     }
     
     private func exportParametersToURL(_ url: URL) -> Bool {
-        // Export current global parameters
+        // Export current global parameters exactly as saved
         let globalParams = loadGlobalParameters()
-        
-        let bundle: [String: Any] = [
+        let rawBundle: [String: Any] = [
             "global_parameters": globalParams,
             "well_parameters": wellParametersMap,
             "export_date": ISO8601DateFormatter().string(from: Date()),
             "source": "ddQuint macOS App"
         ]
+        let bundle = sanitizeForJSON(rawBundle) as? [String: Any] ?? rawBundle
         
         do {
             let data = try JSONSerialization.data(withJSONObject: bundle, options: .prettyPrinted)
@@ -4576,6 +4617,7 @@ private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int,
     let columnSpacing: CGFloat = 120  // Move second column further right
     let chromsPerColumn = 5
     
+    
     // Find the first chromosome field to establish the base layout
     var firstChromY: CGFloat?
     var firstChromX: CGFloat?
@@ -4604,8 +4646,6 @@ private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int,
         print("Warning: Could not establish base position")
         return
     }
-    
-    // Matching parameters section removed; no anchor management needed
 
     // Remove existing Chrom* fields AND any Target labels with index > targetCount
     var toRemove: [NSView] = []
@@ -4708,6 +4748,62 @@ private func updateCentroidsViewForTargetCount(_ view: NSView, targetCount: Int,
     }
 
     
+    // Dynamically add/remove amplitude non-linearity parameter based on fluorophore mixing setting
+    let isMixingEnabled = parameters["ENABLE_FLUOROPHORE_MIXING"] as? Bool ?? true
+    let shouldShowNonLinearity = !isMixingEnabled
+    
+    // Remove existing amplitude parameter if present
+    var amplitudeFieldsToRemove: [NSView] = []
+    for subview in view.subviews {
+        if let textField = subview as? NSTextField {
+            if let identifier = textField.identifier?.rawValue, identifier == "AMPLITUDE_NON_LINEARITY" {
+                amplitudeFieldsToRemove.append(textField)
+            } else if textField.stringValue == "Amplitude Non-linearity:" {
+                amplitudeFieldsToRemove.append(textField)
+            }
+        }
+    }
+    amplitudeFieldsToRemove.forEach { $0.removeFromSuperview() }
+    
+    // Add amplitude parameter if mixing is disabled
+    if shouldShowNonLinearity {
+        // Find chromosome count popup to position relative to it
+        var chromCountY: CGFloat = 0
+        for subview in view.subviews {
+            if let popup = subview as? NSPopUpButton,
+               popup.identifier?.rawValue == "CHROMOSOME_COUNT" {
+                chromCountY = popup.frame.minY
+                break
+            }
+        }
+        
+        let fieldHeight: CGFloat = 24
+        let spacing: CGFloat = 30
+        let yPos = chromCountY - spacing
+        
+        // Create label
+        let nonLinearityLabel = NSTextField(labelWithString: "Amplitude Non-linearity:")
+        nonLinearityLabel.frame = NSRect(x: 40, y: yPos, width: 200, height: fieldHeight)
+        addParameterTooltip(to: nonLinearityLabel, identifier: "AMPLITUDE_NON_LINEARITY")
+        
+        // Create field
+        let nonLinearityField = NSTextField()
+        nonLinearityField.identifier = NSUserInterfaceItemIdentifier("AMPLITUDE_NON_LINEARITY")
+        addParameterTooltip(to: nonLinearityField, identifier: "AMPLITUDE_NON_LINEARITY")
+        if let paramValue = parameters["AMPLITUDE_NON_LINEARITY"] {
+            nonLinearityField.stringValue = formatParamValue(paramValue)
+        } else {
+            nonLinearityField.stringValue = "1.0"
+        }
+        nonLinearityField.frame = NSRect(x: 250, y: yPos, width: 100, height: fieldHeight)
+        nonLinearityField.isEditable = true
+        nonLinearityField.isSelectable = true
+        nonLinearityField.isBordered = true
+        nonLinearityField.bezelStyle = .roundedBezel
+        
+        view.addSubview(nonLinearityLabel)
+        view.addSubview(nonLinearityField)
+    }
 
     view.needsDisplay = true
 }
@@ -4729,10 +4825,10 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
     for s in view.subviews {
         if let tf = s as? NSTextField,
            let id = tf.identifier?.rawValue {
-            if id == "EXPECTED_COPY_NUMBERS_Chrom1" {
+            if id == "COPY_NUMBER_SPEC_Chrom1_expected" {
                 baseCnY = tf.frame.minY
                 baseCnX = tf.frame.minX
-            } else if id == "EXPECTED_STANDARD_DEVIATION_Chrom1" {
+            } else if id == "COPY_NUMBER_SPEC_Chrom1_std_dev" {
                 baseSdX = tf.frame.minX
             }
         }
@@ -4748,7 +4844,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
     for s in view.subviews {
         guard let tf = s as? NSTextField else { continue }
         if let id = tf.identifier?.rawValue {
-            if id.hasPrefix("EXPECTED_COPY_NUMBERS_Chrom") || id.hasPrefix("EXPECTED_STANDARD_DEVIATION_Chrom") {
+            if id.hasPrefix("COPY_NUMBER_SPEC_Chrom") {
                 toRemove.append(tf)
             }
         } else {
@@ -4769,8 +4865,16 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
     
     // Load saved values - use passed parameters if available, otherwise extract from current window
     let currentParameters = !parameters.isEmpty ? parameters : { if let window = currentWellWindow ?? currentGlobalWindow { return extractParametersFromWindow(window, isGlobal: currentWellWindow == nil) } else { return loadGlobalParameters() } }()
-    let savedCNs = (currentParameters["EXPECTED_COPY_NUMBERS"] as? [String: Double]) ?? [:]
-    let savedSDs = (currentParameters["EXPECTED_STANDARD_DEVIATION"] as? [String: Double]) ?? [:]
+    var savedCNs: [String: Double] = [:]
+    var savedSDs: [String: Double] = [:]
+    if let specList = currentParameters["COPY_NUMBER_SPEC"] as? [[String: Any]] {
+        for entry in specList {
+            if let chrom = entry["chrom"] as? String {
+                if let v = entry["expected"] as? Double { savedCNs[chrom] = v }
+                if let v = entry["std_dev"] as? Double { savedSDs[chrom] = v }
+            }
+        }
+    }
     
     // Calculate total columns needed and positions
     let totalCnColumns = (targetCount + chromsPerColumn - 1) / chromsPerColumn
@@ -4796,7 +4900,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
         // Copy Number field - goes in CN1 or CN2 column
         let cnFieldX = cnColumnIndex == 0 ? cn1X : cn2X
         let cnField = NSTextField()
-        cnField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_COPY_NUMBERS_\(chrom)")
+        cnField.identifier = NSUserInterfaceItemIdentifier("COPY_NUMBER_SPEC_\(chrom)_expected")
         if let v = savedCNs[chrom] { cnField.stringValue = String(v) } else { cnField.stringValue = "" }
         cnField.isEditable = true
         cnField.isBordered = true
@@ -4808,7 +4912,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
         // Standard Deviation field - goes in SD1 or SD2 column
         let sdFieldX = cnColumnIndex == 0 ? sd1X : sd2X
         let sdField = NSTextField()
-        sdField.identifier = NSUserInterfaceItemIdentifier("EXPECTED_STANDARD_DEVIATION_\(chrom)")
+        sdField.identifier = NSUserInterfaceItemIdentifier("COPY_NUMBER_SPEC_\(chrom)_std_dev")
         if let v = savedSDs[chrom] { sdField.stringValue = String(v) } else { sdField.stringValue = "" }
         sdField.isEditable = true
         sdField.isBordered = true
@@ -5330,7 +5434,6 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
         // Clear ALL caches to force complete re-analysis
         // NOTE: We keep wellParametersMap intact to preserve well-specific parameter customizations
         invalidateCache()
-        compositeImagePath = nil
         
         // Clear existing data and restart analysis
         wellData.removeAll()
@@ -5726,7 +5829,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
                     applyFilters()
                     // Reload specific row if still visible
                     if let filteredIdx = filteredWellData.firstIndex(where: { $0.well == wellName }) {
-                        let tableRow = (compositeImagePath != nil) ? filteredIdx + 1 : filteredIdx
+                        let tableRow = filteredIdx
                         wellListView.reloadData(forRowIndexes: IndexSet(integer: tableRow), columnIndexes: IndexSet(integer: 0))
                     }
                 }
@@ -6115,7 +6218,7 @@ private func updateCopyNumberViewForTargetCount(_ view: NSView, targetCount: Int
                     # Import modules
                     from ddquint.core import process_directory
                     from ddquint.utils import get_sample_names
-                    from ddquint.visualization import create_well_plot, create_composite_image
+                    # No visualization imports needed; we copy pre-generated PNGs
                     import os
                     
                     # Simply copy existing plots from temp directory (no need to regenerate)
@@ -6342,7 +6445,7 @@ extension InteractiveMainWindowController {
         // Restore selection if the previously selected well is still present
         if let id = selectedWellId,
            let filteredIdx = filteredWellData.firstIndex(where: { $0.well == id }) {
-            let tableRow = (compositeImagePath != nil) ? filteredIdx + 1 : filteredIdx
+            let tableRow = filteredIdx
             wellListView.selectRowIndexes(IndexSet(integer: tableRow), byExtendingSelection: false)
         } else {
             // If selection no longer valid, clear selection and placeholder
@@ -6868,7 +6971,7 @@ extension InteractiveMainWindowController {
         // Find the well index in wellData
         if let wellIndex = wellData.firstIndex(where: { $0.well == wellName }) {
             // Select the well in the table view
-            let tableRow = wellIndex + (compositeImagePath != nil ? 1 : 0) // Account for composite image row
+            let tableRow = wellIndex
             wellListView.selectRowIndexes(IndexSet(integer: tableRow), byExtendingSelection: false)
             
             // This will trigger loadPlotForSelectedWell() which will exit overview mode

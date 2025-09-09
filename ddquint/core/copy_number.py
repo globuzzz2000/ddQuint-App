@@ -283,34 +283,10 @@ def detect_aneuploidies(copy_numbers):
     """
     config = Config.get_instance()
 
-    # Instance-aware access with safe fallback if helper methods are missing
-    if hasattr(Config, 'get_expected_copy_numbers') and callable(Config.get_expected_copy_numbers):
-        exp_map = Config.get_expected_copy_numbers()
-    else:
-        exp_map = getattr(config, 'EXPECTED_COPY_NUMBERS', getattr(Config, 'EXPECTED_COPY_NUMBERS', {})) or {}
-
-    # Use new deviation target methods with fallback to legacy methods
-    try:
-        if hasattr(Config, 'get_lower_deviation_target') and callable(Config.get_lower_deviation_target):
-            low_mult = float(Config.get_lower_deviation_target())
-        elif hasattr(Config, 'get_cnv_loss_ratio') and callable(Config.get_cnv_loss_ratio):
-            low_mult = float(Config.get_cnv_loss_ratio())
-        else:
-            low_mult = float(getattr(config, 'LOWER_DEVIATION_TARGET', 
-                                   getattr(config, 'CNV_LOSS_RATIO', 0.75)))
-    except Exception:
-        low_mult = 0.75
-    
-    try:
-        if hasattr(Config, 'get_upper_deviation_target') and callable(Config.get_upper_deviation_target):
-            high_mult = float(Config.get_upper_deviation_target())
-        elif hasattr(Config, 'get_cnv_gain_ratio') and callable(Config.get_cnv_gain_ratio):
-            high_mult = float(Config.get_cnv_gain_ratio())
-        else:
-            high_mult = float(getattr(config, 'UPPER_DEVIATION_TARGET',
-                                    getattr(config, 'CNV_GAIN_RATIO', 1.25)))
-    except Exception:
-        high_mult = 1.25
+    # Instance-aware access, no legacy fallbacks
+    exp_map = Config.get_expected_copy_numbers()
+    low_mult = float(Config.get_lower_deviation_target())
+    high_mult = float(Config.get_upper_deviation_target())
 
     abnormal_chromosomes = {}
 
@@ -437,5 +413,4 @@ def calculate_statistics(results):
     logger.debug(f"Overall statistics: abnormal={abnormal_count}/{total_samples}, buffer_zone={buffer_zone_count}/{total_samples}")
     
     return stats
-
 

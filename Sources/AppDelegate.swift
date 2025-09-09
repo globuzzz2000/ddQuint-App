@@ -87,7 +87,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // App menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "About ddQuint", action: nil, keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "About ddQuint", action: #selector(showAbout), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(NSMenuItem(title: "Hide ddQuint", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
         let hideOthersItem = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -106,7 +106,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let openFolderItem = NSMenuItem(title: "Open Folder...", action: #selector(openFolder), keyEquivalent: "o")
         fileMenu.addItem(openFolderItem)
         fileMenu.addItem(NSMenuItem.separator())
-        fileMenu.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        fileMenu.addItem(NSMenuItem(title: "Close", action: #selector(clearAnalyzedFiles), keyEquivalent: "w"))
         fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
         
@@ -201,5 +201,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc private func exportPlotsFromMenu() {
         mainWindowController?.exportPlotsFromMenu()
+    }
+    
+    @objc private func clearAnalyzedFiles() {
+        mainWindowController?.clearAnalyzedFiles()
+    }
+    
+    @objc private func showAbout() {
+        mainWindowController?.showHelp()
     }
 }
