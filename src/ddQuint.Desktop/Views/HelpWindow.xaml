@@ -1,0 +1,212 @@
+<Window x:Class="ddQuint.Desktop.Views.HelpWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Help - ddQuint"
+        Height="600" Width="700"
+        MinHeight="500" MinWidth="600"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource WindowBackgroundBrush}">
+    
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{StaticResource SidebarBackgroundBrush}" 
+                BorderBrush="{StaticResource BorderBrush}" 
+                BorderThickness="0,0,0,1"
+                Height="50">
+            <TextBlock Text="Help" 
+                       FontSize="16" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextBrush}"
+                       VerticalAlignment="Center"
+                       Margin="20,0"/>
+        </Border>
+        
+        <!-- Content -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" 
+                      Padding="20" Background="{StaticResource ContentBackgroundBrush}">
+            <ScrollViewer.Resources>
+                <Style x:Key="{x:Type ScrollBar}" TargetType="{x:Type ScrollBar}">
+                    <Setter Property="Width" Value="8"/>
+                    <Setter Property="Background" Value="#2B2B2B"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="{x:Type ScrollBar}">
+                                <Grid>
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="4"/>
+                                    <Track Name="PART_Track" IsDirectionReversed="true">
+                                        <Track.Thumb>
+                                            <Thumb>
+                                                <Thumb.Template>
+                                                    <ControlTemplate TargetType="{x:Type Thumb}">
+                                                        <Border Background="#555555" CornerRadius="4" Margin="1"/>
+                                                    </ControlTemplate>
+                                                </Thumb.Template>
+                                            </Thumb>
+                                        </Track.Thumb>
+                                    </Track>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </ScrollViewer.Resources>
+            <StackPanel>
+                <!-- Welcome -->
+                <TextBlock Foreground="{StaticResource TextBrush}" FontSize="13" 
+                           TextWrapping="Wrap" Margin="0,0,0,20">
+                    <Run Text="Welcome to " />
+                    <Run Text="ddQuint" FontWeight="Bold" />
+                    <Run Text=", an application for analyzing multiplex ddPCR data." />
+                </TextBlock>
+                
+                <!-- Quick Start -->
+                <TextBlock Text="Quick Start" FontSize="15" FontWeight="Bold" 
+                           Foreground="{StaticResource TextBrush}" Margin="0,20,0,10"/>
+                
+                <TextBlock Foreground="{StaticResource TextBrush}" FontSize="13" 
+                           TextWrapping="Wrap" Margin="0,0,0,20">
+                    <Run Text="1. " FontWeight="Bold" />
+                    <Run Text="Select Input Folder" FontWeight="Bold" />
+                    <Run Text=" → Choose the folder containing QX Manager " />
+                    <Run Text="Amplitude CSVs" FontWeight="Bold" />
+                    <Run Text="." />
+                    <LineBreak />
+                    <Run Text="2. " FontWeight="Bold" />
+                    <Run Text="(Optional) " FontStyle="Italic" />
+                    <Run Text="Load Template" FontWeight="Bold" />
+                    <Run Text=" → Use a QX Manager template (.csv) to auto-assign sample names." />
+                    <LineBreak />
+                    <Run Text="3. " FontWeight="Bold" />
+                    <Run Text="Set Parameters" FontWeight="Bold" />
+                    <Run Text=" → Open " />
+                    <Run Text="Global Parameters" FontWeight="Bold" />
+                    <Run Text=" to adjust clustering and classification settings." />
+                    <LineBreak />
+                    <Run Text="4. " FontWeight="Bold" />
+                    <Run Text="Analyze" FontWeight="Bold" />
+                    <Run Text=" → The files are then automatically re-analyzed based on updated parameters." />
+                    <LineBreak />
+                    <Run Text="5. " FontWeight="Bold" />
+                    <Run Text="Export" FontWeight="Bold" />
+                    <Run Text=" → Save Excel reports, plots, and parameter files." />
+                </TextBlock>
+                
+                <!-- Indicators -->
+                <TextBlock Text="Indicators" FontSize="15" FontWeight="Bold" 
+                           Foreground="{StaticResource TextBrush}" Margin="0,20,0,10"/>
+                
+                <TextBlock Foreground="{StaticResource TextBrush}" FontSize="13" 
+                           TextWrapping="Wrap" Margin="0,0,0,20">
+                    <Run Text="Each well is marked with an indicator:" />
+                    <LineBreak />
+                    <Run Text="• White circle: Euploid (normal copy number)" />
+                    <LineBreak />
+                    <Run Text="• Grey circle: Buffer Zone (uncertain or intermediate)" />
+                    <LineBreak />
+                    <Run Text="• Purple circle: Aneuploid (gain or loss detected)" />
+                    <LineBreak />
+                    <Run Text="• Red circle: Warning (e.g., low droplets or clustering issue)" />
+                    <LineBreak />
+                    <Run Text="• Square shape: Edited well (custom parameters applied)" />
+                    <LineBreak />
+                    <Run Text="Use the filter button to hide buffer zone or warning samples." />
+                </TextBlock>
+                
+                <!-- Well-Specific Parameter Editing -->
+                <TextBlock Text="Well-Specific Parameter Editing" FontSize="15" FontWeight="Bold" 
+                           Foreground="{StaticResource TextBrush}" Margin="0,20,0,10"/>
+                
+                <TextBlock Foreground="{StaticResource TextBrush}" FontSize="13" 
+                           TextWrapping="Wrap" Margin="0,0,0,20">
+                    <Run Text="• Right-click (or use the context menu) on a well plot and choose " />
+                    <Run Text="Edit This Well" FontWeight="Bold" />
+                    <Run Text="." />
+                    <LineBreak />
+                    <Run Text="• A parameter editor will open with the same settings as Global Parameters, but applied only to that well." />
+                    <LineBreak />
+                    <Run Text="• After saving, only that well is re-analyzed and updated." />
+                </TextBlock>
+                
+                <!-- Export -->
+                <TextBlock Text="Export" FontSize="15" FontWeight="Bold" 
+                           Foreground="{StaticResource TextBrush}" Margin="0,20,0,10"/>
+                
+                <TextBlock Foreground="{StaticResource TextBrush}" FontSize="13" 
+                           TextWrapping="Wrap" Margin="0,0,0,20">
+                    <Run Text="• Export everything through the main menu button or individually through the menu bar." />
+                    <LineBreak />
+                    <Run Text="• " />
+                    <Run Text="Excel report" FontWeight="Bold" />
+                    <Run Text=": Copy numbers, classifications, and metadata." />
+                    <LineBreak />
+                    <Run Text="• " />
+                    <Run Text="Plots" FontWeight="Bold" />
+                    <Run Text=": Individual well plots in /Graphs/ directory." />
+                    <LineBreak />
+                    <Run Text="• " />
+                    <Run Text="Parameter files" FontWeight="Bold" />
+                    <Run Text=": Save/load your analysis settings for reproducibility." />
+                </TextBlock>
+                
+                <!-- Troubleshooting -->
+                <TextBlock Text="Troubleshooting" FontSize="15" FontWeight="Bold" 
+                           Foreground="{StaticResource TextBrush}" Margin="0,20,0,10"/>
+                
+                <TextBlock Foreground="{StaticResource TextBrush}" FontSize="13" 
+                           TextWrapping="Wrap" Margin="0,0,0,20">
+                    <Run Text="• " />
+                    <Run Text="No CSVs found" FontWeight="Bold" />
+                    <Run Text=" → Confirm the input files are QX Manager " />
+                    <Run Text="Amplitude" FontStyle="Italic" />
+                    <Run Text=" exports, that were not renamed." />
+                    <LineBreak />
+                    <Run Text="• " />
+                    <Run Text="Sample names missing" FontWeight="Bold" />
+                    <Run Text=" → Provide a QX Manager template." />
+                    <LineBreak />
+                    <Run Text="• " />
+                    <Run Text="Poor clustering" FontWeight="Bold" />
+                    <Run Text=" → Adjust HDBSCAN parameters or minimum droplet thresholds." />
+                    <LineBreak />
+                    <Run Text="• " />
+                    <Run Text="Warnings" FontWeight="Bold" />
+                    <Run Text=" → Usually low droplet counts; check run quality." />
+                </TextBlock>
+                
+                <!-- QX Manager Template Creation -->
+                <TextBlock Text="QX Manager Template Creation" FontSize="15" FontWeight="Bold" 
+                           Foreground="{StaticResource TextBrush}" Margin="0,20,0,10"/>
+                
+                <TextBlock Foreground="{StaticResource TextBrush}" FontSize="13" 
+                           TextWrapping="Wrap" Margin="0,0,0,20">
+                    <Run Text="The app can generate " />
+                    <Run Text="QX Manager-compatible template files" FontWeight="Bold" />
+                    <Run Text=":" />
+                    <LineBreak />
+                    <Run Text="• Create a template in-app and save it as " />
+                    <Run Text=".csv" FontWeight="Bold" />
+                    <Run Text="." />
+                    <LineBreak />
+                    <Run Text="• Import this file into QX Manager to pre-fill your experiment setup with sample names." />
+                    <LineBreak />
+                    <Run Text="• Reuse the same file in ddQuint during analysis to auto-assign well names in reports and plots." />
+                </TextBlock>
+                
+                <!-- GitHub Link -->
+                <TextBlock Foreground="{StaticResource TextBrush}" FontSize="13" 
+                           TextWrapping="Wrap" Margin="0,20,0,20">
+                    <Run Text="For advanced details, see the full README on GitHub:" />
+                    <LineBreak />
+                    <Hyperlink NavigateUri="https://github.com/globuzzz2000/ddQuint-App" 
+                               RequestNavigate="Hyperlink_RequestNavigate">
+                        <Run Text="https://github.com/globuzzz2000/ddQuint-App" />
+                    </Hyperlink>
+                </TextBlock>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Window>

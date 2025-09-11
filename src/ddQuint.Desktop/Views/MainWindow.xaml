@@ -1,0 +1,744 @@
+<Window x:Class="ddQuint.Desktop.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase"
+        xmlns:viewmodels="clr-namespace:ddQuint.Desktop.ViewModels"
+        Title="ddQuint" 
+        Height="700" Width="1120"
+        MinHeight="600" MinWidth="900"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource WindowBackgroundBrush}"
+        Loaded="Window_Loaded"
+        Activated="Window_Activated">
+    
+    <!-- Local (window-scoped) Dark ScrollBar Style to avoid app-global overrides -->
+    <Window.Resources>
+        <!-- Dark scrollbar styling: custom template without arrows, correct bindings to preserve behavior -->
+        <Style x:Key="DarkScrollBarStyle" TargetType="{x:Type ScrollBar}">
+            <Setter Property="Background" Value="#2B2B2B"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ScrollBar}">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="4"/>
+                            <Track x:Name="PART_Track"
+                                   Orientation="{TemplateBinding Orientation}"
+                                   Minimum="{TemplateBinding Minimum}"
+                                   Maximum="{TemplateBinding Maximum}"
+                                   Value="{TemplateBinding Value}"
+                                   ViewportSize="{TemplateBinding ViewportSize}">
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="{x:Type Thumb}">
+                                                <Border x:Name="ThumbBorder" Background="#555555" CornerRadius="4" Margin="1"/>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ThumbBorder" Property="Background" Value="#666666"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsDragging" Value="True">
+                                                        <Setter TargetName="ThumbBorder" Property="Background" Value="#777777"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <!-- Match WPF defaults: vertical reversed, horizontal normal -->
+                            <Trigger Property="Orientation" Value="Vertical">
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="True"/>
+                            </Trigger>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <!-- Orientation-aware thickness/margins without constraining the other axis -->
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Vertical">
+                    <Setter Property="Width" Value="8"/>
+                    <Setter Property="Margin" Value="0,0,-5,0"/>
+                </Trigger>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Height" Value="8"/>
+                    <Setter Property="Margin" Value="0,0,0,0"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    
+    <!-- macOS-style Layout -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="255" MinWidth="200"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>  <!-- Bottom toolbar -->
+        </Grid.RowDefinitions>
+        
+        <!-- Left Sidebar -->
+        <Border Grid.Column="0" Grid.Row="0" 
+                Background="{StaticResource SidebarBackgroundBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0">
+            <DockPanel Margin="20,20,20,10">
+                <!-- Top Controls -->
+                <StackPanel DockPanel.Dock="Top">
+                    <!-- Logo/Title Area -->
+                    <Grid Height="28" Margin="0,0,0,8">
+                        <!-- Settings button (leftmost) -->
+                        <Button x:Name="SettingsButton"
+                               HorizontalAlignment="Left"
+                               Style="{StaticResource CircularIconButton}"
+                               ToolTip="Settings" Click="SettingsButton_Click">
+                            <!-- Render the newly provided settings.svg (sliders icon) as Paths -->
+                            <Viewbox Width="16" Height="16">
+                                <Canvas Width="24" Height="24">
+                                    <Path Data="M11.567 9.8895C12.2495 8.90124 12.114 7.5637 11.247 6.7325C10.3679 5.88806 9.02339 5.75928 7.99998 6.4215C7.57983 6.69308 7.25013 7.0837 7.05298 7.5435C6.85867 7.99881 6.80774 8.50252 6.90698 8.9875C7.00665 9.47472 7.25054 9.92071 7.60698 10.2675C7.97021 10.6186 8.42786 10.8563 8.92398 10.9515C9.42353 11.049 9.94062 11.0001 10.413 10.8105C10.8798 10.6237 11.2812 10.3033 11.567 9.8895Z" Stroke="White" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"/>
+                                    <Path Data="M12.433 17.8895C11.7504 16.9012 11.886 15.5637 12.753 14.7325C13.6321 13.8881 14.9766 13.7593 16 14.4215C16.4202 14.6931 16.7498 15.0837 16.947 15.5435C17.1413 15.9988 17.1922 16.5025 17.093 16.9875C16.9933 17.4747 16.7494 17.9207 16.393 18.2675C16.0298 18.6186 15.5721 18.8563 15.076 18.9515C14.5773 19.0481 14.0614 18.9988 13.59 18.8095C13.1222 18.6234 12.7197 18.3034 12.433 17.8895V17.8895Z" Stroke="White" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Fill="Transparent"/>
+                                    <Path Data="M12 7.75049C11.5858 7.75049 11.25 8.08627 11.25 8.50049C11.25 8.9147 11.5858 9.25049 12 9.25049V7.75049ZM19 9.25049C19.4142 9.25049 19.75 8.9147 19.75 8.50049C19.75 8.08627 19.4142 7.75049 19 7.75049V9.25049ZM6.857 9.25049C7.27121 9.25049 7.607 8.9147 7.607 8.50049C7.607 8.08627 7.27121 7.75049 6.857 7.75049V9.25049ZM5 7.75049C4.58579 7.75049 4.25 8.08627 4.25 8.50049C4.25 8.9147 4.58579 9.25049 5 9.25049V7.75049ZM12 17.2505C12.4142 17.2505 12.75 16.9147 12.75 16.5005C12.75 16.0863 12.4142 15.7505 12 15.7505V17.2505ZM5 15.7505C4.58579 15.7505 4.25 16.0863 4.25 16.5005C4.25 16.9147 4.58579 17.2505 5 17.2505V15.7505ZM17.143 15.7505C16.7288 15.7505 16.393 16.0863 16.393 16.5005C16.393 16.9147 16.7288 17.2505 17.143 17.2505V15.7505ZM19 17.2505C19.4142 17.2505 19.75 16.9147 19.75 16.5005C19.75 16.0863 19.4142 15.7505 19 15.7505V17.2505ZM12 9.25049H19V7.75049H12V9.25049ZM6.857 7.75049H5V9.25049H6.857V7.75049ZM12 15.7505H5V17.2505H12V15.7505ZM17.143 17.2505H19V15.7505H17.143V17.2505Z" Fill="White"/>
+                                </Canvas>
+                            </Viewbox>
+                        </Button>
+                        
+                        <!-- Filter button -->
+                        <Button x:Name="FilterButton"
+                               HorizontalAlignment="Left" Margin="30,0,0,0"
+                               Style="{StaticResource CircularIconButton}"
+                               Click="FilterButton_Click"
+                               ToolTip="Filter Options">
+                            <!-- Render provided filter.svg using equivalent lines (scaled to 14px) -->
+                            <Viewbox Width="18" Height="20">
+                                <Canvas Width="21" Height="21">
+                                    <Line X1="4.5" Y1="7.5" X2="16.5" Y2="7.5" Stroke="White" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    <Line X1="6.5" Y1="10.5" X2="14.5" Y2="10.5" Stroke="White" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    <Line X1="8.5" Y1="13.5" X2="12.5" Y2="13.5" Stroke="White" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                </Canvas>
+                            </Viewbox>
+                        </Button>
+                        
+                        <!-- Help button (next to filter) -->
+                        <Button x:Name="HelpButton"
+                               HorizontalAlignment="Left" Margin="62,0,0,0"
+                               Style="{StaticResource CircularIconButton}"
+                               Click="HelpButton_Click"
+                               ToolTip="Help">
+                            <TextBlock Text="?" FontSize="16"/>
+                        </Button>
+                        
+                        <!-- Overview button (right) -->
+                        <Button Content="Overview" 
+                                HorizontalAlignment="Right"
+                                Style="{StaticResource MacOSButton}"
+                               Width="80" Height="20" Margin="0,0,-10,0"
+                                Click="OverviewButton_Click">
+                            <Button.IsEnabled>
+                                <MultiBinding Converter="{StaticResource BooleanAndConverter}">
+                                    <Binding Path="HasResults"/>
+                                    <Binding Path="IsProcessing" Converter="{StaticResource InverseBooleanConverter}"/>
+                                </MultiBinding>
+                            </Button.IsEnabled>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+                
+                <!-- Wells List -->
+                <DockPanel DockPanel.Dock="Bottom">
+                    
+                    <!-- Wells list (use ListBox built-in scrolling for proper mouse wheel behavior) -->
+                    <ListBox x:Name="WellsList"
+                             ItemsSource="{Binding FilteredWells}"
+                            SelectedItem="{Binding SelectedWell}"
+                            SelectionMode="Extended"
+                            SelectionChanged="WellsList_SelectionChanged"
+                            PreviewMouseLeftButtonDown="WellsList_PreviewMouseLeftButtonDown"
+                            PreviewMouseMove="WellsList_PreviewMouseMove"
+                            PreviewMouseLeftButtonUp="WellsList_PreviewMouseLeftButtonUp"
+                            PreviewKeyDown="WellsList_PreviewKeyDown"
+                            BorderThickness="0"
+                            AlternationCount="2"
+                            ScrollViewer.VerticalScrollBarVisibility="Visible"
+                            ScrollViewer.CanContentScroll="True">
+                        <ListBox.Background>
+                            <!-- Alternating background stripes with 1px separators, visible even with no items -->
+                            <VisualBrush TileMode="Tile" ViewportUnits="Absolute" Viewport="0,0,1,50" AlignmentX="Left" AlignmentY="Top">
+                                <VisualBrush.Visual>
+                                    <Grid Width="1" Height="50">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="25"/>
+                                            <RowDefinition Height="25"/>
+                                        </Grid.RowDefinitions>
+                                        <!-- Row 1 -->
+                                        <Border Grid.Row="0" Background="#2E2E2C" BorderBrush="#424241" BorderThickness="0,0,0,1"/>
+                                        <!-- Row 2 -->
+                                        <Border Grid.Row="1" Background="#242422" BorderBrush="#424241" BorderThickness="0,0,0,1"/>
+                                    </Grid>
+                                </VisualBrush.Visual>
+                            </VisualBrush>
+                        </ListBox.Background>
+                        <ListBox.Resources>
+                            <Style TargetType="{x:Type ScrollBar}">
+                                <Setter Property="Width" Value="8"/>
+                                <Setter Property="Margin" Value="0,0,-10,0"/>
+                                <Setter Property="Background" Value="#2B2B2B"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="{x:Type ScrollBar}">
+                                            <Grid>
+                                                <Border Background="{TemplateBinding Background}" CornerRadius="4"/>
+                                                <Track Name="PART_Track" IsDirectionReversed="true" Orientation="{TemplateBinding Orientation}"
+                                                       Minimum="{TemplateBinding Minimum}"
+                                                       Maximum="{TemplateBinding Maximum}"
+                                                       Value="{TemplateBinding Value}"
+                                                       ViewportSize="{TemplateBinding ViewportSize}">
+                                                    <Track.Thumb>
+                                                        <Thumb>
+                                                            <Thumb.Template>
+                                                                <ControlTemplate TargetType="{x:Type Thumb}">
+                                                                    <Border Background="#555555" CornerRadius="4" Margin="1"/>
+                                                                </ControlTemplate>
+                                                            </Thumb.Template>
+                                                        </Thumb>
+                                                    </Track.Thumb>
+                                                </Track>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.Resources>
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="BorderBrush" Value="Transparent"/>
+                                <!-- Exact row height to match stripe tile (25px) -->
+                                <Setter Property="Height" Value="25"/>
+                                <!-- Horizontal padding only so height remains 28px -->
+                                <Setter Property="Padding" Value="8,0"/>
+                                <Setter Property="Margin" Value="0"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border Background="{TemplateBinding Background}" 
+                                                    CornerRadius="0"
+                                                    Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource SelectionBrush}"/>
+                                    </Trigger>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource SelectionBrush}"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                    <Grid Margin="0,2">
+                                        <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="44"/>
+                                        <ColumnDefinition Width="20"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    
+                                    <TextBlock Grid.Column="0" Text="{Binding WellId}" 
+                                              FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                              FontWeight="Bold"
+                                              Foreground="{StaticResource TextBrush}"/>
+                                    <Grid Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                        <!-- Default: circle for normal wells -->
+                                        <Ellipse Width="12" Height="12"
+                                                 Fill="{Binding Status, Converter={StaticResource WellStatusToBrushConverter}}"
+                                                 Stroke="Black" StrokeThickness="1.2">
+                                            <Ellipse.Style>
+                                                <Style TargetType="Ellipse">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsEdited}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Ellipse.Style>
+                                        </Ellipse>
+                                        <!-- Edited wells: square indicator -->
+                                        <Rectangle Width="12" Height="12"
+                                                   Fill="{Binding Status, Converter={StaticResource WellStatusToBrushConverter}}"
+                                                   Stroke="Black" StrokeThickness="1.2">
+                                            <Rectangle.Style>
+                                                <Style TargetType="Rectangle">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsEdited}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Rectangle.Style>
+                                        </Rectangle>
+                                    </Grid>
+                                    <TextBlock Grid.Column="2" Text="{Binding SampleName}" 
+                                              FontSize="12" FontWeight="SemiBold" Margin="4,0,0,0" VerticalAlignment="Center"
+                                              TextAlignment="Center"
+                                              HorizontalAlignment="Stretch"
+                                              Foreground="{StaticResource TextBrush}"
+                                              Visibility="{Binding SampleName, Converter={StaticResource StringHasValueToVisibilityConverter}}"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </DockPanel>
+        </Border>
+        
+        
+        <!-- Main Content Area -->
+        <Border Grid.Column="1" Grid.Row="0" 
+                Background="{StaticResource ContentBackgroundBrush}">
+            <Grid>
+                <!-- Full-area drag-drop zone when no analysis - add dark overlay like macOS -->
+                <Border x:Name="DropOverlay"
+                        Visibility="{Binding HasResults, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                        Background="#B21E1E1E" Margin="20,20,20,5"
+                        AllowDrop="True"
+                        MouseLeftButtonDown="FolderSelection_MouseLeftButtonDown"
+                        DragEnter="DropOverlay_DragEnter"
+                        DragOver="DropOverlay_DragOver"
+                        DragLeave="DropOverlay_DragLeave"
+                        Drop="DropOverlay_Drop">
+                    <Grid>
+                        <!-- Dashed outline like macOS prompt -->
+                        <Rectangle Stroke="#FF323232" StrokeThickness="2"
+                                   Margin="12"
+                                   Fill="Transparent">
+                            <Rectangle.StrokeDashArray>
+                                <DoubleCollection>3 2.4</DoubleCollection>
+                            </Rectangle.StrokeDashArray>
+                        </Rectangle>
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <TextBlock Text="Drop folder here or click to select" 
+                                      FontSize="18" FontWeight="SemiBold"
+                                      Foreground="White"
+                                      HorizontalAlignment="Center" Margin="0,0,0,8"/>
+                            <TextBlock Text="Select folder containing ddPCR CSV files" 
+                                      FontSize="14" FontWeight="SemiBold"
+                                      Foreground="#DDFFFFFF"
+                                      HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                
+                <!-- Results content when analysis is done - simplified to match macOS -->
+                <Grid Visibility="{Binding HasResults, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    
+                    <!-- Plot area -->
+                    <Border x:Name="PlotContainer" Grid.Row="0" Background="Transparent" CornerRadius="0" Margin="8" Padding="0" SizeChanged="PlotContainer_SizeChanged">
+                        <Grid>
+                            <!-- Overview grid -->
+                            <ScrollViewer x:Name="OverviewScroller" 
+                                          Visibility="{Binding ShowOverview, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                          HorizontalScrollBarVisibility="Auto" 
+                                          VerticalScrollBarVisibility="Auto"
+                                          CanContentScroll="False"
+                                          PanningMode="Both"
+                                          Background="{StaticResource WindowBackgroundBrush}"
+                                          PreviewMouseWheel="OverviewScroller_PreviewMouseWheel"
+                                          PreviewMouseDown="OverviewScroller_PreviewMouseDown"
+                                          PreviewMouseMove="OverviewScroller_PreviewMouseMove"
+                                          PreviewMouseUp="OverviewScroller_PreviewMouseUp">
+                                <!-- Apply dark scrollbar styling without overriding default template -->
+                                <ScrollViewer.Resources>
+                                    <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource DarkScrollBarStyle}"/>
+                                </ScrollViewer.Resources>
+                                <ScrollViewer.Template>
+                                    <ControlTemplate TargetType="{x:Type ScrollViewer}">
+                                        <Grid Background="{TemplateBinding Background}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="*"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" Grid.Column="0" Grid.Row="0"/>
+                                            <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Column="1" Grid.Row="0" 
+                                                      Value="{TemplateBinding VerticalOffset}" Maximum="{TemplateBinding ScrollableHeight}"
+                                                      ViewportSize="{TemplateBinding ViewportHeight}" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+                                            <ScrollBar x:Name="PART_HorizontalScrollBar" Grid.Column="0" Grid.Row="1" Orientation="Horizontal"
+                                                      Value="{TemplateBinding HorizontalOffset}" Maximum="{TemplateBinding ScrollableWidth}"
+                                                      ViewportSize="{TemplateBinding ViewportWidth}" Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"/>
+                                            <Rectangle x:Name="Corner" Grid.Column="1" Grid.Row="1" Fill="#323232"/>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </ScrollViewer.Template>
+                                <!-- Invisible container that expands to enable scrolling at higher zoom levels -->
+                                <Grid Width="{Binding ScrollableWidth}" Height="{Binding ScrollableHeight}" Background="Transparent">
+                                    <Border x:Name="OverviewZoomBorder" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                        <Border.RenderTransform>
+                                            <ScaleTransform x:Name="OverviewScaleTransform" ScaleX="{Binding GridZoom}" ScaleY="{Binding GridZoom}"/>
+                                        </Border.RenderTransform>
+                                    <Canvas x:Name="OverviewCanvas" 
+                                            Width="{Binding DataContext.OverviewGridWidth, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                            Height="{Binding DataContext.OverviewGridHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Background="{StaticResource WindowBackgroundBrush}">
+                                    <ItemsControl x:Name="OverviewItems" 
+                                                  ItemsSource="{Binding OverviewWells}"
+                                                  PreviewMouseLeftButtonUp="OverviewItems_PreviewMouseLeftButtonUp">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <Canvas />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemContainerStyle>
+                                            <Style TargetType="ContentPresenter">
+                                                <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                            </Style>
+                                        </ItemsControl.ItemContainerStyle>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{StaticResource WindowBackgroundBrush}" 
+                                                        Width="150" Height="130.5"
+                                                        MouseLeftButtonUp="OverviewItem_MouseLeftButtonUp">
+                                                    <StackPanel>
+                                                        <!-- Well label -->
+                                                        <TextBlock Text="{Binding WellId}" 
+                                                                   Height="18"
+                                                                   FontWeight="Bold" 
+                                                                   FontSize="11" 
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center"
+                                                                   Foreground="{StaticResource TextBrush}"/>
+                                                        <!-- Thumbnail plot -->
+                                                        <Border Width="148" Height="110.5" 
+                                                                BorderBrush="{StaticResource BorderBrush}" 
+                                                                BorderThickness="0.5"
+                                                                Background="{StaticResource WindowBackgroundBrush}">
+                                                            <Image Source="{Binding ThumbnailImagePath}" 
+                                                                   Stretch="Uniform"
+                                                                   Margin="1"/>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    </Canvas>
+                                    </Border>
+                                </Grid>
+                            </ScrollViewer>
+
+                            <!-- Multi-well grid when multiple selection (and not in overview mode) -->
+                            <ScrollViewer x:Name="MultiScroller" 
+                                          Visibility="{Binding ShowMultiView, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                          HorizontalScrollBarVisibility="Auto" 
+                                          VerticalScrollBarVisibility="Auto"
+                                          CanContentScroll="False"
+                                          PanningMode="Both"
+                                          Background="{StaticResource WindowBackgroundBrush}"
+                                          PreviewMouseWheel="MultiScroller_PreviewMouseWheel">
+                                <!-- Apply dark scrollbar styling without overriding default template -->
+                                <ScrollViewer.Resources>
+                                    <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource DarkScrollBarStyle}"/>
+                                </ScrollViewer.Resources>
+                                <ScrollViewer.Template>
+                                    <ControlTemplate TargetType="{x:Type ScrollViewer}">
+                                        <Grid Background="{TemplateBinding Background}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="*"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" Grid.Column="0" Grid.Row="0"/>
+                                            <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Column="1" Grid.Row="0" 
+                                                      Value="{TemplateBinding VerticalOffset}" Maximum="{TemplateBinding ScrollableHeight}"
+                                                      ViewportSize="{TemplateBinding ViewportHeight}" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+                                            <ScrollBar x:Name="PART_HorizontalScrollBar" Grid.Column="0" Grid.Row="1" Orientation="Horizontal"
+                                                      Value="{TemplateBinding HorizontalOffset}" Maximum="{TemplateBinding ScrollableWidth}"
+                                                      ViewportSize="{TemplateBinding ViewportWidth}" Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"/>
+                                            <Rectangle x:Name="Corner" Grid.Column="1" Grid.Row="1" Fill="#323232"/>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </ScrollViewer.Template>
+                                <!-- Multi-well content container (unified with overview) -->
+                                <Grid Width="{Binding ScrollableWidth}" Height="{Binding ScrollableHeight}" Background="Transparent">
+                                    <Border x:Name="MultiZoomBorder" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                        <Border.RenderTransform>
+                                            <ScaleTransform x:Name="MultiScaleTransform" ScaleX="{Binding GridZoom}" ScaleY="{Binding GridZoom}"/>
+                                        </Border.RenderTransform>
+                                        <Canvas x:Name="MultiCanvas" 
+                                                Width="{Binding DataContext.CurrentGridWidth, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                Height="{Binding DataContext.CurrentGridHeight, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Background="{StaticResource WindowBackgroundBrush}">
+                                            <ItemsControl x:Name="MultiItems" 
+                                                          ItemsSource="{Binding OverviewWells}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <Canvas/>
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemContainerStyle>
+                                                    <Style TargetType="ContentPresenter">
+                                                        <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                                        <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                                    </Style>
+                                                </ItemsControl.ItemContainerStyle>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border Background="{StaticResource WindowBackgroundBrush}" 
+                                                                Width="150" Height="130.5"
+                                                                MouseLeftButtonUp="MultiItem_MouseLeftButtonUp"
+                                                                PreviewMouseLeftButtonUp="MultiItem_MouseLeftButtonUp">
+                                                            <StackPanel>
+                                                                <!-- Well label (matching overview exactly) -->
+                                                                <TextBlock Text="{Binding WellId}" 
+                                                                           Height="18"
+                                                                           FontWeight="Bold" 
+                                                                           FontSize="11" 
+                                                                           HorizontalAlignment="Center"
+                                                                           VerticalAlignment="Center"
+                                                                           Foreground="{StaticResource TextBrush}"/>
+                                                                <!-- Thumbnail plot (matching overview exactly) -->
+                                                                <Border Width="148" Height="110.5" 
+                                                                        BorderBrush="{StaticResource BorderBrush}" 
+                                                                        BorderThickness="0.5"
+                                                                        Background="{StaticResource WindowBackgroundBrush}">
+                                                                    <Image Source="{Binding ThumbnailImagePath}" 
+                                                                           Stretch="Uniform"
+                                                                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                                </Border>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </Canvas>
+                                    </Border>
+                                </Grid>
+                            </ScrollViewer>
+
+                            <!-- Single well plot image (shows when not overview and not multi-select) -->
+                            <ScrollViewer x:Name="SinglePlotScroller"
+                                          HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"
+                                          PreviewMouseWheel="SinglePlotScroller_PreviewMouseWheel"
+                                          PreviewMouseDown="SinglePlotScroller_PreviewMouseDown"
+                                          PreviewMouseMove="SinglePlotScroller_PreviewMouseMove"
+                                          PreviewMouseUp="SinglePlotScroller_PreviewMouseUp">
+                                <ScrollViewer.Resources>
+                                    <Style TargetType="{x:Type ScrollBar}">
+                                        <Setter Property="Width" Value="8"/>
+                                        <Setter Property="Margin" Value="0,0,-5,0"/>
+                                        <Setter Property="Background" Value="#2B2B2B"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="{x:Type ScrollBar}">
+                                                    <Grid>
+                                                        <Border Background="{TemplateBinding Background}" CornerRadius="4"/>
+                                                        <Track Name="PART_Track" IsDirectionReversed="true" Orientation="{TemplateBinding Orientation}"
+                                                               Minimum="{TemplateBinding Minimum}"
+                                                               Maximum="{TemplateBinding Maximum}"
+                                                               Value="{TemplateBinding Value}"
+                                                               ViewportSize="{TemplateBinding ViewportSize}">
+                                                            <Track.Thumb>
+                                                                <Thumb>
+                                                                    <Thumb.Template>
+                                                                        <ControlTemplate TargetType="{x:Type Thumb}">
+                                                                            <Border Background="#555555" CornerRadius="4" Margin="1"/>
+                                                                        </ControlTemplate>
+                                                                    </Thumb.Template>
+                                                                </Thumb>
+                                                            </Track.Thumb>
+                                                        </Track>
+                                                    </Grid>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ScrollViewer.Resources>
+                                <ScrollViewer.Style>
+                                    <Style TargetType="ScrollViewer">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ShowOverview}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsMultiSelection}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ScrollViewer.Style>
+                                <Image Source="{Binding SelectedWell.PlotImagePath}" 
+                                       RenderOptions.BitmapScalingMode="HighQuality"
+                                       Stretch="Uniform"
+                                       Margin="0"/>
+                            </ScrollViewer>
+                            
+                            
+                            <!-- Placeholder when no plot available -->
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding ShowOverview}" Value="False"/>
+                                                    <Condition Binding="{Binding IsMultiSelection}" Value="False"/>
+                                                    <Condition Binding="{Binding SelectedWell.PlotImagePath, Converter={StaticResource InverseStringHasValueToVisibilityConverter}}" Value="Visible"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock FontSize="14" 
+                                          Foreground="{StaticResource SecondaryTextBrush}"
+                                          HorizontalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="Select a well to view plot"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasSelectedWell}" Value="True">
+                                                    <Setter Property="Text" Value="Plot not available for this well"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    
+                    <!-- No parameter buttons here anymore -->
+                    <Grid Grid.Row="1"/>
+                </Grid>
+            </Grid>
+        </Border>
+        
+        <!-- Bottom Toolbar -->
+        <Border Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="1"
+                Background="{StaticResource SidebarBackgroundBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0"
+                Height="42">
+            <Grid Margin="16,6" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="255"/>  <!-- Match sidebar width -->
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                
+                <!-- Left: Status with spinner -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- Spinning progress indicator -->
+                    <Border x:Name="ProcessingSpinner" 
+                           Width="16" Height="16" 
+                           Margin="0,0,8,0"
+                           Background="Transparent"
+                           Visibility="{Binding IsProcessing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid>
+                            <!-- Subtle macOS-style spinner using theme brushes -->
+                            <Ellipse Width="16" Height="16" Fill="Transparent" Stroke="{StaticResource AccentBrush}" StrokeThickness="1" Opacity="0.4"/>
+                            <Ellipse Width="10" Height="10" Fill="{StaticResource SidebarBackgroundBrush}"/>
+                            <Path x:Name="SpinnerPath"
+                                  Data="M8,2 A6,6 0 0,1 14,8"
+                                  Stroke="{StaticResource TextBrush}"
+                                  Opacity="0.9"
+                                  StrokeThickness="2"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  RenderTransformOrigin="0.5,0.5">
+                                <Path.RenderTransform>
+                                    <RotateTransform x:Name="SpinnerRotation" Angle="0"/>
+                                </Path.RenderTransform>
+                                <Path.Triggers>
+                                    <EventTrigger RoutedEvent="Path.Loaded">
+                                        <BeginStoryboard>
+                                            <Storyboard RepeatBehavior="Forever">
+                                                <DoubleAnimation Storyboard.TargetName="SpinnerRotation"
+                                                               Storyboard.TargetProperty="Angle"
+                                                               From="0" To="360"
+                                                               Duration="0:0:1.2"/>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </EventTrigger>
+                                </Path.Triggers>
+                            </Path>
+                        </Grid>
+                    </Border>
+                    
+                    <!-- Status message -->
+                    <TextBlock Text="{Binding StatusMessage}" 
+                              VerticalAlignment="Center"
+                              Foreground="{StaticResource SecondaryTextBrush}"
+                              FontSize="11"/>
+                </StackPanel>
+                
+                <!-- Center: Parameter buttons aligned with plot area -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" 
+                           HorizontalAlignment="Left" 
+                           VerticalAlignment="Center"
+                           Margin="-10,0,0,0">
+                    <Button Click="EditWellButton_Click"
+                           Style="{StaticResource MacOSButton}"
+                           Width="120"
+                           Margin="0,0,6,0">
+                        <Button.IsEnabled>
+                            <Binding Path="CanEditSelection"/>
+                        </Button.IsEnabled>
+                        <TextBlock Text="{Binding EditButtonText}"/>
+                    </Button>
+                    <Button Click="GlobalParametersButton_Click"
+                           Style="{StaticResource MacOSButton}"
+                           Width="140">
+                        <TextBlock Text="Global Parameters"/>
+                        <Button.IsEnabled>
+                            <MultiBinding Converter="{StaticResource BooleanAndConverter}">
+                                <Binding Path="HasResults"/>
+                                <Binding Path="IsProcessing" Converter="{StaticResource InverseBooleanConverter}"/>
+                            </MultiBinding>
+                        </Button.IsEnabled>
+                    </Button>
+                </StackPanel>
+                
+                <!-- Right: Export button (combined export) -->
+                <Button Grid.Column="2"
+                       Command="{Binding ExportAllCommand}"
+                       Style="{StaticResource MacOSButton}"
+                       Width="100"
+                       HorizontalAlignment="Right">
+                    <TextBlock Text="Export"/>
+                    <Button.IsEnabled>
+                        <MultiBinding Converter="{StaticResource BooleanAndConverter}">
+                            <Binding Path="HasResults"/>
+                            <Binding Path="IsProcessing" Converter="{StaticResource InverseBooleanConverter}"/>
+                        </MultiBinding>
+                    </Button.IsEnabled>
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

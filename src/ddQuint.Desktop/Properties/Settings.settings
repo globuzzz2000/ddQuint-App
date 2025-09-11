@@ -1,0 +1,57 @@
+<?xml version='1.0' encoding='utf-8'?>
+<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)" GeneratedClassNamespace="ddQuint.Desktop.Properties" GeneratedClassName="Settings">
+  <Profiles />
+  <Settings>
+    <Setting Name="TemplateDescriptionCount" Type="System.Int32" Scope="User">
+      <Value Profile="(Default)">4</Value>
+    </Setting>
+    <Setting Name="LastDir_InputFolder" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="LastDir_TemplateFile" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="LastDir_ExportAll" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="LastDir_ExcelExport" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="LastDir_PlotsExport" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="LastDir_ParametersExport" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="LastDir_ParametersImport" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="LastDir_TemplateCreator_Input" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="LastDir_TemplateCreator_Export" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="TemplateCreator_Supermix" Type="System.String" Scope="User">
+      <Value Profile="(Default)">ddPCR Supermix for Probes (No dUTP)</Value>
+    </Setting>
+    <Setting Name="TemplateCreator_Assay" Type="System.String" Scope="User">
+      <Value Profile="(Default)">Probe Mix Triplex</Value>
+    </Setting>
+    <Setting Name="TemplateCreator_Experiment" Type="System.String" Scope="User">
+      <Value Profile="(Default)">Copy Number Variation (CNV)</Value>
+    </Setting>
+    <Setting Name="TemplateCreator_Target1" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="TemplateCreator_Target2" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="TemplateCreator_Target3" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="TemplateCreator_Target4" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+  </Settings>
+</SettingsFile>

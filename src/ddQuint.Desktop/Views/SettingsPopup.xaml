@@ -1,0 +1,107 @@
+<UserControl x:Class="ddQuint.Desktop.Views.SettingsPopup"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             mc:Ignorable="d"
+             d:DesignWidth="300" d:DesignHeight="220">
+    <Border Background="{StaticResource SidebarBackgroundBrush}" CornerRadius="6" Padding="8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" MinWidth="220">
+        <Grid>
+            <Grid.Resources>
+                <!-- Default for submenus (pop-outs) -->
+                <Style TargetType="Menu">
+                    <Setter Property="Background" Value="{StaticResource SettingsPopupBrush}"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Style>
+                <Style TargetType="MenuItem">
+                    <Setter Property="Foreground" Value="White"/>
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="Padding" Value="6,3"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="MenuItem">
+                                <Border x:Name="Border" Background="{TemplateBinding Background}" BorderThickness="0" Padding="{TemplateBinding Padding}" CornerRadius="4">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="Icon"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="Shortcut"/>
+                                            <ColumnDefinition Width="12"/>
+                                        </Grid.ColumnDefinitions>
+                                        
+                                        <ContentPresenter x:Name="Icon" Grid.Column="0" Margin="6,0,6,0" VerticalAlignment="Center" ContentSource="Icon"/>
+                                        <ContentPresenter x:Name="HeaderHost" Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="InputGestureText" Grid.Column="2" Text="{TemplateBinding InputGestureText}" Margin="5,2,2,2" VerticalAlignment="Center"/>
+                                        <Path x:Name="ArrowPath" Grid.Column="3" HorizontalAlignment="Center" VerticalAlignment="Center" Fill="{TemplateBinding Foreground}" Data="M 0 0 L 0 7 L 4 3.5 Z" Visibility="Collapsed"/>
+                                        
+                                        <Popup x:Name="Popup" Placement="Right" IsOpen="{TemplateBinding IsSubmenuOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade" VerticalOffset="-3">
+                                            <Border x:Name="SubmenuBorder" SnapsToDevicePixels="True" Background="{StaticResource SettingsPopupBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="0,4">
+                                                <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                            </Border>
+                                        </Popup>
+                                    </Grid>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="Role" Value="TopLevelHeader">
+                                        <Setter Property="Padding" Value="6,1,6,1"/>
+                                        <Setter TargetName="Popup" Property="Placement" Value="Bottom"/>
+                                        <Setter TargetName="ArrowPath" Property="Visibility" Value="Collapsed"/>
+                                    </Trigger>
+                                    <Trigger Property="Role" Value="TopLevelItem">
+                                        <Setter Property="Padding" Value="6,1,6,1"/>
+                                        <Setter TargetName="ArrowPath" Property="Visibility" Value="Collapsed"/>
+                                    </Trigger>
+                                    <Trigger Property="Role" Value="SubmenuHeader">
+                                        <Setter TargetName="ArrowPath" Property="Visibility" Value="Visible"/>
+                                    </Trigger>
+                                    <Trigger Property="Role" Value="SubmenuItem">
+                                        <Setter TargetName="ArrowPath" Property="Visibility" Value="Collapsed"/>
+                                    </Trigger>
+                                    <Trigger Property="IsHighlighted" Value="True">
+                                        <Setter TargetName="Border" Property="Background" Value="{StaticResource SelectionBrush}"/>
+                                    </Trigger>
+                                    <Trigger Property="IsEnabled" Value="False">
+                                        <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Grid.Resources>
+
+            <!-- Top-level menu uses same background as filter popup -->
+            <Menu Background="{StaticResource SidebarBackgroundBrush}" Foreground="{StaticResource TextBrush}">
+                <!-- File -->
+                <MenuItem Header="File">
+                    <MenuItem Header="Open Folder..." Command="{Binding SelectInputFolderCommand}" Click="OnLeafMenuItemClick"/>
+                    <Separator/>
+                    <MenuItem Header="Close" Click="Close_Click"/>
+                </MenuItem>
+
+                <!-- Template -->
+                <MenuItem Header="Template">
+                    <MenuItem Header="Select Template File..." Command="{Binding SelectTemplateFileCommand}" Click="OnLeafMenuItemClick"/>
+                    <MenuItem Header="Sample Description Fields">
+                        <MenuItem Header="Use 1" IsCheckable="True" Click="SetDescCount_Click" Tag="1"/>
+                        <MenuItem Header="Use 2" IsCheckable="True" Click="SetDescCount_Click" Tag="2"/>
+                        <MenuItem Header="Use 3" IsCheckable="True" Click="SetDescCount_Click" Tag="3"/>
+                        <MenuItem Header="Use 4" IsCheckable="True" Click="SetDescCount_Click" Tag="4"/>
+                    </MenuItem>
+                    <Separator/>
+                    <MenuItem Header="Template Creator..." Command="{Binding ShowTemplateCreatorCommand}" Click="OnLeafMenuItemClick"/>
+                </MenuItem>
+
+                <!-- Export -->
+                <MenuItem Header="Export">
+                    <MenuItem Header="Export Excel Results..." Command="{Binding ExportResultsCommand}" Click="OnLeafMenuItemClick"/>
+                    <MenuItem Header="Export Plots..." Click="ExportPlots_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Export Parameters..." Click="ExportParameters_Click"/>
+                    <MenuItem Header="Load Parameters..." Click="LoadParameters_Click"/>
+                </MenuItem>
+            </Menu>
+        </Grid>
+    </Border>
+</UserControl>

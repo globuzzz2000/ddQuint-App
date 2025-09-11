@@ -1,0 +1,90 @@
+# Build outputs
+bin/
+obj/
+dist/
+packages/
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+**/Properties/launchSettings.json
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+**/packages.lock.json
+
+# Python environments and bundled distributions
+Python/
+python_store/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# Build tools
+*.log
+*.tlog
+*.idb
+*.pdb
+
+# Application-specific
+ddQuint-win-*/
+*.zip
+*.exe
+*.dmg
+*.msi
+
+# IDE files
+*.swp
+*.swo
+*~
+.claude/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local configuration
+appsettings.local.json
+*.local.json
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# macOS iCloud deployment (optional, if you want to ignore)
+# /Users/*/Library/Mobile Documents/com~apple~CloudDocs/Downloads/ddQuint-*
